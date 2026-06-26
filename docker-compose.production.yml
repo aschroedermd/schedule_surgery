@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: surgery_schedule
+      POSTGRES_USER: planner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - planner-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U planner -d surgery_schedule"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8787
+      DATABASE_URL: postgres://planner:${POSTGRES_PASSWORD}@db:5432/surgery_schedule
+      APP_SECRET: ${APP_SECRET}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      VIEWER_PASSWORD: ${VIEWER_PASSWORD}
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      VIEWER_API_KEY: ${VIEWER_API_KEY}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+    expose:
+      - "8787"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8787/api/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  planner-db:
+  caddy-data:
+  caddy-config:
