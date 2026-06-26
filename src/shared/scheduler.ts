@@ -209,17 +209,21 @@ export function collectWarnings(state: PlannerState, weekId: string): Warning[] 
     if (!scheduledCase.assignment) continue;
     const resident = state.residents.find((candidate) => candidate.id === scheduledCase.assignment?.residentId);
     if (!resident) continue;
-    const fitWarning = getTrainingFitWarning(resident, scheduledCase);
-    if (fitWarning) {
+    const levelWarning = getTrainingLevelWarning(resident, scheduledCase);
+    if (levelWarning) {
       warnings.push({
         id: createId("warn"),
         severity: "info",
         residentId: resident.id,
         assignmentId: scheduledCase.assignment.id,
         targetId: scheduledCase.id,
-        message: fitWarning
+        message: levelWarning
       });
     }
+  }
+
+  for (const warning of getArrangementWarnings(state, weekId)) {
+    warnings.push(warning);
   }
 
   return warnings;
@@ -507,9 +511,8 @@ function scoreResidentForTarget(resident: Resident, target: AssignmentTarget): n
   return 20 + scheduledCase.priority * 4 + tagMatches * 6 + chiefFit + fellowFit;
 }
 
-function getTrainingFitWarning(resident: Resident, scheduledCase: ScheduledCase): string | undefined {
+function getTrainingLevelWarning(resident: Resident, scheduledCase: ScheduledCase): string | undefined {
   const caseTags = scheduledCase.tags.map((tag) => tag.toLowerCase());
-  const interests = resident.trainingInterests.map((tag) => tag.toLowerCase());
 
   if (caseTags.includes("chief-level") && resident.trainingLevel !== "PGY5" && resident.trainingLevel !== "Fellow") {
     return `${scheduledCase.procedureLabel} is tagged chief-level; assigned resident is ${resident.trainingLevel}`;
@@ -519,11 +522,44 @@ function getTrainingFitWarning(resident: Resident, scheduledCase: ScheduledCase)
     return `${scheduledCase.procedureLabel} is tagged fellow-priority; assigned resident is ${resident.trainingLevel}`;
   }
 
-  if (caseTags.length > 0 && interests.length > 0 && !caseTags.some((tag) => interests.includes(tag))) {
-    return `${resident.name}'s training interests do not match ${scheduledCase.tags.join(", ")}`;
+  return undefined;
+}
+
+function getArrangementWarnings(state: PlannerState, weekId: string): Warning[] {
+  const scheduledCases = computeScheduledCases(state, weekId);
+  const casesByDate = groupBy(scheduledCases, (scheduledCase) => scheduledCase.date);
+  const warnings: Warning[] = [];
+
+  for (const scheduledCase of scheduledCases) {
+    if (!scheduledCase.assignment) continue;
+    const resident = state.residents.find((candidate) => candidate.id === scheduledCase.assignment?.residentId);
+    if (!resident) continue;
+    const currentMatches = countTrainingInterestMatches(resident, scheduledCase);
+    const betterSameDayCase = (casesByDate.get(scheduledCase.date) ?? []).some((candidate) => {
+      if (candidate.id === scheduledCase.id) return false;
+      if (candidate.assignment?.residentId === resident.id) return false;
+      return countTrainingInterestMatches(resident, candidate) > currentMatches;
+    });
+
+    if (betterSameDayCase) {
+      warnings.push({
+        id: createId("warn"),
+        severity: "info",
+        residentId: resident.id,
+        assignmentId: scheduledCase.assignment.id,
+        targetId: scheduledCase.id,
+        message: "check arrangement"
+      });
+    }
   }
 
-  return undefined;
+  return warnings;
+}
+
+function countTrainingInterestMatches(resident: Resident, scheduledCase: ScheduledCase): number {
+  const interests = new Set(resident.trainingInterests.map((tag) => tag.toLowerCase()));
+  if (interests.size === 0) return 0;
+  return scheduledCase.tags.filter((tag) => interests.has(tag.toLowerCase())).length;
 }
 
 function getTargetId(target: AssignmentTarget): string {

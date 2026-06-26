@@ -137,4 +137,32 @@ describe("scheduler core", () => {
 
     expect(warnings.some((warning) => warning.includes("off after July 8"))).toBe(true);
   });
+
+  it("does not warn for a plain training interest mismatch without a better same-day assignment", () => {
+    const state = {
+      ...createInitialState(),
+      assignments: [makeAssignment("case", "case_morris_hernia", "res_chief", "admin", false)]
+    };
+
+    const warnings = collectWarnings(state, "week_current").map((warning) => warning.message);
+
+    expect(warnings).not.toContain("check arrangement");
+  });
+
+  it("flags check arrangement when a resident has a better same-day interest fit", () => {
+    const state = {
+      ...createInitialState(),
+      assignments: [
+        makeAssignment("case", "case_chen_chole", "res_chief", "admin", false),
+        makeAssignment("case", "case_chen_whipple", "res_fellow", "admin", false)
+      ]
+    };
+
+    const warnings = collectWarnings(state, "week_current");
+    const arrangementWarning = warnings.find(
+      (warning) => warning.targetId === "case_chen_chole" && warning.residentId === "res_chief"
+    );
+
+    expect(arrangementWarning?.message).toBe("check arrangement");
+  });
 });

@@ -398,6 +398,9 @@ function CaseRow({
   token: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
+  const arrangementWarnings = surgeryCase.warningMessages.filter((warning) => warning === "check arrangement");
+  const caseWarnings = surgeryCase.warningMessages.filter((warning) => warning !== "check arrangement");
+
   return (
     <div className="case-row">
       <div className="case-main">
@@ -414,9 +417,10 @@ function CaseRow({
         inheritedAssignment={surgeryCase.assignment?.kind === "block" ? surgeryCase.assignment : undefined}
         disabled={!isAdmin}
         claimable={!isAdmin && !surgeryCase.assignment}
+        arrangementWarnings={arrangementWarnings}
         onMutate={onMutate}
       />
-      <Warnings warnings={surgeryCase.warningMessages} />
+      <Warnings warnings={caseWarnings} />
     </div>
   );
 }
@@ -471,6 +475,7 @@ function AssignmentControl({
   emptyLabel,
   disabled,
   claimable,
+  arrangementWarnings = [],
   onMutate
 }: {
   state: PlannerState;
@@ -483,6 +488,7 @@ function AssignmentControl({
   emptyLabel?: string;
   disabled: boolean;
   claimable: boolean;
+  arrangementWarnings?: string[];
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const displayedAssignment = assignment ?? inheritedAssignment;
@@ -554,6 +560,9 @@ function AssignmentControl({
           {assignment.locked ? <Lock size={16} /> : <Unlock size={16} />}
         </button>
       )}
+      {arrangementWarnings.map((warning) => (
+        <span key={warning} className="arrangement-badge">{warning}</span>
+      ))}
       {displayedAssignment?.source === "viewer-claim" && <span className="claim-badge">claim</span>}
     </div>
   );

@@ -35,7 +35,7 @@ DATABASE_URL=memory npm run dev
 - Weekly Monday-Friday board with OR blocks, sequential case timing, clinic sessions, warnings, and activity feed.
 - Manual setup for hospitals, attendings, residents/fellows, unavailable time, case defaults, OR blocks, cases, and clinic sessions.
 - Auto-suggestion that preserves non-suggestion assignments and prioritizes safe OR coverage before clinic assignment.
-- Warning-but-allow behavior for off days, overlapping coverage, cross-hospital split risk under the 90-minute buffer, and training-fit mismatches.
+- Warning-but-allow behavior for off days, overlapping coverage, cross-hospital split risk under the 90-minute buffer, and same-day arrangement checks when a resident has a stronger interest-matched case available.
 - Copyable uncovered day/week messages.
 - Postgres-backed shared state using `DATABASE_URL`.
 

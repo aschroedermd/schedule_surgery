@@ -346,6 +346,7 @@ h2 {
 
 .time-pill,
 .claim-badge,
+.arrangement-badge,
 .tag {
   display: inline-flex;
   width: fit-content;
@@ -365,6 +366,11 @@ h2 {
 .claim-badge {
   color: #653f00;
   background: #fff1cf;
+}
+
+.arrangement-badge {
+  color: #6c3f00;
+  background: #fff2d5;
 }
 
 .tag {
