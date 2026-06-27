@@ -1,4 +1,12 @@
-import { ClaimRequest, CollectionName, PlannerState, Role, WeekSchedule } from "../shared/types";
+import {
+  ClaimRequest,
+  CollectionName,
+  CoverageChangeRequest,
+  CoverageEntry,
+  PlannerState,
+  Role,
+  WeekSchedule
+} from "../shared/types";
 
 export interface Session {
   token: string;
@@ -73,6 +81,53 @@ export async function deleteAssignment(token: string, id: string): Promise<Plann
   return request<PlannerState>(`/api/assignments/${id}`, {
     method: "DELETE",
     token
+  });
+}
+
+export async function createCoverageEntry(token: string, entry: Partial<CoverageEntry>): Promise<PlannerState> {
+  return request<PlannerState>("/api/coverage-entries", {
+    method: "POST",
+    token,
+    body: JSON.stringify(entry)
+  });
+}
+
+export async function updateCoverageEntry(token: string, id: string, patch: Partial<CoverageEntry>): Promise<PlannerState> {
+  return request<PlannerState>(`/api/coverage-entries/${id}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(patch)
+  });
+}
+
+export async function deleteCoverageEntry(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/coverage-entries/${id}`, {
+    method: "DELETE",
+    token
+  });
+}
+
+export async function submitCoverageRequest(token: string, payload: Partial<CoverageChangeRequest>): Promise<PlannerState> {
+  return request<PlannerState>("/api/coverage-requests", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function approveCoverageRequest(token: string, id: string, adminNote?: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/coverage-requests/${id}/approve`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ adminNote })
+  });
+}
+
+export async function denyCoverageRequest(token: string, id: string, adminNote?: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/coverage-requests/${id}/deny`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ adminNote })
   });
 }
 

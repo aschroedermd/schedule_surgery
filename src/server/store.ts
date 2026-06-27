@@ -1,6 +1,6 @@
 import { Pool } from "pg";
-import { PlannerState } from "../shared/types";
-import { createInitialState } from "./sampleData";
+import { PlannerState, Resident } from "../shared/types";
+import { createInitialState, createSeedCoverageEntries } from "./sampleData";
 
 export interface StateStore {
   load(): Promise<PlannerState>;
@@ -11,15 +11,16 @@ export class MemoryStateStore implements StateStore {
   private state: PlannerState;
 
   constructor(initialState: PlannerState = createInitialState()) {
-    this.state = initialState;
+    this.state = normalizePlannerState(initialState);
   }
 
   async load(): Promise<PlannerState> {
+    this.state = normalizePlannerState(this.state);
     return structuredClone(this.state);
   }
 
   async save(state: PlannerState): Promise<void> {
-    this.state = structuredClone(state);
+    this.state = normalizePlannerState(state);
   }
 }
 
@@ -40,17 +41,18 @@ export class PostgresStateStore implements StateStore {
       await this.save(initial);
       return initial;
     }
-    return data;
+    return normalizePlannerState(data);
   }
 
   async save(state: PlannerState): Promise<void> {
     await this.ensureInitialized();
+    const normalized = normalizePlannerState(state);
     await this.pool.query(
       `insert into planner_state (id, data, updated_at)
        values ($1, $2, now())
        on conflict (id)
        do update set data = excluded.data, updated_at = now()`,
-      ["main", state]
+      ["main", normalized]
     );
   }
 
@@ -77,4 +79,50 @@ export function createDefaultStore(): StateStore {
     return new MemoryStateStore();
   }
   return new PostgresStateStore(databaseUrl);
+}
+
+export function normalizePlannerState(state: PlannerState): PlannerState {
+  const partial = state as Partial<PlannerState>;
+  return {
+    ...state,
+    residents: normalizeResidents(state.residents ?? []),
+    coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
+    coverageRequests: partial.coverageRequests ?? []
+  };
+}
+
+function normalizeResidents(residents: Resident[]): Resident[] {
+  const migrated = residents.map((resident) => {
+    if (resident.id === "res_chief" && resident.name === "Chief Resident") {
+      return { ...resident, name: "Schroeder", color: "#f4cf55" };
+    }
+    if (resident.id === "res_fellow" && resident.name === "MIS Fellow") {
+      return { ...resident, name: "Adeleke", color: "#c89af7" };
+    }
+    if (resident.id === "res_offservice" && resident.name === "Off-Service Resident") {
+      return { ...resident, name: "Cao", color: "#f37d6e" };
+    }
+    if (resident.id === "res_chief" && !resident.color) return { ...resident, color: "#f4cf55" };
+    if (resident.id === "res_fellow" && !resident.color) return { ...resident, color: "#c89af7" };
+    if (resident.id === "res_offservice" && !resident.color) return { ...resident, color: "#f37d6e" };
+    return resident;
+  });
+
+  if (migrated.some((resident) => resident.id === "res_swaak")) {
+    return migrated;
+  }
+
+  return [
+    ...migrated,
+    {
+      id: "res_swaak",
+      name: "Swaak",
+      trainingLevel: "PGY4",
+      serviceStatus: "on-service",
+      color: "#e65245",
+      tags: ["home"],
+      trainingInterests: ["general surgery", "abdominal wall", "clinic"],
+      unavailable: []
+    }
+  ];
 }

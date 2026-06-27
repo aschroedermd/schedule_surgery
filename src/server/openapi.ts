@@ -65,6 +65,27 @@ export function getOpenApiDocument() {
             targetId: { type: "string" },
             residentId: { type: "string" }
           }
+        },
+        CoverageEntryInput: {
+          type: "object",
+          required: ["date", "kind"],
+          properties: {
+            date: { type: "string", format: "date" },
+            kind: { type: "string", enum: ["call", "rounding", "off", "note"] },
+            residentId: { type: "string" },
+            note: { type: "string" }
+          }
+        },
+        CoverageRequestInput: {
+          type: "object",
+          required: ["action"],
+          properties: {
+            action: { type: "string", enum: ["create", "update", "delete"] },
+            entryId: { type: "string" },
+            requestedEntry: { $ref: "#/components/schemas/CoverageEntryInput" },
+            requesterName: { type: "string" },
+            message: { type: "string" }
+          }
         }
       }
     },
@@ -290,6 +311,92 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" }
+          }
+        }
+      },
+      "/api/coverage-entries": {
+        post: {
+          summary: "Create or replace a call calendar entry",
+          description:
+            "Admin only. Call is allowed Friday-Sunday; rounding is allowed Saturday-Sunday. Call/rounding entries replace the same date/kind slot.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CoverageEntryInput" }
+              }
+            }
+          },
+          responses: {
+            "201": { description: "Updated PlannerState" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/coverage-entries/{id}": {
+        patch: {
+          summary: "Patch a call calendar entry",
+          description: "Admin only.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "403": { description: "Admin access required" }
+          }
+        },
+        delete: {
+          summary: "Delete a call calendar entry",
+          description: "Admin only.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/coverage-requests": {
+        post: {
+          summary: "Submit a viewer-edit calendar request",
+          description: "Viewer-accessible. Creates a pending request for an admin to approve or deny.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CoverageRequestInput" }
+              }
+            }
+          },
+          responses: {
+            "201": { description: "Updated PlannerState" }
+          }
+        }
+      },
+      "/api/coverage-requests/{id}/approve": {
+        post: {
+          summary: "Approve and apply a calendar request",
+          description: "Admin only.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/coverage-requests/{id}/deny": {
+        post: {
+          summary: "Deny a calendar request",
+          description: "Admin only.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "403": { description: "Admin access required" }
           }
         }
       }

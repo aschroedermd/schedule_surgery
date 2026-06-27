@@ -1,5 +1,7 @@
 import { addDays, getCurrentMonday } from "../shared/date";
-import { PlannerState } from "../shared/types";
+import { CoverageEntry, PlannerState } from "../shared/types";
+
+const seedCreatedAt = "2026-06-27T14:36:21.000Z";
 
 export function createInitialState(): PlannerState {
   const monday = getCurrentMonday();
@@ -21,27 +23,30 @@ export function createInitialState(): PlannerState {
     residents: [
       {
         id: "res_chief",
-        name: "Chief Resident",
+        name: "Schroeder",
         trainingLevel: "PGY5",
         serviceStatus: "on-service",
+        color: "#f4cf55",
         tags: ["home"],
         trainingInterests: ["HPB", "chief-level", "complex open"],
         unavailable: []
       },
       {
         id: "res_fellow",
-        name: "MIS Fellow",
+        name: "Adeleke",
         trainingLevel: "Fellow",
         serviceStatus: "on-service",
+        color: "#c89af7",
         tags: ["fellow"],
         trainingInterests: ["bariatrics", "fellow-priority", "foregut"],
         unavailable: []
       },
       {
         id: "res_offservice",
-        name: "Off-Service Resident",
+        name: "Cao",
         trainingLevel: "PGY3",
         serviceStatus: "off-service",
+        color: "#f37d6e",
         tags: ["available-for-requests"],
         trainingInterests: ["general surgery", "clinic"],
         unavailable: [
@@ -53,6 +58,16 @@ export function createInitialState(): PlannerState {
             label: "conference"
           }
         ]
+      },
+      {
+        id: "res_swaak",
+        name: "Swaak",
+        trainingLevel: "PGY4",
+        serviceStatus: "on-service",
+        color: "#e65245",
+        tags: ["home"],
+        trainingInterests: ["general surgery", "abdominal wall", "clinic"],
+        unavailable: []
       }
     ],
     procedureDefaults: [
@@ -166,6 +181,8 @@ export function createInitialState(): PlannerState {
       }
     ],
     assignments: [],
+    coverageEntries: createSeedCoverageEntries(),
+    coverageRequests: [],
     activityEvents: [
       {
         id: "evt_seed",
@@ -177,5 +194,45 @@ export function createInitialState(): PlannerState {
         entityId: "week_current"
       }
     ]
+  };
+}
+
+export function createSeedCoverageEntries(): CoverageEntry[] {
+  return [
+    seedCoverageEntry("cover_2026_07_01_adeleke_step3", "2026-07-01", "note", "res_fellow", "STEP 3"),
+    seedCoverageEntry("cover_2026_07_02_adeleke_step3", "2026-07-02", "note", "res_fellow", "STEP 3"),
+    seedCoverageEntry("cover_2026_07_04_schroeder_round", "2026-07-04", "rounding", "res_chief"),
+    seedCoverageEntry("cover_2026_07_05_schroeder_call", "2026-07-05", "call", "res_chief"),
+    seedCoverageEntry("cover_2026_07_09_cao_paternity", "2026-07-09", "off", "res_offservice", "paternity"),
+    seedCoverageEntry("cover_2026_07_10_swaak_call", "2026-07-10", "call", "res_swaak"),
+    seedCoverageEntry("cover_2026_07_11_adeleke_call", "2026-07-11", "call", "res_fellow"),
+    seedCoverageEntry("cover_2026_07_12_adeleke_round", "2026-07-12", "rounding", "res_fellow"),
+    seedCoverageEntry("cover_2026_07_17_schroeder_call", "2026-07-17", "call", "res_chief"),
+    seedCoverageEntry("cover_2026_07_18_schroeder_round", "2026-07-18", "rounding", "res_chief"),
+    seedCoverageEntry("cover_2026_07_19_schroeder_round", "2026-07-19", "rounding", "res_chief"),
+    seedCoverageEntry("cover_2026_07_24_swaak_call", "2026-07-24", "call", "res_swaak"),
+    seedCoverageEntry("cover_2026_07_25_swaak_round", "2026-07-25", "rounding", "res_swaak"),
+    seedCoverageEntry("cover_2026_07_26_swaak_round", "2026-07-26", "rounding", "res_swaak"),
+    seedCoverageEntry("cover_2026_07_31_swaak_conference", "2026-07-31", "off", "res_swaak", "conference"),
+    seedCoverageEntry("cover_2026_08_01_swaak_conference", "2026-08-01", "off", "res_swaak", "conference"),
+    seedCoverageEntry("cover_2026_08_01_schroeder_round", "2026-08-01", "rounding", "res_chief")
+  ];
+}
+
+function seedCoverageEntry(
+  id: string,
+  date: string,
+  kind: CoverageEntry["kind"],
+  residentId: string,
+  note = ""
+): CoverageEntry {
+  return {
+    id,
+    date,
+    kind,
+    residentId,
+    note,
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt
   };
 }

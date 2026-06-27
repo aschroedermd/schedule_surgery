@@ -52,6 +52,30 @@ describe("planner API", () => {
       .expect(201);
   });
 
+  it("serves the seeded July call calendar from the imported PDF", async () => {
+    const { app, token } = await loginAs("admin");
+
+    const response = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
+
+    expect(response.body.residents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "res_chief", name: "Schroeder", color: "#f4cf55" }),
+        expect.objectContaining({ id: "res_fellow", name: "Adeleke", color: "#c89af7" }),
+        expect.objectContaining({ id: "res_swaak", name: "Swaak", color: "#e65245" })
+      ])
+    );
+    expect(response.body.coverageEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ date: "2026-07-04", kind: "rounding", residentId: "res_chief" }),
+        expect.objectContaining({ date: "2026-07-05", kind: "call", residentId: "res_chief" }),
+        expect.objectContaining({ date: "2026-07-11", kind: "call", residentId: "res_fellow" }),
+        expect.objectContaining({ date: "2026-07-24", kind: "call", residentId: "res_swaak" }),
+        expect.objectContaining({ date: "2026-07-31", kind: "off", residentId: "res_swaak", note: "conference" }),
+        expect.objectContaining({ date: "2026-08-01", kind: "off", residentId: "res_swaak", note: "conference" })
+      ])
+    );
+  });
+
   it("serves OpenAPI JSON for external clients and MCP builders", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 
@@ -61,6 +85,59 @@ describe("planner API", () => {
     expect(response.body.components.securitySchemes.ApiKeyAuth.name).toBe("X-API-Key");
     expect(response.body.paths["/api/entities/{collection}"].post).toBeDefined();
     expect(response.body.paths["/api/assignments"].post).toBeDefined();
+  });
+
+  it("routes viewer calendar edits through admin-approved requests", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const viewerLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ role: "viewer", password: "viewer-dev-password" })
+      .expect(200);
+    const adminLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ role: "admin", password: "admin-dev-password" })
+      .expect(200);
+    const viewerToken = viewerLogin.body.token as string;
+    const adminToken = adminLogin.body.token as string;
+
+    await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "" })
+      .expect(403);
+
+    const requestResponse = await request(app)
+      .post("/api/coverage-requests")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .send({
+        action: "create",
+        requestedEntry: {
+          date: "2026-07-03",
+          kind: "call",
+          residentId: "res_fellow",
+          note: ""
+        },
+        message: "Can Adeleke cover this call?"
+      })
+      .expect(201);
+
+    const requestId = requestResponse.body.coverageRequests[0].id;
+    expect(requestResponse.body.coverageEntries).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_fellow" })])
+    );
+    expect(requestResponse.body.coverageRequests[0]).toEqual(expect.objectContaining({ status: "pending" }));
+
+    const approvalResponse = await request(app)
+      .post(`/api/coverage-requests/${requestId}/approve`)
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(approvalResponse.body.coverageEntries).toEqual(
+      expect.arrayContaining([expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_fellow" })])
+    );
+    expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === requestId)).toEqual(
+      expect.objectContaining({ status: "approved" })
+    );
   });
 
   it("lets a viewer claim an uncovered case and records the claim", async () => {
@@ -136,5 +213,88 @@ describe("planner API", () => {
         assignment.kind === "case" && ["case_chen_whipple", "case_chen_chole"].includes(assignment.targetId)
     );
     expect(lingeringCaseAssignments).toEqual([]);
+  });
+
+  it("stores multiple weeks and cascades week deletes", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app)
+      .post("/api/entities/weeks")
+      .set("authorization", `Bearer ${token}`)
+      .send({ id: "week_next", startDate: "2026-07-06", label: "Week of Jul 6, 2026" })
+      .expect(201);
+    await request(app)
+      .post("/api/entities/attendingBlocks")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        id: "block_next",
+        weekId: "week_next",
+        date: "2026-07-06",
+        attendingId: "att_chen",
+        hospitalId: "hosp_main",
+        firstCaseStartTime: "07:30",
+        notes: ""
+      })
+      .expect(201);
+    await request(app)
+      .post("/api/entities/cases")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        id: "case_next",
+        blockId: "block_next",
+        procedureLabel: "Lap chole",
+        durationMinutes: 90,
+        priority: 2,
+        tags: ["general surgery"],
+        notes: "",
+        order: 0
+      })
+      .expect(201);
+    await request(app)
+      .post("/api/entities/clinicSessions")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        id: "clinic_next",
+        weekId: "week_next",
+        date: "2026-07-07",
+        startTime: "13:00",
+        endTime: "17:00",
+        attendingId: "att_chen",
+        service: "HPB",
+        location: "University Hospital Clinic",
+        hospitalId: "hosp_main",
+        capacity: 1
+      })
+      .expect(201);
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_next", residentId: "res_chief" })
+      .expect(201);
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "clinic", targetId: "clinic_next", residentId: "res_fellow" })
+      .expect(201);
+
+    const nextSchedule = await request(app)
+      .get("/api/weeks/week_next/schedule")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(nextSchedule.body.days.flatMap((day: { blocks: unknown[] }) => day.blocks)).toHaveLength(1);
+
+    const deleteResponse = await request(app)
+      .delete("/api/entities/weeks/week_next")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(deleteResponse.body.weeks.map((week: { id: string }) => week.id)).toContain("week_current");
+    expect(deleteResponse.body.weeks.map((week: { id: string }) => week.id)).not.toContain("week_next");
+    expect(deleteResponse.body.attendingBlocks.map((block: { id: string }) => block.id)).not.toContain("block_next");
+    expect(deleteResponse.body.cases.map((surgeryCase: { id: string }) => surgeryCase.id)).not.toContain("case_next");
+    expect(deleteResponse.body.clinicSessions.map((clinic: { id: string }) => clinic.id)).not.toContain("clinic_next");
+    expect(deleteResponse.body.assignments.map((assignment: { targetId: string }) => assignment.targetId)).not.toEqual(
+      expect.arrayContaining(["case_next", "clinic_next"])
+    );
   });
 });

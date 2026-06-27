@@ -26,7 +26,8 @@ import {
   updateAssignment,
   updateEntity
 } from "./api";
-import { addDays, displayDate } from "../shared/date";
+import { CalendarTab, RequestsTab } from "./CoverageCalendar";
+import { addDays, displayDate, getCurrentMonday, getMondayForDate, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
 import {
   Assignment,
@@ -45,16 +46,18 @@ import {
   ServiceStatus,
   SurgeryCase,
   TrainingLevel,
+  Week,
   WeekSchedule
 } from "../shared/types";
 
-type Tab = "board" | "entry" | "roster" | "defaults" | "activity";
+type Tab = "board" | "calendar" | "requests" | "entry" | "roster" | "defaults" | "activity";
 
 const emptyResident: Resident = {
   id: "",
   name: "",
   trainingLevel: "PGY3",
   serviceStatus: "on-service",
+  color: "#2f78c4",
   tags: [],
   trainingInterests: [],
   unavailable: []
@@ -68,32 +71,52 @@ export function App() {
   });
   const [state, setState] = useState<PlannerState | undefined>();
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
+  const [selectedWeekId, setSelectedWeekId] = useState(() => localStorage.getItem("plannerSelectedWeekId") ?? "");
   const [activeTab, setActiveTab] = useState<Tab>("board");
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
 
-  const selectedWeekId = state?.weeks[0]?.id;
+  const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const isAdmin = session?.role === "admin";
+  const pendingCoverageRequestCount = state?.coverageRequests.filter((request) => request.status === "pending").length ?? 0;
 
-  async function refresh(nextState?: PlannerState) {
+  async function refresh(nextState?: PlannerState, preferredWeekId = selectedWeekId) {
     if (!session) return;
     const loadedState = nextState ?? (await fetchState(session.token));
+    const weekId = chooseWeekId(loadedState.weeks, preferredWeekId);
     setState(loadedState);
-    const weekId = loadedState.weeks[0]?.id;
     if (weekId) {
+      setSelectedWeekId(weekId);
+      localStorage.setItem("plannerSelectedWeekId", weekId);
       setSchedule(await fetchSchedule(session.token, weekId));
+    } else {
+      setSelectedWeekId("");
+      localStorage.removeItem("plannerSelectedWeekId");
+      setSchedule(undefined);
     }
   }
 
-  async function runMutation(action: () => Promise<PlannerState | void>, message?: string) {
+  async function runMutation(action: () => Promise<PlannerState | void>, message?: string, preferredWeekId?: string) {
     if (!session) return;
     try {
       setError(undefined);
       const result = await action();
-      await refresh(result || undefined);
+      await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
       if (message) setToast(message);
     } catch (mutationError) {
       setError(mutationError instanceof Error ? mutationError.message : "Something went wrong");
+    }
+  }
+
+  async function selectWeek(weekId: string) {
+    if (!session || !weekId || weekId === selectedWeekId) return;
+    try {
+      setError(undefined);
+      setSelectedWeekId(weekId);
+      localStorage.setItem("plannerSelectedWeekId", weekId);
+      setSchedule(await fetchSchedule(session.token, weekId));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load week");
     }
   }
 
@@ -108,7 +131,7 @@ export function App() {
     return <LoginScreen onLogin={setSession} />;
   }
 
-  if (!state || !schedule || !selectedWeekId) {
+  if (!state || !schedule || !selectedWeek || !selectedWeekId) {
     return <Shell role={session.role} onLogout={() => logout(setSession)} error={error}>Loading planner...</Shell>;
   }
 
@@ -117,9 +140,18 @@ export function App() {
       <header className="planner-header">
         <div>
           <p className="eyebrow">Resident OR Coverage</p>
-          <h1>{state.weeks[0].label}</h1>
+          <h1>{selectedWeek.label}</h1>
+          <p className="week-range">{formatWeekRange(selectedWeek, state.settings.weekdayOnly)}</p>
         </div>
         <div className="header-actions">
+          <WeekManager
+            state={state}
+            selectedWeek={selectedWeek}
+            token={session.token}
+            disabled={!isAdmin}
+            onSelect={selectWeek}
+            onMutate={runMutation}
+          />
           <button title="Refresh" className="icon-button" onClick={() => refresh()}>
             <RefreshCw size={18} />
           </button>
@@ -151,6 +183,8 @@ export function App() {
       <nav className="tabs" aria-label="Planner sections">
         {([
           ["board", "Board"],
+          ["calendar", "Calendar"],
+          ["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"],
           ["entry", "Cases & Clinic"],
           ["roster", "Residents"],
           ["defaults", "Setup"],
@@ -172,11 +206,17 @@ export function App() {
           onCopied={(message) => setToast(message)}
         />
       )}
+      {activeTab === "calendar" && (
+        <CalendarTab state={state} token={session.token} role={session.role} onMutate={runMutation} />
+      )}
+      {activeTab === "requests" && (
+        <RequestsTab state={state} token={session.token} role={session.role} onMutate={runMutation} />
+      )}
       {activeTab === "entry" && (
-        <EntryTab state={state} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
+        <EntryTab state={state} week={selectedWeek} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "roster" && (
-        <RosterTab state={state} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
+        <RosterTab state={state} week={selectedWeek} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "defaults" && (
         <DefaultsTab state={state} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
@@ -255,6 +295,89 @@ function Shell({
       {toast && <div className="alert success">{toast}</div>}
       {children}
     </main>
+  );
+}
+
+function WeekManager({
+  state,
+  selectedWeek,
+  token,
+  disabled,
+  onSelect,
+  onMutate
+}: {
+  state: PlannerState;
+  selectedWeek: Week;
+  token: string;
+  disabled: boolean;
+  onSelect: (weekId: string) => Promise<void>;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string, preferredWeekId?: string) => Promise<void>;
+}) {
+  const sortedWeeks = sortWeeks(state.weeks);
+  const [newWeekDate, setNewWeekDate] = useState(addDays(selectedWeek.startDate, 7));
+
+  useEffect(() => {
+    setNewWeekDate(addDays(selectedWeek.startDate, 7));
+  }, [selectedWeek.id, selectedWeek.startDate]);
+
+  async function addWeek(event: FormEvent) {
+    event.preventDefault();
+    const startDate = getMondayForDate(newWeekDate);
+    const existingWeek = state.weeks.find((week) => week.startDate === startDate);
+    if (existingWeek) {
+      await onSelect(existingWeek.id);
+      return;
+    }
+
+    const week: Week = {
+      id: buildWeekId(startDate),
+      startDate,
+      label: formatWeekLabel(startDate)
+    };
+    await onMutate(() => createEntity<Week>(token, "weeks", week), "Week added", week.id);
+  }
+
+  async function deleteSelectedWeek() {
+    const index = sortedWeeks.findIndex((week) => week.id === selectedWeek.id);
+    const fallbackWeek = sortedWeeks[index + 1] ?? sortedWeeks[index - 1];
+    if (!fallbackWeek || !window.confirm(`Delete ${selectedWeek.label} and its schedule data?`)) return;
+    await onMutate(() => deleteEntity(token, "weeks", selectedWeek.id), "Week deleted", fallbackWeek.id);
+  }
+
+  return (
+    <form className="week-manager" onSubmit={addWeek}>
+      <select
+        aria-label="Selected week"
+        value={selectedWeek.id}
+        onChange={(event) => onSelect(event.target.value)}
+      >
+        {sortedWeeks.map((week) => (
+          <option key={week.id} value={week.id}>
+            {week.label} ({formatWeekRange(week, state.settings.weekdayOnly)})
+          </option>
+        ))}
+      </select>
+      <input
+        aria-label="New week date"
+        type="date"
+        disabled={disabled}
+        value={newWeekDate}
+        onChange={(event) => setNewWeekDate(event.target.value)}
+      />
+      <button className="secondary-button" type="submit" disabled={disabled}>
+        <Plus size={16} />
+        Week
+      </button>
+      <button
+        title="Delete selected week"
+        type="button"
+        className="icon-button"
+        disabled={disabled || sortedWeeks.length <= 1}
+        onClick={deleteSelectedWeek}
+      >
+        <Trash2 size={15} />
+      </button>
+    </form>
   );
 }
 
@@ -570,16 +693,17 @@ function AssignmentControl({
 
 function EntryTab({
   state,
+  week,
   token,
   disabled,
   onMutate
 }: {
   state: PlannerState;
+  week: Week;
   token: string;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
-  const week = state.weeks[0];
   const [blockForm, setBlockForm] = useState({
     date: week.startDate,
     attendingId: state.attendings[0]?.id ?? "",
@@ -596,6 +720,13 @@ function EntryTab({
     location: "",
     capacity: 1
   });
+  const weekBlocks = state.attendingBlocks.filter((block) => block.weekId === week.id);
+  const weekClinics = state.clinicSessions.filter((clinic) => clinic.weekId === week.id);
+
+  useEffect(() => {
+    setBlockForm((current) => ({ ...current, date: week.startDate }));
+    setClinicForm((current) => ({ ...current, date: week.startDate }));
+  }, [week.id, week.startDate]);
 
   return (
     <section className="two-column">
@@ -617,14 +748,14 @@ function EntryTab({
       >
         <h2>OR Blocks</h2>
         <fieldset disabled={disabled}>
-          <label>Date<input type="date" value={blockForm.date} onChange={(event) => setBlockForm({ ...blockForm, date: event.target.value })} /></label>
+          <label>Date<input type="date" min={week.startDate} max={getWeekEndDate(week, state.settings.weekdayOnly)} value={blockForm.date} onChange={(event) => setBlockForm({ ...blockForm, date: event.target.value })} /></label>
           <label>Attending<Select value={blockForm.attendingId} onChange={(attendingId) => setBlockForm({ ...blockForm, attendingId })} options={state.attendings} /></label>
           <label>Hospital<Select value={blockForm.hospitalId} onChange={(hospitalId) => setBlockForm({ ...blockForm, hospitalId })} options={state.hospitals} labelKey="shortName" /></label>
           <label>First start<input type="time" value={blockForm.firstCaseStartTime} onChange={(event) => setBlockForm({ ...blockForm, firstCaseStartTime: event.target.value })} /></label>
           <button className="primary-button" type="submit"><Plus size={16} />Add Block</button>
         </fieldset>
         <div className="entity-list">
-          {state.attendingBlocks.map((block) => (
+          {weekBlocks.map((block) => (
             <BlockEditor key={block.id} state={state} block={block} token={token} disabled={disabled} onMutate={onMutate} />
           ))}
         </div>
@@ -647,7 +778,7 @@ function EntryTab({
       >
         <h2>Clinic Sessions</h2>
         <fieldset disabled={disabled}>
-          <label>Date<input type="date" value={clinicForm.date} onChange={(event) => setClinicForm({ ...clinicForm, date: event.target.value })} /></label>
+          <label>Date<input type="date" min={week.startDate} max={getWeekEndDate(week, state.settings.weekdayOnly)} value={clinicForm.date} onChange={(event) => setClinicForm({ ...clinicForm, date: event.target.value })} /></label>
           <label>Attending<Select value={clinicForm.attendingId} onChange={(attendingId) => setClinicForm({ ...clinicForm, attendingId })} options={state.attendings} /></label>
           <label>Hospital<Select value={clinicForm.hospitalId} onChange={(hospitalId) => setClinicForm({ ...clinicForm, hospitalId })} options={state.hospitals} labelKey="shortName" /></label>
           <label>Start<input type="time" value={clinicForm.startTime} onChange={(event) => setClinicForm({ ...clinicForm, startTime: event.target.value })} /></label>
@@ -658,7 +789,7 @@ function EntryTab({
           <button className="primary-button" type="submit"><Plus size={16} />Add Clinic</button>
         </fieldset>
         <div className="entity-list">
-          {state.clinicSessions.map((clinic) => (
+          {weekClinics.map((clinic) => (
             <CompactEntity
               key={clinic.id}
               title={`${clinic.service} clinic`}
@@ -856,19 +987,25 @@ function CaseEditor({
 
 function RosterTab({
   state,
+  week,
   token,
   disabled,
   onMutate
 }: {
   state: PlannerState;
+  week: Week;
   token: string;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<Resident>(emptyResident);
-  const [offForm, setOffForm] = useState({ date: state.weeks[0]?.startDate ?? "", endDate: "", startTime: "", endTime: "", label: "off" });
+  const [offForm, setOffForm] = useState({ date: week.startDate, endDate: "", startTime: "", endTime: "", label: "off" });
 
   const isExisting = Boolean(state.residents.find((resident) => resident.id === editing.id));
+
+  useEffect(() => {
+    setOffForm((current) => ({ ...current, date: week.startDate }));
+  }, [week.id, week.startDate]);
 
   return (
     <section className="two-column">
@@ -894,6 +1031,7 @@ function RosterTab({
             <option value="on-service">on-service</option>
             <option value="off-service">off-service</option>
           </select></label>
+          <label>Color<input type="color" value={editing.color ?? "#2f78c4"} onChange={(event) => setEditing({ ...editing, color: event.target.value })} /></label>
           <label>Tags<input value={editing.tags.join(", ")} onChange={(event) => setEditing({ ...editing, tags: splitTags(event.target.value) })} /></label>
           <label>Training interests<input value={editing.trainingInterests.join(", ")} onChange={(event) => setEditing({ ...editing, trainingInterests: splitTags(event.target.value) })} /></label>
           <div className="inline-form">
@@ -1169,6 +1307,46 @@ function TagList({ tags }: { tags: string[] }) {
 
 function residentLabel(state: PlannerState, residentId: string): string {
   return state.residents.find((resident) => resident.id === residentId)?.name ?? "Assigned";
+}
+
+function sortWeeks(weeks: Week[]): Week[] {
+  return [...weeks].sort((a, b) => a.startDate.localeCompare(b.startDate));
+}
+
+function chooseWeekId(weeks: Week[], preferredWeekId?: string): string | undefined {
+  if (preferredWeekId && weeks.some((week) => week.id === preferredWeekId)) {
+    return preferredWeekId;
+  }
+
+  const sortedWeeks = sortWeeks(weeks);
+  const currentMonday = getCurrentMonday();
+  return sortedWeeks.find((week) => week.startDate >= currentMonday)?.id ?? sortedWeeks[sortedWeeks.length - 1]?.id;
+}
+
+function buildWeekId(startDate: string): string {
+  return `week_${startDate.replaceAll("-", "_")}`;
+}
+
+function formatWeekLabel(startDate: string): string {
+  return `Week of ${parseLocalDate(startDate).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  })}`;
+}
+
+function getWeekEndDate(week: Week, weekdayOnly: boolean): string {
+  return addDays(week.startDate, weekdayOnly ? 4 : 6);
+}
+
+function formatWeekRange(week: Week, weekdayOnly: boolean): string {
+  const start = parseLocalDate(week.startDate).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const end = parseLocalDate(getWeekEndDate(week, weekdayOnly)).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+  return `${start}-${end}`;
 }
 
 function splitTags(value: string): string[] {

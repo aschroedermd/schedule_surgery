@@ -51,6 +51,11 @@ export function displayDate(date: string): string {
 
 export function getCurrentMonday(): string {
   const today = new Date();
+  return getMondayForDate(formatDate(today));
+}
+
+export function getMondayForDate(date: string): string {
+  const today = parseLocalDate(date);
   const day = today.getDay();
   const offset = day === 0 ? -6 : 1 - day;
   return formatDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset));

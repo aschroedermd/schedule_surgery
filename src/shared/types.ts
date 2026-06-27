@@ -8,6 +8,12 @@ export type AssignmentKind = "case" | "block" | "clinic";
 
 export type AssignmentSource = "admin" | "suggestion" | "viewer-claim";
 
+export type CoverageKind = "call" | "rounding" | "off" | "note";
+
+export type CoverageRequestAction = "create" | "update" | "delete";
+
+export type CoverageRequestStatus = "pending" | "approved" | "denied";
+
 export type Priority = 1 | 2 | 3 | 4 | 5;
 
 export interface Settings {
@@ -44,6 +50,7 @@ export interface Resident {
   name: string;
   trainingLevel: TrainingLevel;
   serviceStatus: ServiceStatus;
+  color?: string;
   tags: string[];
   trainingInterests: string[];
   unavailable: AvailabilityBlock[];
@@ -108,6 +115,30 @@ export interface Assignment {
   updatedAt: string;
 }
 
+export interface CoverageEntry {
+  id: string;
+  date: string;
+  kind: CoverageKind;
+  residentId?: string;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CoverageChangeRequest {
+  id: string;
+  action: CoverageRequestAction;
+  status: CoverageRequestStatus;
+  entryId?: string;
+  requestedEntry?: CoverageEntry;
+  requesterName?: string;
+  message: string;
+  adminNote?: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+}
+
 export interface ActivityEvent {
   id: string;
   createdAt: string;
@@ -129,6 +160,8 @@ export interface PlannerState {
   cases: SurgeryCase[];
   clinicSessions: ClinicSession[];
   assignments: Assignment[];
+  coverageEntries: CoverageEntry[];
+  coverageRequests: CoverageChangeRequest[];
   activityEvents: ActivityEvent[];
 }
 

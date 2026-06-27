@@ -35,10 +35,7 @@ type AssignmentTarget =
   | { kind: "clinic"; clinic: ScheduledClinicSession };
 
 export function buildWeekSchedule(state: PlannerState, weekId: string): WeekSchedule {
-  const week = state.weeks.find((candidate) => candidate.id === weekId) ?? state.weeks[0];
-  if (!week) {
-    throw new Error("Planner has no week");
-  }
+  const week = requireWeek(state, weekId);
 
   const dates = getWeekDates(week.startDate, state.settings.weekdayOnly);
   const scheduledCases = computeScheduledCases(state, week.id);
@@ -431,8 +428,7 @@ export function buildAssignmentIntervals(state: PlannerState, weekId: string): I
 }
 
 function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string): WeekSchedule {
-  const week = state.weeks.find((candidate) => candidate.id === weekId) ?? state.weeks[0];
-  if (!week) throw new Error("Planner has no week");
+  const week = requireWeek(state, weekId);
   const dates = getWeekDates(week.startDate, state.settings.weekdayOnly);
   const scheduledCases = computeScheduledCases(state, week.id);
   const blocks = state.attendingBlocks
@@ -570,7 +566,9 @@ function getTargetId(target: AssignmentTarget): string {
 
 function describeTarget(state: PlannerState, kind: Assignment["kind"], targetId: string): string {
   if (kind === "case") {
-    const scheduledCase = computeScheduledCases(state, state.weeks[0]?.id ?? "").find((candidate) => candidate.id === targetId);
+    const surgeryCase = state.cases.find((candidate) => candidate.id === targetId);
+    const block = state.attendingBlocks.find((candidate) => candidate.id === surgeryCase?.blockId);
+    const scheduledCase = block ? computeScheduledCases(state, block.weekId).find((candidate) => candidate.id === targetId) : undefined;
     return scheduledCase ? `${scheduledCase.attending.name} ${scheduledCase.procedureLabel}` : "case";
   }
 
@@ -581,6 +579,14 @@ function describeTarget(state: PlannerState, kind: Assignment["kind"], targetId:
   }
 
   return "clinic";
+}
+
+function requireWeek(state: PlannerState, weekId: string) {
+  const week = state.weeks.find((candidate) => candidate.id === weekId);
+  if (!week) {
+    throw new Error(`Week not found: ${weekId}`);
+  }
+  return week;
 }
 
 function intervalsOverlap(startA: number, endA: number, startB: number, endB: number): boolean {

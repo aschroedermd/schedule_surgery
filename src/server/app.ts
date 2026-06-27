@@ -1,6 +1,8 @@
 import cors from "cors";
 import express from "express";
 import path from "node:path";
+import { isCoverageKindAllowedOnDate } from "../shared/coverage";
+import { createId } from "../shared/id";
 import {
   addActivity,
   applyClaim,
@@ -10,7 +12,15 @@ import {
   collectWarnings,
   makeAssignment
 } from "../shared/scheduler";
-import { ClaimRequest, CollectionName, PlannerState } from "../shared/types";
+import {
+  ClaimRequest,
+  CollectionName,
+  CoverageChangeRequest,
+  CoverageEntry,
+  CoverageKind,
+  CoverageRequestAction,
+  PlannerState
+} from "../shared/types";
 import { authenticate, AuthenticatedRequest, createToken, requireAdmin, validateLogin } from "./auth";
 import { getOpenApiDocument } from "./openapi";
 import { StateStore } from "./store";
@@ -164,10 +174,7 @@ export function createApp(store: StateStore) {
       const collection = assertCollection(getParam(req.params.collection));
       const id = getParam(req.params.id);
       const state = await store.load();
-      const nextState = {
-        ...state,
-        [collection]: state[collection].filter((entity) => entity.id !== id)
-      } as PlannerState;
+      const nextState = collection === "weeks" ? deleteWeek(state, id) : deleteEntityFromCollection(state, collection, id);
       const withActivity = addActivity(nextState, req.user?.role ?? "admin", "deleted item", `Deleted ${collection}`, collection, id);
       await store.save(withActivity);
       res.json(withActivity);
@@ -238,6 +245,162 @@ export function createApp(store: StateStore) {
     }
   });
 
+  app.post("/api/coverage-entries", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const entry = buildCoverageEntry(state, req.body);
+      const nextState = upsertCoverageEntry(state, entry);
+      const withActivity = addActivity(
+        nextState,
+        req.user?.role ?? "admin",
+        "updated call calendar",
+        `Set ${describeCoverageEntry(nextState, entry)}`,
+        "coverageEntry",
+        entry.id
+      );
+      await store.save(withActivity);
+      res.status(201).json(withActivity);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/coverage-entries/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const id = getParam(req.params.id);
+      const state = await store.load();
+      const existing = requireCoverageEntry(state, id);
+      const entry = buildCoverageEntry(state, { ...existing, ...req.body, id }, existing);
+      const nextState = upsertCoverageEntry(state, entry);
+      const withActivity = addActivity(
+        nextState,
+        req.user?.role ?? "admin",
+        "updated call calendar",
+        `Updated ${describeCoverageEntry(nextState, entry)}`,
+        "coverageEntry",
+        entry.id
+      );
+      await store.save(withActivity);
+      res.json(withActivity);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/coverage-entries/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const id = getParam(req.params.id);
+      const state = await store.load();
+      const existing = requireCoverageEntry(state, id);
+      const nextState: PlannerState = {
+        ...state,
+        coverageEntries: state.coverageEntries.filter((entry) => entry.id !== id)
+      };
+      const withActivity = addActivity(
+        nextState,
+        req.user?.role ?? "admin",
+        "updated call calendar",
+        `Cleared ${describeCoverageEntry(state, existing)}`,
+        "coverageEntry",
+        id
+      );
+      await store.save(withActivity);
+      res.json(withActivity);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/coverage-requests", authenticate, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const coverageRequest = buildCoverageRequest(state, req.body);
+      const nextState: PlannerState = {
+        ...state,
+        coverageRequests: [coverageRequest, ...state.coverageRequests]
+      };
+      const withActivity = addActivity(
+        nextState,
+        req.user?.role ?? "viewer",
+        "submitted call calendar request",
+        describeCoverageRequest(nextState, coverageRequest),
+        "coverageRequest",
+        coverageRequest.id
+      );
+      await store.save(withActivity);
+      res.status(201).json(withActivity);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/coverage-requests/:id/approve", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const id = getParam(req.params.id);
+      const state = await store.load();
+      const coverageRequest = requireCoverageRequest(state, id);
+      if (coverageRequest.status !== "pending") {
+        res.status(400).json({ error: "Coverage request is already resolved" });
+        return;
+      }
+      const applied = applyCoverageRequest(state, coverageRequest);
+      const now = new Date().toISOString();
+      const nextState: PlannerState = {
+        ...applied,
+        coverageRequests: applied.coverageRequests.map((requestItem) =>
+          requestItem.id === id
+            ? { ...requestItem, status: "approved", adminNote: readOptionalString(req.body.adminNote), updatedAt: now, resolvedAt: now }
+            : requestItem
+        )
+      };
+      const withActivity = addActivity(
+        nextState,
+        req.user?.role ?? "admin",
+        "approved call calendar request",
+        describeCoverageRequest(nextState, coverageRequest),
+        "coverageRequest",
+        id
+      );
+      await store.save(withActivity);
+      res.json(withActivity);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/coverage-requests/:id/deny", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const id = getParam(req.params.id);
+      const state = await store.load();
+      const coverageRequest = requireCoverageRequest(state, id);
+      if (coverageRequest.status !== "pending") {
+        res.status(400).json({ error: "Coverage request is already resolved" });
+        return;
+      }
+      const now = new Date().toISOString();
+      const nextState: PlannerState = {
+        ...state,
+        coverageRequests: state.coverageRequests.map((requestItem) =>
+          requestItem.id === id
+            ? { ...requestItem, status: "denied", adminNote: readOptionalString(req.body.adminNote), updatedAt: now, resolvedAt: now }
+            : requestItem
+        )
+      };
+      const withActivity = addActivity(
+        nextState,
+        req.user?.role ?? "admin",
+        "denied call calendar request",
+        describeCoverageRequest(nextState, coverageRequest),
+        "coverageRequest",
+        id
+      );
+      await store.save(withActivity);
+      res.json(withActivity);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/claims", authenticate, async (req, res, next) => {
     try {
       const state = await store.load();
@@ -284,6 +447,205 @@ function assertCollection(value: string): CollectionName {
     throw new Error(`Unknown collection: ${value}`);
   }
   return value as CollectionName;
+}
+
+function deleteEntityFromCollection(state: PlannerState, collection: CollectionName, id: string): PlannerState {
+  return {
+    ...state,
+    [collection]: state[collection].filter((entity) => entity.id !== id)
+  } as PlannerState;
+}
+
+function deleteWeek(state: PlannerState, weekId: string): PlannerState {
+  if (state.weeks.length <= 1) {
+    throw new Error("Cannot delete the only week");
+  }
+
+  const blockIds = new Set(state.attendingBlocks.filter((block) => block.weekId === weekId).map((block) => block.id));
+  const caseIds = new Set(state.cases.filter((surgeryCase) => blockIds.has(surgeryCase.blockId)).map((surgeryCase) => surgeryCase.id));
+  const clinicIds = new Set(state.clinicSessions.filter((clinic) => clinic.weekId === weekId).map((clinic) => clinic.id));
+
+  return {
+    ...state,
+    weeks: state.weeks.filter((week) => week.id !== weekId),
+    attendingBlocks: state.attendingBlocks.filter((block) => block.weekId !== weekId),
+    cases: state.cases.filter((surgeryCase) => !blockIds.has(surgeryCase.blockId)),
+    clinicSessions: state.clinicSessions.filter((clinic) => clinic.weekId !== weekId),
+    assignments: state.assignments.filter((assignment) => {
+      if (assignment.kind === "block") return !blockIds.has(assignment.targetId);
+      if (assignment.kind === "case") return !caseIds.has(assignment.targetId);
+      if (assignment.kind === "clinic") return !clinicIds.has(assignment.targetId);
+      return true;
+    })
+  };
+}
+
+function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, existing?: CoverageEntry): CoverageEntry {
+  const now = new Date().toISOString();
+  const kind = assertCoverageKind(input.kind ?? existing?.kind);
+  const date = assertDate(input.date ?? existing?.date);
+  const residentId = readOptionalString(input.residentId);
+  const entry: CoverageEntry = {
+    id: readOptionalString(input.id) ?? existing?.id ?? createId("cover"),
+    date,
+    kind,
+    residentId,
+    note: readOptionalString(input.note) ?? "",
+    createdAt: existing?.createdAt ?? readOptionalString(input.createdAt) ?? now,
+    updatedAt: now
+  };
+
+  validateCoverageEntry(state, entry);
+  return entry;
+}
+
+function upsertCoverageEntry(state: PlannerState, entry: CoverageEntry): PlannerState {
+  const replacesSlot = entry.kind === "call" || entry.kind === "rounding";
+  const coverageEntries = state.coverageEntries
+    .filter((candidate) => candidate.id !== entry.id)
+    .filter((candidate) => !replacesSlot || candidate.date !== entry.date || candidate.kind !== entry.kind);
+
+  return {
+    ...state,
+    coverageEntries: [...coverageEntries, entry].sort(compareCoverageEntries)
+  };
+}
+
+function buildCoverageRequest(state: PlannerState, input: Partial<CoverageChangeRequest>): CoverageChangeRequest {
+  const now = new Date().toISOString();
+  const action = assertCoverageRequestAction(input.action);
+  const entryId = readOptionalString(input.entryId);
+  let requestedEntry: CoverageEntry | undefined;
+
+  if (action === "delete") {
+    if (!entryId) throw new Error("Delete requests require entryId");
+    requireCoverageEntry(state, entryId);
+  } else {
+    const existing = action === "update" && entryId ? requireCoverageEntry(state, entryId) : undefined;
+    requestedEntry = buildCoverageEntry(state, { ...input.requestedEntry, id: entryId ?? input.requestedEntry?.id }, existing);
+  }
+
+  return {
+    id: readOptionalString(input.id) ?? createId("cover_req"),
+    action,
+    status: "pending",
+    entryId,
+    requestedEntry,
+    requesterName: readOptionalString(input.requesterName),
+    message: readOptionalString(input.message) ?? "",
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function applyCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): PlannerState {
+  if (coverageRequest.action === "delete") {
+    if (!coverageRequest.entryId) throw new Error("Delete request is missing entryId");
+    return {
+      ...state,
+      coverageEntries: state.coverageEntries.filter((entry) => entry.id !== coverageRequest.entryId)
+    };
+  }
+
+  if (!coverageRequest.requestedEntry) {
+    throw new Error("Coverage request is missing requestedEntry");
+  }
+
+  const existing =
+    coverageRequest.action === "update" && coverageRequest.entryId
+      ? requireCoverageEntry(state, coverageRequest.entryId)
+      : undefined;
+  const entry = buildCoverageEntry(
+    state,
+    {
+      ...coverageRequest.requestedEntry,
+      id: coverageRequest.entryId ?? coverageRequest.requestedEntry.id,
+      createdAt: existing?.createdAt ?? coverageRequest.requestedEntry.createdAt
+    },
+    existing
+  );
+  return upsertCoverageEntry(state, entry);
+}
+
+function validateCoverageEntry(state: PlannerState, entry: CoverageEntry): void {
+  if (!isCoverageKindAllowedOnDate(entry.kind, entry.date)) {
+    throw new Error(`${entry.kind} is not allowed on ${entry.date}`);
+  }
+  if ((entry.kind === "call" || entry.kind === "rounding") && !entry.residentId) {
+    throw new Error(`${entry.kind} requires a resident`);
+  }
+  if (entry.residentId && !state.residents.some((resident) => resident.id === entry.residentId)) {
+    throw new Error(`Unknown resident: ${entry.residentId}`);
+  }
+}
+
+function requireCoverageEntry(state: PlannerState, id: string): CoverageEntry {
+  const entry = state.coverageEntries.find((candidate) => candidate.id === id);
+  if (!entry) throw new Error(`Coverage entry not found: ${id}`);
+  return entry;
+}
+
+function requireCoverageRequest(state: PlannerState, id: string): CoverageChangeRequest {
+  const coverageRequest = state.coverageRequests.find((candidate) => candidate.id === id);
+  if (!coverageRequest) throw new Error(`Coverage request not found: ${id}`);
+  return coverageRequest;
+}
+
+function assertCoverageKind(value: unknown): CoverageKind {
+  if (value === "call" || value === "rounding" || value === "off" || value === "note") {
+    return value;
+  }
+  throw new Error("Invalid coverage kind");
+}
+
+function assertCoverageRequestAction(value: unknown): CoverageRequestAction {
+  if (value === "create" || value === "update" || value === "delete") {
+    return value;
+  }
+  throw new Error("Invalid coverage request action");
+}
+
+function assertDate(value: unknown): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error("Invalid coverage date");
+  }
+  return value;
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function compareCoverageEntries(a: CoverageEntry, b: CoverageEntry): number {
+  const kindOrder = { call: 0, rounding: 1, off: 2, note: 3 };
+  return a.date.localeCompare(b.date) || kindOrder[a.kind] - kindOrder[b.kind] || a.id.localeCompare(b.id);
+}
+
+function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  if (coverageRequest.action === "delete") {
+    const entry = coverageRequest.entryId
+      ? state.coverageEntries.find((candidate) => candidate.id === coverageRequest.entryId)
+      : undefined;
+    return entry ? `Delete ${describeCoverageEntry(state, entry)}` : "Delete calendar entry";
+  }
+
+  if (coverageRequest.requestedEntry) {
+    return `${capitalize(coverageRequest.action)} ${describeCoverageEntry(state, coverageRequest.requestedEntry)}`;
+  }
+
+  return "Coverage calendar request";
+}
+
+function describeCoverageEntry(state: PlannerState, entry: CoverageEntry): string {
+  const residentName = entry.residentId
+    ? state.residents.find((resident) => resident.id === entry.residentId)?.name ?? "Unknown resident"
+    : "General";
+  const note = entry.note ? ` (${entry.note})` : "";
+  return `${residentName} ${entry.kind} on ${entry.date}${note}`;
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function getParam(value: string | string[]): string {

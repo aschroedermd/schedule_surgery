@@ -33,6 +33,8 @@ DATABASE_URL=memory npm run dev
 
 - Two roles: admin can edit everything; viewer can view and claim uncovered cases or blocks.
 - Weekly Monday-Friday board with OR blocks, sequential case timing, clinic sessions, warnings, and activity feed.
+- Monthly call and rounding calendar with resident colors, Friday-Sunday call slots, Saturday-Sunday rounding slots, weekday off/note entries, and red unassigned weekend blocks when neither call nor rounding is assigned.
+- Viewer calendar edits are submitted as requests; admins approve or deny them from the Requests tab.
 - Manual setup for hospitals, attendings, residents/fellows, unavailable time, case defaults, OR blocks, cases, and clinic sessions.
 - Auto-suggestion that preserves non-suggestion assignments and prioritizes safe OR coverage before clinic assignment.
 - Warning-but-allow behavior for off days, overlapping coverage, cross-hospital split risk under the 90-minute buffer, and same-day arrangement checks when a resident has a stronger interest-matched case available.
