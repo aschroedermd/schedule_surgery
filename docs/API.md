@@ -25,13 +25,40 @@ curl -X POST https://your-domain.example/api/auth/login \
 
 The response token can be passed as `Authorization: Bearer <token>`, but MCP/tools should prefer `X-API-Key`.
 
-Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. `guest` and named users start with `schroeder1`; named users are forced to change it after first login. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. Admin resets generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
+Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. `guest` and named users start with `schroeder1`; named users are forced to change it after first login. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
 
-The admin Users tab is protected by a separate pin, initially `9480`. It can change that pin, add/delete users, generate temporary reset passwords, and grant per-service privileges:
+The admin Users tab is protected by a separate pin, initially `9480`. It can change that pin, add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
 
 - `view`: read-only.
 - `request`: can submit coverage calendar edit requests for that service.
 - `edit`: can directly edit service assignments and coverage entries, and approve/deny requests for that service.
+
+User-management endpoints require an admin bearer token and the users pin:
+
+```text
+GET    /api/users?pin=9480
+POST   /api/users
+POST   /api/users/bulk
+PATCH  /api/users/:username
+PATCH  /api/users/:username/password
+DELETE /api/users/:username?pin=9480
+PATCH  /api/users-pin
+```
+
+For `POST /api/users` and `POST /api/users/bulk`, omit `password` to have the server generate a one-time temporary password. Bulk creation uses this shape:
+
+```json
+{
+  "pin": "9480",
+  "users": [
+    {
+      "username": "jsmith",
+      "displayName": "Jamie Smith",
+      "servicePrivileges": { "Davies": "request", "Berry": "view" }
+    }
+  ]
+}
+```
 
 ## Discovery
 

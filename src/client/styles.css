@@ -22,7 +22,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -53,7 +54,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 38px;
   border: 1px solid #cfd6df;
@@ -61,6 +63,10 @@ select {
   background: #fff;
   color: #1d2733;
   padding: 7px 9px;
+}
+
+textarea {
+  resize: vertical;
 }
 
 h1,
@@ -999,6 +1005,7 @@ h2 {
 
 .users-header,
 .user-add-form,
+.temporary-password-panel,
 .users-table-head,
 .user-row,
 .user-row-actions,
@@ -1013,11 +1020,50 @@ h2 {
 }
 
 .user-add-form {
-  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(140px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1.5fr) 120px minmax(150px, 0.8fr) minmax(150px, 0.8fr) auto;
   border: 1px solid #d3dbe5;
   border-radius: 8px;
   background: #fff;
   padding: 12px;
+  align-items: end;
+}
+
+.user-add-form textarea {
+  min-height: 82px;
+}
+
+.usernames-field {
+  align-self: stretch;
+}
+
+.add-privilege-grid {
+  grid-column: 1 / -1;
+}
+
+.temporary-password-panel {
+  border: 1px solid #c9d6e4;
+  border-radius: 8px;
+  background: #f8fbfd;
+  padding: 12px;
+}
+
+.temporary-password-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.temporary-password-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.temporary-password-list span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .users-table {

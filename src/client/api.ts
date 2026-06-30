@@ -31,6 +31,17 @@ export interface PasswordResetResponse extends UsersResponse {
   temporaryPassword: string;
 }
 
+export interface UserCreationResult {
+  user: UserSummary;
+  temporaryPassword?: string;
+}
+
+export interface UserCreateResponse extends UsersResponse, UserCreationResult {}
+
+export interface BulkUserCreateResponse extends UsersResponse {
+  created: UserCreationResult[];
+}
+
 export async function login(username: string, password: string): Promise<Session> {
   return request<Session>("/api/auth/login", {
     method: "POST",
@@ -180,13 +191,24 @@ export async function createUser(
   token: string,
   pin: string,
   payload: { username: string; displayName?: string; role?: Role; password?: string; servicePrivileges?: ServicePrivileges }
-): Promise<UserSummary[]> {
-  const result = await request<UsersResponse>("/api/users", {
+): Promise<UserCreateResponse> {
+  return request<UserCreateResponse>("/api/users", {
     method: "POST",
     token,
     body: JSON.stringify({ ...payload, pin })
   });
-  return result.users;
+}
+
+export async function createUsers(
+  token: string,
+  pin: string,
+  users: Array<{ username: string; displayName?: string; role?: Role; password?: string; servicePrivileges?: ServicePrivileges }>
+): Promise<BulkUserCreateResponse> {
+  return request<BulkUserCreateResponse>("/api/users/bulk", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ pin, users })
+  });
 }
 
 export async function updateUser(

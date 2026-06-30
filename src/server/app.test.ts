@@ -92,6 +92,56 @@ describe("planner API", () => {
       ])
     );
 
+    const createResponse = await request(app)
+      .post("/api/users")
+      .set("authorization", `Bearer ${token}`)
+      .send({ pin: "9480", username: "jsmith", servicePrivileges: { Berry: "request" } })
+      .expect(201);
+    expect(createResponse.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
+    expect(createResponse.body.user).toEqual(
+      expect.objectContaining({
+        username: "jsmith",
+        mustChangePassword: true,
+        servicePrivileges: expect.objectContaining({ Berry: "request", Davies: "view" })
+      })
+    );
+
+    const bulkResponse = await request(app)
+      .post("/api/users/bulk")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        pin: "9480",
+        users: [
+          { username: "bulkone", displayName: "Bulk One", servicePrivileges: { Davies: "request" } },
+          { username: "bulktwo", displayName: "Bulk Two", servicePrivileges: { Fogel: "edit" } }
+        ]
+      })
+      .expect(201);
+    expect(bulkResponse.body.created).toHaveLength(2);
+    expect(bulkResponse.body.created).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({ username: "bulkone", displayName: "Bulk One" }),
+          temporaryPassword: expect.stringMatching(/^[A-Za-z0-9]{14}$/)
+        }),
+        expect.objectContaining({
+          user: expect.objectContaining({ username: "bulktwo", displayName: "Bulk Two" }),
+          temporaryPassword: expect.stringMatching(/^[A-Za-z0-9]{14}$/)
+        })
+      ])
+    );
+
+    const jsmithLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "jsmith", password: createResponse.body.temporaryPassword })
+      .expect(200);
+    expect(jsmithLogin.body).toEqual(
+      expect.objectContaining({
+        mustChangePassword: true,
+        servicePrivileges: expect.objectContaining({ Berry: "request" })
+      })
+    );
+
     await request(app)
       .patch("/api/users/tcao")
       .set("authorization", `Bearer ${token}`)

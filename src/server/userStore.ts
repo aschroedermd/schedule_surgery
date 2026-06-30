@@ -37,11 +37,17 @@ export interface PasswordResetResult {
   temporaryPassword: string;
 }
 
+export interface UserCreationResult {
+  user: UserSummary;
+  temporaryPassword?: string;
+}
+
 export interface UserStore {
   authenticate(username: string, password: string): Promise<UserSummary | undefined>;
   getUser(username: string): Promise<UserSummary | undefined>;
   listUsers(): Promise<UserSummary[]>;
-  createUser(input: UpsertUserInput): Promise<UserSummary>;
+  createUser(input: UpsertUserInput): Promise<UserCreationResult>;
+  createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]>;
   updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "servicePrivileges">>): Promise<UserSummary>;
   deleteUser(username: string): Promise<void>;
   resetPassword(username: string): Promise<PasswordResetResult>;
@@ -72,28 +78,31 @@ export class FileUserStore implements UserStore {
     return data.users.map(toSummary).sort((a, b) => a.username.localeCompare(b.username));
   }
 
-  async createUser(input: UpsertUserInput): Promise<UserSummary> {
+  async createUser(input: UpsertUserInput): Promise<UserCreationResult> {
+    const [created] = await this.createUsers([input]);
+    return created;
+  }
+
+  async createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]> {
+    if (inputs.length === 0) throw new Error("At least one user is required");
     const data = await this.load();
-    const username = normalizeUsername(input.username);
-    if (data.users.some((user) => user.username === username)) {
-      throw new Error(`User already exists: ${username}`);
-    }
+    const existingUsernames = new Set(data.users.map((user) => user.username));
+    const batchUsernames = new Set<string>();
     const now = new Date().toISOString();
-    const user: StoredUser = {
-      username,
-      displayName: readOptionalString(input.displayName) ?? username,
-      role: username === "admin" ? "admin" : input.role ?? "viewer",
-      servicePrivileges: normalizePrivileges(input.servicePrivileges),
-      passwordHash: hashSecret(readOptionalString(input.password) ?? DEFAULT_PASSWORD),
-      createdAt: now,
-      updatedAt: now,
-      passwordUpdatedAt: now,
-      mustChangePassword: username !== "guest",
-      temporaryPasswordExpiresAt: undefined
-    };
-    data.users.push(user);
+    const created: Array<{ stored: StoredUser; temporaryPassword?: string }> = [];
+
+    for (const input of inputs) {
+      const username = normalizeUsername(input.username);
+      if (existingUsernames.has(username) || batchUsernames.has(username)) {
+        throw new Error(`User already exists: ${username}`);
+      }
+      batchUsernames.add(username);
+      created.push(makeCreatedUser({ ...input, username }, now));
+    }
+
+    data.users.push(...created.map(({ stored }) => stored));
     await this.save(data);
-    return toSummary(user);
+    return created.map(({ stored, temporaryPassword }) => ({ user: toSummary(stored), temporaryPassword }));
   }
 
   async updateUser(
@@ -250,6 +259,35 @@ function makeSeedUser(username: string, displayName: string, role: Role, passwor
     passwordUpdatedAt: now,
     mustChangePassword: username !== "admin" && username !== "guest",
     temporaryPasswordExpiresAt: undefined
+  };
+}
+
+function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredUser; temporaryPassword?: string } {
+  const username = normalizeUsername(input.username);
+  const role: Role = username === "admin" ? "admin" : input.role === "admin" ? "admin" : "viewer";
+  const providedPassword = readOptionalString(input.password);
+  const temporaryPassword = providedPassword ? undefined : generateTemporaryPassword();
+  const password = providedPassword ?? temporaryPassword ?? DEFAULT_PASSWORD;
+  const temporaryPasswordExpiresAt = temporaryPassword
+    ? new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString()
+    : undefined;
+
+  return {
+    stored: {
+      username,
+      displayName: readOptionalString(input.displayName) ?? username,
+      role,
+      servicePrivileges: normalizePrivileges(
+        role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : input.servicePrivileges
+      ),
+      passwordHash: hashSecret(password),
+      createdAt: now,
+      updatedAt: now,
+      passwordUpdatedAt: now,
+      mustChangePassword: username !== "guest",
+      temporaryPasswordExpiresAt
+    },
+    temporaryPassword
   };
 }
 

@@ -33,8 +33,9 @@ DATABASE_URL=memory npm run dev
 
 - Username/password browser logins. Seeded users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`.
 - `guest` and newly seeded named users start with password `schroeder1`; named users are forced to change it after first login. `admin` starts with `ADMIN_PASSWORD` if configured, otherwise `schroeder1`.
-- Admins get a pinned Users tab, initially protected by pin code `9480`, for adding/removing users, generating temporary reset passwords, changing the pin, and granting per-service `view`, `request`, or `edit` privileges.
-- Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` instead of plaintext, so current passwords are not viewable; admin resets generate a temporary password that is shown once and forces the user to choose a new password.
+- Admins get a pinned Users tab, initially protected by pin code `9480`, for single or bulk user creation, deleting users, changing the pin, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges.
+- New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. Server-generated temporary passwords are shown once and force the user to choose a new password.
+- Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` instead of plaintext, so current passwords are not viewable; admin resets and generated new-user passwords are temporary and shown once.
 - Weekly Monday-Friday board with OR blocks, sequential case timing, clinic sessions, warnings, and activity feed.
 - Monthly call and rounding calendar with resident colors, Friday-Sunday call slots, Saturday-Sunday rounding slots, weekday off/note entries, and red unassigned weekend blocks when neither call nor rounding is assigned.
 - Request-privileged calendar edits are submitted as requests; users with edit privilege for that service can approve or deny them from the Requests tab.

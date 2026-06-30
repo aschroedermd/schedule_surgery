@@ -32,7 +32,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
   -d '{"username":"guest","password":"schroeder1"}'
 ```
 
-Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. Named seeded users must change the default password after first login. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
+Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. Named seeded users must change the default password after first login. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
 
 The live OpenAPI document is at:
 

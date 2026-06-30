@@ -128,8 +128,22 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         res.status(403).json({ error: "Invalid users pin code" });
         return;
       }
-      const user = await userStore.createUser(req.body);
-      res.status(201).json({ user, users: await userStore.listUsers() });
+      const created = await userStore.createUser(req.body);
+      res.status(201).json({ ...created, users: await userStore.listUsers() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/users/bulk", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!(await verifyUserAdminPin(userStore, req.body.pin))) {
+        res.status(403).json({ error: "Invalid users pin code" });
+        return;
+      }
+      const users = Array.isArray(req.body.users) ? req.body.users : [];
+      const created = await userStore.createUsers(users);
+      res.status(201).json({ created, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
     }
