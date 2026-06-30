@@ -148,6 +148,30 @@ h2 {
   font-weight: 700;
 }
 
+.service-line-picker {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #17364f;
+}
+
+.service-line-picker svg {
+  color: #20675a;
+}
+
+.service-line-picker select {
+  width: auto;
+  min-width: 120px;
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: #17364f;
+  padding: 0 22px 0 0;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
 .week-manager {
   display: flex;
   flex-wrap: wrap;
@@ -170,6 +194,12 @@ h2 {
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.muted-copy {
+  color: #5d7088;
+  font-size: 0.95rem;
+  font-weight: 700;
 }
 
 .primary-button,
@@ -402,10 +432,31 @@ h2 {
 
 .tag-list,
 .off-list,
-.warnings {
+.warnings,
+.service-tag-picker {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+}
+
+.service-tag-option {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d6dee7;
+  border-radius: 999px;
+  background: #f6f8fb;
+  padding: 4px 8px;
+  color: #294965;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.service-tag-option input {
+  width: 14px;
+  min-height: 14px;
+  padding: 0;
 }
 
 .warnings span {
@@ -525,6 +576,11 @@ h2 {
 .clinic-assignments {
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.attending-entity .row-actions select {
+  width: 118px;
+  min-height: 34px;
 }
 
 .activity-list {
@@ -931,6 +987,101 @@ h2 {
   color: #4d5f72;
 }
 
+.users-panel,
+.account-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.pin-panel {
+  max-width: 440px;
+}
+
+.users-header,
+.user-add-form,
+.users-table-head,
+.user-row,
+.user-row-actions,
+.password-reset {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+}
+
+.users-header {
+  grid-template-columns: 1fr auto;
+}
+
+.user-add-form {
+  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(140px, 1fr) auto;
+  border: 1px solid #d3dbe5;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.users-table {
+  display: grid;
+  gap: 8px;
+}
+
+.users-table-head,
+.user-row {
+  grid-template-columns: minmax(170px, 1fr) 120px minmax(340px, 2fr) minmax(190px, 1fr) auto;
+}
+
+.users-table-head {
+  color: #657386;
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.user-row {
+  border: 1px solid #d3dbe5;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.user-identity,
+.password-reset {
+  display: grid;
+  gap: 6px;
+}
+
+.password-reset span {
+  color: #657386;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.temporary-password {
+  width: fit-content;
+  border: 1px solid #b9c8d8;
+  border-radius: 6px;
+  background: #eef5fb;
+  color: #1d3f5f;
+  padding: 5px 7px;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.privilege-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 7px;
+}
+
+.privilege-grid label {
+  gap: 3px;
+  font-size: 0.74rem;
+}
+
+.user-row-actions {
+  grid-template-columns: auto auto;
+}
+
 @media (max-width: 1100px) {
   .board-grid {
     grid-template-columns: repeat(5, 236px);
@@ -942,7 +1093,11 @@ h2 {
   }
 
   .two-column,
-  .three-column {
+  .three-column,
+  .users-header,
+  .user-add-form,
+  .users-table-head,
+  .user-row {
     grid-template-columns: 1fr;
   }
 }

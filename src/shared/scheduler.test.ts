@@ -100,8 +100,8 @@ describe("scheduler core", () => {
           id: "res_t_cao",
           name: "T-Cao",
           trainingLevel: "PGY2" as const,
-          serviceStatus: "on-service" as const,
-          tags: ["on-service"],
+          serviceTags: ["Davies"],
+          tags: ["Davies"],
           trainingInterests: [],
           unavailable: [{ id: "off_after_july_8", date: "2026-07-09", endDate: "2026-12-31", label: "off after July 8" }]
         }
@@ -164,5 +164,17 @@ describe("scheduler core", () => {
     );
 
     expect(arrangementWarning?.message).toBe("check arrangement");
+  });
+
+  it("filters weekly schedules by service line", () => {
+    const state = createInitialState();
+
+    const daviesSchedule = computeScheduledCases(state, "week_current", "Davies");
+    const berrySchedule = computeScheduledCases(state, "week_current", "Berry");
+
+    expect(daviesSchedule.map((surgeryCase) => surgeryCase.id)).toEqual(
+      expect.arrayContaining(["case_chen_whipple", "case_patel_bypass", "case_morris_hernia"])
+    );
+    expect(berrySchedule).toEqual([]);
   });
 });

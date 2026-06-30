@@ -1,5 +1,6 @@
 import { Pool } from "pg";
-import { PlannerState, Resident } from "../shared/types";
+import { normalizeServiceLine } from "../shared/services";
+import { Attending, ClinicSession, PlannerState, Resident } from "../shared/types";
 import { createInitialState, createSeedCoverageEntries } from "./sampleData";
 
 export interface StateStore {
@@ -83,46 +84,119 @@ export function createDefaultStore(): StateStore {
 
 export function normalizePlannerState(state: PlannerState): PlannerState {
   const partial = state as Partial<PlannerState>;
+  const hospitals = partial.hospitals ?? [];
   return {
     ...state,
-    residents: normalizeResidents(state.residents ?? []),
+    hospitals,
+    attendings: normalizeAttendings(partial.attendings ?? [], hospitals[0]?.id),
+    residents: normalizeResidents(partial.residents ?? []),
+    clinicSessions: normalizeClinicSessions(partial.clinicSessions ?? []),
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
     coverageRequests: partial.coverageRequests ?? []
   };
 }
 
 function normalizeResidents(residents: Resident[]): Resident[] {
-  const migrated = residents.map((resident) => {
-    if (resident.id === "res_chief" && resident.name === "Chief Resident") {
-      return { ...resident, name: "Schroeder", color: "#f4cf55" };
-    }
-    if (resident.id === "res_fellow" && resident.name === "MIS Fellow") {
-      return { ...resident, name: "Adeleke", color: "#c89af7" };
-    }
-    if (resident.id === "res_offservice" && resident.name === "Off-Service Resident") {
-      return { ...resident, name: "Cao", color: "#f37d6e" };
-    }
-    if (resident.id === "res_chief" && !resident.color) return { ...resident, color: "#f4cf55" };
-    if (resident.id === "res_fellow" && !resident.color) return { ...resident, color: "#c89af7" };
-    if (resident.id === "res_offservice" && !resident.color) return { ...resident, color: "#f37d6e" };
-    return resident;
-  });
+  const migrated = residents.map(normalizeResident);
 
-  if (migrated.some((resident) => resident.id === "res_swaak")) {
-    return migrated;
-  }
-
-  return [
-    ...migrated,
-    {
+  if (!migrated.some((resident) => resident.id === "res_swaak")) {
+    migrated.push({
       id: "res_swaak",
-      name: "Swaak",
+      name: "Amanda Swaak",
       trainingLevel: "PGY4",
-      serviceStatus: "on-service",
+      serviceTags: ["Davies"],
       color: "#e65245",
       tags: ["home"],
       trainingInterests: ["general surgery", "abdominal wall", "clinic"],
       unavailable: []
-    }
-  ];
+    });
+  }
+
+  if (!migrated.some((resident) => resident.id === "res_broden")) {
+    migrated.push({
+      id: "res_broden",
+      name: "Nicole Broden",
+      trainingLevel: "PGY2",
+      serviceTags: ["Davies"],
+      color: "#55a6d9",
+      tags: ["home"],
+      trainingInterests: ["general surgery", "endoscopy", "clinic"],
+      unavailable: []
+    });
+  }
+
+  return migrated;
+}
+
+function normalizeResident(resident: Resident): Resident {
+  const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" };
+  const base = {
+    ...resident,
+    serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus),
+    tags: resident.tags ?? [],
+    trainingInterests: resident.trainingInterests ?? [],
+    unavailable: resident.unavailable ?? []
+  };
+
+  if (resident.id === "res_chief") {
+    return { ...base, name: "Andrew Schroeder", color: base.color ?? "#f4cf55", serviceTags: ensureDavies(base.serviceTags) };
+  }
+  if (resident.id === "res_fellow") {
+    return { ...base, name: "Adedayo Adeleke", color: base.color ?? "#c89af7", serviceTags: ensureDavies(base.serviceTags) };
+  }
+  if (resident.id === "res_offservice") {
+    return { ...base, name: "T-Cao", color: base.color ?? "#f37d6e", serviceTags: ensureDavies(base.serviceTags) };
+  }
+  if (resident.id === "res_swaak") {
+    return { ...base, name: "Amanda Swaak", color: base.color ?? "#e65245", serviceTags: ensureDavies(base.serviceTags) };
+  }
+  if (resident.id === "res_broden") {
+    return { ...base, name: "Nicole Broden", color: base.color ?? "#55a6d9", serviceTags: ensureDavies(base.serviceTags) };
+  }
+
+  return base;
+}
+
+function normalizeServiceTags(serviceTags: string[] | undefined, legacyStatus?: "on-service" | "off-service"): string[] {
+  if (serviceTags?.length) return uniqueTrimmed(serviceTags);
+  return legacyStatus === "off-service" ? [] : ["Davies"];
+}
+
+function ensureDavies(serviceTags: string[]): string[] {
+  return serviceTags.includes("Davies") ? serviceTags : [...serviceTags, "Davies"];
+}
+
+function normalizeAttendings(attendings: Attending[], defaultHospitalId?: string): Attending[] {
+  const migrated = attendings.map((attending) => {
+    const service = normalizeLegacyService(attending.service);
+    return { ...attending, service };
+  });
+
+  if (!migrated.some((attending) => attending.id === "att_nussbaum" || attending.name.toLowerCase().includes("nussbaum"))) {
+    migrated.push({
+      id: "att_nussbaum",
+      name: "Dr. Nussbaum",
+      service: "Berry",
+      priority: 3,
+      defaultHospitalId
+    });
+  }
+
+  return migrated;
+}
+
+function normalizeClinicSessions(clinicSessions: ClinicSession[]): ClinicSession[] {
+  return clinicSessions.map((clinic) => ({
+    ...clinic,
+    service: normalizeLegacyService(clinic.service)
+  }));
+}
+
+function normalizeLegacyService(service: string | undefined): string {
+  if (!service) return "Davies";
+  return normalizeServiceLine(service);
+}
+
+function uniqueTrimmed(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }

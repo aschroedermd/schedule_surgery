@@ -19,11 +19,22 @@ import {
   CoverageEntry,
   CoverageKind,
   CoverageRequestAction,
-  PlannerState
+  PlannerState,
+  SessionUser
 } from "../shared/types";
-import { authenticate, AuthenticatedRequest, createToken, requireAdmin, validateLogin } from "./auth";
+import {
+  AuthenticatedRequest,
+  authenticate,
+  createToken,
+  requireAdmin,
+  requirePasswordReady,
+  requireServiceEdit,
+  requireServiceRequest,
+  validateLogin
+} from "./auth";
 import { getOpenApiDocument } from "./openapi";
 import { StateStore } from "./store";
+import { UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
 
 const collections: CollectionName[] = [
   "hospitals",
@@ -36,8 +47,10 @@ const collections: CollectionName[] = [
   "clinicSessions"
 ];
 
-export function createApp(store: StateStore) {
+export function createApp(store: StateStore, options: { userStore?: UserStore } = {}) {
   const app = express();
+  const userStore = options.userStore ?? createDefaultUserStore();
+  const requireAuth = authenticate(userStore);
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
 
@@ -75,59 +88,167 @@ export function createApp(store: StateStore) {
     `);
   });
 
-  app.post("/api/auth/login", (req, res) => {
-    const { role, password } = req.body as { role?: "admin" | "viewer"; password?: string };
-    if (!role || !password || !["admin", "viewer"].includes(role) || !validateLogin(role, password)) {
-      res.status(401).json({ error: "Invalid role or password" });
-      return;
-    }
-    res.json({ token: createToken(role), role });
-  });
-
-  app.get("/api/session", authenticate, (req: AuthenticatedRequest, res) => {
-    res.json({ role: req.user?.role, authType: req.user?.authType });
-  });
-
-  app.get("/api/state", authenticate, async (_req, res, next) => {
+  app.post("/api/auth/login", async (req, res, next) => {
     try {
-      res.json(await store.load());
+      const { username, password } = req.body as { username?: string; password?: string };
+      if (!username || !password) {
+        res.status(401).json({ error: "Invalid username or password" });
+        return;
+      }
+      const user = await validateLogin(userStore, username, password);
+      if (!user) {
+        res.status(401).json({ error: "Invalid username or password" });
+        return;
+      }
+      res.json({ token: createToken(user), ...user });
     } catch (error) {
       next(error);
     }
   });
 
-  app.get("/api/weeks/:weekId/schedule", authenticate, async (req, res, next) => {
+  app.get("/api/session", requireAuth, (req: AuthenticatedRequest, res) => {
+    res.json(req.user);
+  });
+
+  app.get("/api/users", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!(await verifyUserAdminPin(userStore, req.query.pin))) {
+        res.status(403).json({ error: "Invalid users pin code" });
+        return;
+      }
+      res.json({ users: await userStore.listUsers() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/users", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!(await verifyUserAdminPin(userStore, req.body.pin))) {
+        res.status(403).json({ error: "Invalid users pin code" });
+        return;
+      }
+      const user = await userStore.createUser(req.body);
+      res.status(201).json({ user, users: await userStore.listUsers() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/users/:username", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!(await verifyUserAdminPin(userStore, req.body.pin))) {
+        res.status(403).json({ error: "Invalid users pin code" });
+        return;
+      }
+      const user = await userStore.updateUser(getParam(req.params.username), {
+        displayName: readOptionalString(req.body.displayName),
+        role: req.body.role === "admin" ? "admin" : req.body.role === "viewer" ? "viewer" : undefined,
+        servicePrivileges: req.body.servicePrivileges
+      });
+      res.json({ user, users: await userStore.listUsers() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/users/:username/password", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!(await verifyUserAdminPin(userStore, req.body.pin ?? req.query.pin))) {
+        res.status(403).json({ error: "Invalid users pin code" });
+        return;
+      }
+      const reset = await userStore.resetPassword(getParam(req.params.username));
+      res.json({ ...reset, users: await userStore.listUsers() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/users/:username", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!(await verifyUserAdminPin(userStore, req.query.pin))) {
+        res.status(403).json({ error: "Invalid users pin code" });
+        return;
+      }
+      await userStore.deleteUser(getParam(req.params.username));
+      res.json({ users: await userStore.listUsers() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/users-pin", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      await userStore.updatePin(String(req.body.currentPin ?? ""), String(req.body.nextPin ?? ""));
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/me/password", requireAuth, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      const user = await userStore.changePassword(
+        req.user.username,
+        String(req.body.currentPassword ?? ""),
+        String(req.body.nextPassword ?? "")
+      );
+      res.json({ ...user });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/state", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      res.json(filterStateForUser(await store.load(), req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/weeks/:weekId/schedule", requireAuth, requirePasswordReady, async (req, res, next) => {
     try {
       const state = await store.load();
-      res.json(buildWeekSchedule(state, getParam(req.params.weekId)));
+      res.json(buildWeekSchedule(state, getParam(req.params.weekId), readOptionalString(req.query.service)));
     } catch (error) {
       next(error);
     }
   });
 
-  app.get("/api/weeks/:weekId/warnings", authenticate, async (req, res, next) => {
+  app.get("/api/weeks/:weekId/warnings", requireAuth, requirePasswordReady, async (req, res, next) => {
     try {
       const state = await store.load();
-      res.json(collectWarnings(state, getParam(req.params.weekId)));
+      res.json(collectWarnings(state, getParam(req.params.weekId), readOptionalString(req.query.service)));
     } catch (error) {
       next(error);
     }
   });
 
-  app.get("/api/weeks/:weekId/uncovered-message", authenticate, async (req, res, next) => {
+  app.get("/api/weeks/:weekId/uncovered-message", requireAuth, requirePasswordReady, async (req, res, next) => {
     try {
       const state = await store.load();
       const date = typeof req.query.date === "string" ? req.query.date : undefined;
-      res.json({ message: buildUncoveredMessage(state, getParam(req.params.weekId), date) });
+      res.json({ message: buildUncoveredMessage(state, getParam(req.params.weekId), date, readOptionalString(req.query.service)) });
     } catch (error) {
       next(error);
     }
   });
 
-  app.post("/api/weeks/:weekId/suggest", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/weeks/:weekId/suggest", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
-      const nextState = applySuggestion(state, getParam(req.params.weekId), req.user?.role ?? "admin");
+      const nextState = applySuggestion(
+        state,
+        getParam(req.params.weekId),
+        req.user?.role ?? "admin",
+        readOptionalString(req.query.service)
+      );
       await store.save(nextState);
       res.json(nextState);
     } catch (error) {
@@ -135,7 +256,7 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/entities/:collection", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/entities/:collection", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const collection = assertCollection(getParam(req.params.collection));
       const state = await store.load();
@@ -152,7 +273,7 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.patch("/api/entities/:collection/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/entities/:collection/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const collection = assertCollection(getParam(req.params.collection));
       const id = getParam(req.params.id);
@@ -169,7 +290,7 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.delete("/api/entities/:collection/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.delete("/api/entities/:collection/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const collection = assertCollection(getParam(req.params.collection));
       const id = getParam(req.params.id);
@@ -183,9 +304,11 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/assignments", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/assignments", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
+      const serviceLine = getAssignmentTargetServiceLine(state, req.body.kind, req.body.targetId);
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const assignment = makeAssignment(req.body.kind, req.body.targetId, req.body.residentId, "admin", Boolean(req.body.locked));
       const caseIdsInAssignedBlock =
         assignment.kind === "block"
@@ -211,10 +334,14 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.patch("/api/assignments/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/assignments/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
+      const existing = state.assignments.find((assignment) => assignment.id === id);
+      if (!existing) throw new Error(`Assignment not found: ${id}`);
+      const serviceLine = getAssignmentTargetServiceLine(state, existing.kind, existing.targetId);
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const nextState: PlannerState = {
         ...state,
         assignments: state.assignments.map((assignment) =>
@@ -229,10 +356,14 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.delete("/api/assignments/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.delete("/api/assignments/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
+      const existing = state.assignments.find((assignment) => assignment.id === id);
+      if (!existing) throw new Error(`Assignment not found: ${id}`);
+      const serviceLine = getAssignmentTargetServiceLine(state, existing.kind, existing.targetId);
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const nextState: PlannerState = {
         ...state,
         assignments: state.assignments.filter((assignment) => assignment.id !== id)
@@ -245,9 +376,11 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/coverage-entries", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/coverage-entries", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
+      const serviceLine = readServiceLine(req);
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const entry = buildCoverageEntry(state, req.body);
       const nextState = upsertCoverageEntry(state, entry);
       const withActivity = addActivity(
@@ -265,10 +398,12 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.patch("/api/coverage-entries/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/coverage-entries/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
+      const serviceLine = readServiceLine(req);
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const existing = requireCoverageEntry(state, id);
       const entry = buildCoverageEntry(state, { ...existing, ...req.body, id }, existing);
       const nextState = upsertCoverageEntry(state, entry);
@@ -287,10 +422,12 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.delete("/api/coverage-entries/:id", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.delete("/api/coverage-entries/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
+      const serviceLine = readServiceLine(req);
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const existing = requireCoverageEntry(state, id);
       const nextState: PlannerState = {
         ...state,
@@ -311,10 +448,12 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/coverage-requests", authenticate, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/coverage-requests", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
-      const coverageRequest = buildCoverageRequest(state, req.body);
+      const serviceLine = readServiceLine(req);
+      if (!requireServiceRequest(req, res, serviceLine)) return;
+      const coverageRequest = buildCoverageRequest(state, req.body, req.user, serviceLine);
       const nextState: PlannerState = {
         ...state,
         coverageRequests: [coverageRequest, ...state.coverageRequests]
@@ -334,11 +473,12 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/coverage-requests/:id/approve", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/coverage-requests/:id/approve", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
       const coverageRequest = requireCoverageRequest(state, id);
+      if (!requireServiceEdit(req, res, coverageRequest.serviceLine)) return;
       if (coverageRequest.status !== "pending") {
         res.status(400).json({ error: "Coverage request is already resolved" });
         return;
@@ -368,11 +508,12 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/coverage-requests/:id/deny", authenticate, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/coverage-requests/:id/deny", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
       const coverageRequest = requireCoverageRequest(state, id);
+      if (!requireServiceEdit(req, res, coverageRequest.serviceLine)) return;
       if (coverageRequest.status !== "pending") {
         res.status(400).json({ error: "Coverage request is already resolved" });
         return;
@@ -401,7 +542,7 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/claims", authenticate, async (req, res, next) => {
+  app.post("/api/claims", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
       const claim = req.body as ClaimRequest;
@@ -409,6 +550,8 @@ export function createApp(store: StateStore) {
         res.status(400).json({ error: "Invalid claim" });
         return;
       }
+      const serviceLine = getAssignmentTargetServiceLine(state, claim.scope, claim.targetId);
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const nextState = applyClaim(state, claim);
       await store.save(nextState);
       res.status(201).json(nextState);
@@ -417,7 +560,7 @@ export function createApp(store: StateStore) {
     }
   });
 
-  app.post("/api/import/preview", authenticate, requireAdmin, (_req, res) => {
+  app.post("/api/import/preview", requireAuth, requirePasswordReady, requireAdmin, (_req, res) => {
     res.status(501).json({
       error: "OCR import is reserved for a later version",
       targetShape: ["AttendingBlock", "Case"]
@@ -511,7 +654,12 @@ function upsertCoverageEntry(state: PlannerState, entry: CoverageEntry): Planner
   };
 }
 
-function buildCoverageRequest(state: PlannerState, input: Partial<CoverageChangeRequest>): CoverageChangeRequest {
+function buildCoverageRequest(
+  state: PlannerState,
+  input: Partial<CoverageChangeRequest>,
+  requester: SessionUser | undefined,
+  serviceLine: string | undefined
+): CoverageChangeRequest {
   const now = new Date().toISOString();
   const action = assertCoverageRequestAction(input.action);
   const entryId = readOptionalString(input.entryId);
@@ -531,7 +679,9 @@ function buildCoverageRequest(state: PlannerState, input: Partial<CoverageChange
     status: "pending",
     entryId,
     requestedEntry,
-    requesterName: readOptionalString(input.requesterName),
+    serviceLine,
+    requesterUsername: requester?.username,
+    requesterName: readOptionalString(input.requesterName) ?? requester?.displayName,
     message: readOptionalString(input.message) ?? "",
     createdAt: now,
     updatedAt: now
@@ -646,6 +796,59 @@ function describeCoverageEntry(state: PlannerState, entry: CoverageEntry): strin
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function filterStateForUser(state: PlannerState, user: SessionUser | undefined): PlannerState {
+  if (!user || user.role === "admin") return state;
+  return {
+    ...state,
+    coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(user, coverageRequest))
+  };
+}
+
+function canSeeCoverageRequest(user: SessionUser, coverageRequest: CoverageChangeRequest): boolean {
+  if (coverageRequest.requesterUsername === user.username) return true;
+  if (hasServicePrivilege(user, coverageRequest.serviceLine, "edit")) return true;
+  return !coverageRequest.serviceLine && hasAnyEditPrivilege(user);
+}
+
+function hasAnyEditPrivilege(user: SessionUser): boolean {
+  return Object.values(user.servicePrivileges).some((privilege) => privilege === "edit");
+}
+
+async function verifyUserAdminPin(userStore: UserStore, value: unknown): Promise<boolean> {
+  const pin = Array.isArray(value) ? value[0] : value;
+  return typeof pin === "string" && (await userStore.verifyPin(pin));
+}
+
+function readServiceLine(req: AuthenticatedRequest): string | undefined {
+  return readOptionalString(req.body?.serviceLine) ?? readOptionalString(req.query.service);
+}
+
+function getAssignmentTargetServiceLine(state: PlannerState, kind: unknown, targetId: unknown): string {
+  if (typeof targetId !== "string") throw new Error("Assignment targetId is required");
+  if (kind === "case") {
+    const surgeryCase = state.cases.find((candidate) => candidate.id === targetId);
+    if (!surgeryCase) throw new Error(`Case not found: ${targetId}`);
+    return getBlockServiceLine(state, surgeryCase.blockId);
+  }
+  if (kind === "block") {
+    return getBlockServiceLine(state, targetId);
+  }
+  if (kind === "clinic") {
+    const clinic = state.clinicSessions.find((candidate) => candidate.id === targetId);
+    if (!clinic) throw new Error(`Clinic not found: ${targetId}`);
+    return clinic.service;
+  }
+  throw new Error("Invalid assignment kind");
+}
+
+function getBlockServiceLine(state: PlannerState, blockId: string): string {
+  const block = state.attendingBlocks.find((candidate) => candidate.id === blockId);
+  if (!block) throw new Error(`Block not found: ${blockId}`);
+  const attending = state.attendings.find((candidate) => candidate.id === block.attendingId);
+  if (!attending) throw new Error(`Attending not found: ${block.attendingId}`);
+  return attending.service;
 }
 
 function getParam(value: string | string[]): string {

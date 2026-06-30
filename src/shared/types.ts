@@ -1,6 +1,14 @@
 export type Role = "admin" | "viewer";
 
+export type ServicePrivilege = "view" | "request" | "edit";
+
+export type ServicePrivileges = Record<string, ServicePrivilege>;
+
 export type ServiceStatus = "on-service" | "off-service";
+
+export const SERVICE_LINES = ["Davies", "Berry", "Fogel", "Keeley", "NRV"] as const;
+
+export type ServiceLine = (typeof SERVICE_LINES)[number];
 
 export type TrainingLevel = "PGY1" | "PGY2" | "PGY3" | "PGY4" | "PGY5" | "Fellow";
 
@@ -49,7 +57,8 @@ export interface Resident {
   id: string;
   name: string;
   trainingLevel: TrainingLevel;
-  serviceStatus: ServiceStatus;
+  serviceTags: string[];
+  serviceStatus?: ServiceStatus;
   color?: string;
   tags: string[];
   trainingInterests: string[];
@@ -131,6 +140,8 @@ export interface CoverageChangeRequest {
   status: CoverageRequestStatus;
   entryId?: string;
   requestedEntry?: CoverageEntry;
+  serviceLine?: string;
+  requesterUsername?: string;
   requesterName?: string;
   message: string;
   adminNote?: string;
@@ -212,6 +223,27 @@ export interface Warning {
   assignmentId?: string;
   targetId?: string;
   message: string;
+}
+
+export interface UserSummary {
+  username: string;
+  displayName: string;
+  role: Role;
+  servicePrivileges: ServicePrivileges;
+  createdAt: string;
+  updatedAt: string;
+  passwordUpdatedAt: string;
+  mustChangePassword: boolean;
+  temporaryPasswordExpiresAt?: string;
+}
+
+export interface SessionUser {
+  username: string;
+  displayName: string;
+  role: Role;
+  servicePrivileges: ServicePrivileges;
+  mustChangePassword: boolean;
+  temporaryPasswordExpiresAt?: string;
 }
 
 export type CollectionName =

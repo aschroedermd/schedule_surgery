@@ -1,26 +1,51 @@
 import request from "supertest";
+import crypto from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { createInitialState } from "./sampleData";
 import { MemoryStateStore } from "./store";
+import { ServicePrivilege } from "../shared/types";
 
-async function loginAs(role: "admin" | "viewer") {
+async function loginAs(username: string) {
   const app = createApp(new MemoryStateStore(createInitialState()));
-  const password = role === "admin" ? "admin-dev-password" : "viewer-dev-password";
-  const response = await request(app).post("/api/auth/login").send({ role, password }).expect(200);
-  return { app, token: response.body.token as string };
+  const password = username === "admin" ? "admin-dev-password" : "schroeder1";
+  const token = await loginOnApp(app, username, password);
+  return { app, token };
+}
+
+async function loginOnApp(app: ReturnType<typeof createApp>, username: string, password = "schroeder1") {
+  const response = await request(app).post("/api/auth/login").send({ username, password }).expect(200);
+  const token = response.body.token as string;
+  if (response.body.mustChangePassword) {
+    await request(app)
+      .patch("/api/me/password")
+      .set("authorization", `Bearer ${token}`)
+      .send({ currentPassword: password, nextPassword: `${password}-${username}` })
+      .expect(200);
+  }
+  return token;
+}
+
+async function grantPrivilege(app: ReturnType<typeof createApp>, adminToken: string, username: string, service: string, privilege: ServicePrivilege) {
+  await request(app)
+    .patch(`/api/users/${username}`)
+    .set("authorization", `Bearer ${adminToken}`)
+    .send({ pin: "9480", servicePrivileges: { [service]: privilege } })
+    .expect(200);
 }
 
 describe("planner API", () => {
   beforeEach(() => {
+    process.env.USER_STORE_PATH = path.join(os.tmpdir(), `planner-users-${crypto.randomUUID()}.json`);
     process.env.ADMIN_PASSWORD = "admin-dev-password";
-    process.env.VIEWER_PASSWORD = "viewer-dev-password";
     process.env.APP_SECRET = "test-secret";
     process.env.ADMIN_API_KEY = "test-admin-api-key";
     process.env.VIEWER_API_KEY = "test-viewer-api-key";
   });
 
-  it("allows admin writes and blocks viewer writes", async () => {
+  it("allows admin writes and blocks view-only users", async () => {
     const admin = await loginAs("admin");
     await request(admin.app)
       .post("/api/entities/hospitals")
@@ -28,10 +53,10 @@ describe("planner API", () => {
       .send({ id: "hosp_test", name: "Test Hospital", shortName: "TH", color: "#333333" })
       .expect(201);
 
-    const viewer = await loginAs("viewer");
-    await request(viewer.app)
+    const guest = await loginAs("guest");
+    await request(guest.app)
       .post("/api/entities/hospitals")
-      .set("authorization", `Bearer ${viewer.token}`)
+      .set("authorization", `Bearer ${guest.token}`)
       .send({ id: "hosp_denied", name: "Denied", shortName: "DN", color: "#333333" })
       .expect(403);
   });
@@ -52,6 +77,55 @@ describe("planner API", () => {
       .expect(201);
   });
 
+  it("seeds user accounts and lets admin manage privileges behind the users pin", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app).get("/api/users?pin=1111").set("authorization", `Bearer ${token}`).expect(403);
+    const usersResponse = await request(app).get("/api/users?pin=9480").set("authorization", `Bearer ${token}`).expect(200);
+
+    expect(usersResponse.body.users).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ username: "guest", role: "viewer" }),
+        expect.objectContaining({ username: "aswaak", role: "viewer" }),
+        expect.objectContaining({ username: "tcao", role: "viewer" }),
+        expect.objectContaining({ username: "admin", role: "admin" })
+      ])
+    );
+
+    await request(app)
+      .patch("/api/users/tcao")
+      .set("authorization", `Bearer ${token}`)
+      .send({ pin: "9480", servicePrivileges: { Berry: "edit" } })
+      .expect(200);
+    const resetResponse = await request(app)
+      .patch("/api/users/tcao/password?pin=9480")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(resetResponse.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
+
+    const tcaoLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "tcao", password: resetResponse.body.temporaryPassword })
+      .expect(200);
+
+    expect(tcaoLogin.body).toEqual(
+      expect.objectContaining({
+        mustChangePassword: true,
+        servicePrivileges: expect.objectContaining({ Berry: "edit", Davies: "view" })
+      })
+    );
+    await request(app)
+      .get("/api/state")
+      .set("authorization", `Bearer ${tcaoLogin.body.token}`)
+      .expect(403);
+    const changeResponse = await request(app)
+      .patch("/api/me/password")
+      .set("authorization", `Bearer ${tcaoLogin.body.token}`)
+      .send({ currentPassword: resetResponse.body.temporaryPassword, nextPassword: "new-pass" })
+      .expect(200);
+    expect(changeResponse.body.mustChangePassword).toBe(false);
+  });
+
   it("serves the seeded July call calendar from the imported PDF", async () => {
     const { app, token } = await loginAs("admin");
 
@@ -59,10 +133,14 @@ describe("planner API", () => {
 
     expect(response.body.residents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "res_chief", name: "Schroeder", color: "#f4cf55" }),
-        expect.objectContaining({ id: "res_fellow", name: "Adeleke", color: "#c89af7" }),
-        expect.objectContaining({ id: "res_swaak", name: "Swaak", color: "#e65245" })
+        expect.objectContaining({ id: "res_chief", name: "Andrew Schroeder", serviceTags: ["Davies"], color: "#f4cf55" }),
+        expect.objectContaining({ id: "res_fellow", name: "Adedayo Adeleke", serviceTags: ["Davies"], color: "#c89af7" }),
+        expect.objectContaining({ id: "res_swaak", name: "Amanda Swaak", serviceTags: ["Davies"], color: "#e65245" }),
+        expect.objectContaining({ id: "res_broden", name: "Nicole Broden", serviceTags: ["Davies"], color: "#55a6d9" })
       ])
+    );
+    expect(response.body.attendings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "att_nussbaum", name: "Dr. Nussbaum", service: "Berry" })])
     );
     expect(response.body.coverageEntries).toEqual(
       expect.arrayContaining([
@@ -87,29 +165,29 @@ describe("planner API", () => {
     expect(response.body.paths["/api/assignments"].post).toBeDefined();
   });
 
-  it("routes viewer calendar edits through admin-approved requests", async () => {
+  it("routes request-privileged calendar edits through editor-approved requests", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
-    const viewerLogin = await request(app)
-      .post("/api/auth/login")
-      .send({ role: "viewer", password: "viewer-dev-password" })
-      .expect(200);
     const adminLogin = await request(app)
       .post("/api/auth/login")
-      .send({ role: "admin", password: "admin-dev-password" })
+      .send({ username: "admin", password: "admin-dev-password" })
       .expect(200);
-    const viewerToken = viewerLogin.body.token as string;
     const adminToken = adminLogin.body.token as string;
+    await grantPrivilege(app, adminToken, "aswaak", "Davies", "request");
+    await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");
+    const requesterToken = await loginOnApp(app, "aswaak");
+    const editorToken = await loginOnApp(app, "aschroeder");
 
     await request(app)
       .post("/api/coverage-entries")
-      .set("authorization", `Bearer ${viewerToken}`)
-      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "" })
+      .set("authorization", `Bearer ${requesterToken}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "", serviceLine: "Davies" })
       .expect(403);
 
     const requestResponse = await request(app)
       .post("/api/coverage-requests")
-      .set("authorization", `Bearer ${viewerToken}`)
+      .set("authorization", `Bearer ${requesterToken}`)
       .send({
+        serviceLine: "Davies",
         action: "create",
         requestedEntry: {
           date: "2026-07-03",
@@ -125,11 +203,16 @@ describe("planner API", () => {
     expect(requestResponse.body.coverageEntries).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_fellow" })])
     );
-    expect(requestResponse.body.coverageRequests[0]).toEqual(expect.objectContaining({ status: "pending" }));
+    expect(requestResponse.body.coverageRequests[0]).toEqual(
+      expect.objectContaining({ status: "pending", requesterUsername: "aswaak", serviceLine: "Davies" })
+    );
+
+    const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
+    expect(requesterState.body.coverageRequests).toHaveLength(1);
 
     const approvalResponse = await request(app)
       .post(`/api/coverage-requests/${requestId}/approve`)
-      .set("authorization", `Bearer ${adminToken}`)
+      .set("authorization", `Bearer ${editorToken}`)
       .expect(200);
 
     expect(approvalResponse.body.coverageEntries).toEqual(
@@ -140,10 +223,12 @@ describe("planner API", () => {
     );
   });
 
-  it("lets a viewer claim an uncovered case and records the claim", async () => {
-    const { app, token } = await loginAs("viewer");
+  it("lets a service editor claim an uncovered case and records the claim", async () => {
+    const admin = await loginAs("admin");
+    await grantPrivilege(admin.app, admin.token, "aswaak", "Davies", "edit");
+    const token = await loginOnApp(admin.app, "aswaak");
 
-    const claimResponse = await request(app)
+    const claimResponse = await request(admin.app)
       .post("/api/claims")
       .set("authorization", `Bearer ${token}`)
       .send({ scope: "case", targetId: "case_patel_bypass", residentId: "res_fellow" })
@@ -178,6 +263,22 @@ describe("planner API", () => {
     expect(response.body.message).toContain("Uncovered cases for");
     expect(response.body.message).toContain("around");
     expect(response.body.message).toContain("Dr.");
+  });
+
+  it("filters weekly schedule responses by selected service line", async () => {
+    const { app, token } = await loginAs("admin");
+
+    const daviesResponse = await request(app)
+      .get("/api/weeks/week_current/schedule?service=Davies")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+    const berryResponse = await request(app)
+      .get("/api/weeks/week_current/schedule?service=Berry")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(daviesResponse.body.days.flatMap((day: { blocks: unknown[] }) => day.blocks)).toHaveLength(3);
+    expect(berryResponse.body.days.flatMap((day: { blocks: unknown[] }) => day.blocks)).toHaveLength(0);
   });
 
   it("promotes individual case assignments to a block assignment without retaining same-block case assignments", async () => {

@@ -26,10 +26,12 @@ services:
       DATABASE_URL: postgres://planner:${POSTGRES_PASSWORD}@db:5432/surgery_schedule
       APP_SECRET: ${APP_SECRET}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      VIEWER_PASSWORD: ${VIEWER_PASSWORD}
+      USER_STORE_PATH: /data/users.json
       ADMIN_API_KEY: ${ADMIN_API_KEY}
       VIEWER_API_KEY: ${VIEWER_API_KEY}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+    volumes:
+      - planner-users:/data
     expose:
       - "8787"
     healthcheck:
@@ -56,5 +58,6 @@ services:
 
 volumes:
   planner-db:
+  planner-users:
   caddy-data:
   caddy-config:

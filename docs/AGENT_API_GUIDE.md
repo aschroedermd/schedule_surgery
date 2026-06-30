@@ -8,7 +8,7 @@ Use this guide when an AI agent, script, or MCP server needs to read or update t
 - Use exact ISO dates (`YYYY-MM-DD`) and 24-hour times (`HH:MM`). Validate weekday/date pairs before writing; for example, in 2026, `2026-07-29` is Wednesday, not Monday.
 - Always fetch `GET /api/state` before mutating. Resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state.
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
-- Use the admin API key only for intentional writes. Use the viewer API key for read-only tools and viewer claims.
+- Use the admin API key only for intentional writes. Use the viewer API key for read-only tools.
 - After writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings.
 
 ## Authentication
@@ -22,7 +22,17 @@ curl -H "X-API-Key: $ADMIN_API_KEY" "$BASE_URL/api/state"
 Roles:
 
 - `admin`: read/write access, including rosters, cases, clinics, assignments, suggestions, and deletes.
-- `viewer`: read access plus low-friction coverage claims through `POST /api/claims`.
+- `viewer`: read access for API-key tools.
+
+Browser sessions use username/password login, not the API-key role names:
+
+```bash
+curl -X POST "$BASE_URL/api/auth/login" \
+  -H "content-type: application/json" \
+  -d '{"username":"guest","password":"schroeder1"}'
+```
+
+Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. Named seeded users must change the default password after first login. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
 
 The live OpenAPI document is at:
 
@@ -45,6 +55,13 @@ The database stores one JSON planner state. Important collections:
 - `activityEvents`: audit trail of changes.
 
 Cases do not have independent start times. To change timing, patch the block `firstCaseStartTime`, or patch case `durationMinutes` / `order`.
+
+Service lines are selected client-side and persisted by each browser. The built-in service lines are `Davies`, `Berry`, `Fogel`, `Keeley`, and `NRV`.
+
+- `attendings[].service` stores the attending's service line.
+- `residents[].serviceTags` stores the service lines where the resident is currently on service.
+- Legacy or non-service-specific planner data is normalized into `Davies`.
+- Pass `?service=Davies` or another service line to week schedule, warning, suggestion, and uncovered-message endpoints when you need the same filtered view the browser shows.
 
 ## Multi-Week Handling
 
@@ -86,9 +103,11 @@ If a week-scoped endpoint receives an unknown `weekId`, the scheduler returns an
 ```text
 GET    /api/state
 GET    /api/weeks/{weekId}/schedule
+GET    /api/weeks/{weekId}/schedule?service=Davies
 GET    /api/weeks/{weekId}/warnings
 GET    /api/weeks/{weekId}/uncovered-message
 GET    /api/weeks/{weekId}/uncovered-message?date=YYYY-MM-DD
+GET    /api/weeks/{weekId}/uncovered-message?service=Davies&date=YYYY-MM-DD
 POST   /api/entities/{collection}
 PATCH  /api/entities/{collection}/{id}
 DELETE /api/entities/{collection}/{id}
@@ -97,6 +116,7 @@ PATCH  /api/assignments/{id}
 DELETE /api/assignments/{id}
 POST   /api/claims
 POST   /api/weeks/{weekId}/suggest
+POST   /api/weeks/{weekId}/suggest?service=Davies
 ```
 
 Allowed `collection` values:
@@ -179,6 +199,7 @@ Assign Broden to that case:
 ## Agent Heuristics
 
 - When a user says “covered by Broden,” resolve Broden from `residents` by substring/name, then preserve the actual `id`.
+- When a user is working in a service line, filter reads and suggestions with the same `service` query parameter. Davies is the default seeded service.
 - When a user says “Katz at RMH,” resolve Katz from `attendings` and RMH from `hospitals.shortName`.
 - When a user names a date or says "next week", resolve the target Monday, match or create a `weeks` row, and keep that `weekId` through the whole operation.
 - If the user gives a weekday and date that conflict, ask before leaving persistent changes. For temporary smoke tests, create and delete test data in the same run.

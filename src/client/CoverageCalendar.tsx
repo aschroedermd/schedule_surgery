@@ -36,8 +36,7 @@ import {
   CoverageEntry,
   CoverageKind,
   PlannerState,
-  Resident,
-  Role
+  Resident
 } from "../shared/types";
 
 type MutationRunner = (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
@@ -45,11 +44,13 @@ type MutationRunner = (action: () => Promise<PlannerState | void>, message?: str
 interface CoverageTabProps {
   state: PlannerState;
   token: string;
-  role: Role;
+  selectedService: string;
+  canEdit: boolean;
+  canRequest: boolean;
   onMutate: MutationRunner;
 }
 
-export function CalendarTab({ state, token, role, onMutate }: CoverageTabProps) {
+export function CalendarTab({ state, token, selectedService, canEdit, canRequest, onMutate }: CoverageTabProps) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCoverageMonth(state));
   const dates = useMemo(() => getMonthGridDates(month), [month]);
   const pendingCount = state.coverageRequests.filter((request) => request.status === "pending").length;
@@ -107,7 +108,9 @@ export function CalendarTab({ state, token, role, onMutate }: CoverageTabProps) 
             key={date}
             state={state}
             token={token}
-            role={role}
+            selectedService={selectedService}
+            canEdit={canEdit}
+            canRequest={canRequest}
             month={month}
             date={date}
             onMutate={onMutate}
@@ -118,8 +121,16 @@ export function CalendarTab({ state, token, role, onMutate }: CoverageTabProps) 
   );
 }
 
-function CoverageDay({ state, token, role, month, date, onMutate }: CoverageTabProps & { month: string; date: string }) {
-  const isAdmin = role === "admin";
+function CoverageDay({
+  state,
+  token,
+  selectedService,
+  canEdit,
+  canRequest,
+  month,
+  date,
+  onMutate
+}: CoverageTabProps & { month: string; date: string }) {
   const inMonth = getMonthFromDate(date) === month;
   const entries = state.coverageEntries.filter((entry) => entry.date === date);
   const callEntry = getCoverageSlot(state.coverageEntries, date, "call");
@@ -145,15 +156,19 @@ function CoverageDay({ state, token, role, month, date, onMutate }: CoverageTabP
   async function addNote(event: FormEvent) {
     event.preventDefault();
     const entry = makeClientCoverageEntry(date, noteDraft.kind, noteDraft.residentId || undefined, noteDraft.note);
-    const action = isAdmin
-      ? () => createCoverageEntry(token, entry)
+    const action = canEdit
+      ? () => createCoverageEntry(token, entry, selectedService)
       : () =>
-          submitCoverageRequest(token, {
-            action: "create",
-            requestedEntry: entry,
-            message: `Request ${entry.kind} entry`
-          });
-    await onMutate(action, isAdmin ? "Calendar note saved" : "Request submitted");
+          submitCoverageRequest(
+            token,
+            {
+              action: "create",
+              requestedEntry: entry,
+              message: `Request ${entry.kind} entry`
+            },
+            selectedService
+          );
+    await onMutate(action, canEdit ? "Calendar note saved" : "Request submitted");
     setNoteDraft((current) => ({ ...current, note: "" }));
     setShowNoteForm(false);
   }
@@ -184,8 +199,10 @@ function CoverageDay({ state, token, role, month, date, onMutate }: CoverageTabP
             entry={callEntry}
             state={state}
             token={token}
-            isAdmin={isAdmin}
-            disabled={!inMonth}
+            selectedService={selectedService}
+            canEdit={canEdit}
+            canRequest={canRequest}
+            disabled={!inMonth || (!canEdit && !canRequest)}
             onMutate={onMutate}
           />
         )}
@@ -197,8 +214,10 @@ function CoverageDay({ state, token, role, month, date, onMutate }: CoverageTabP
             entry={roundingEntry}
             state={state}
             token={token}
-            isAdmin={isAdmin}
-            disabled={!inMonth}
+            selectedService={selectedService}
+            canEdit={canEdit}
+            canRequest={canRequest}
+            disabled={!inMonth || (!canEdit && !canRequest)}
             onMutate={onMutate}
           />
         )}
@@ -211,14 +230,16 @@ function CoverageDay({ state, token, role, month, date, onMutate }: CoverageTabP
             entry={entry}
             residents={state.residents}
             canDelete={inMonth}
-            isAdmin={isAdmin}
+            selectedService={selectedService}
+            canEdit={canEdit}
+            canRequest={canRequest}
             token={token}
             onMutate={onMutate}
           />
         ))}
       </div>
 
-      {inMonth && !isRoundingDate(date) && !showNoteForm && (
+      {inMonth && (canEdit || canRequest) && !isRoundingDate(date) && !showNoteForm && (
         <button type="button" className="secondary-button coverage-add-note-button" onClick={() => setShowNoteForm(true)}>
           add+
         </button>
@@ -252,7 +273,7 @@ function CoverageDay({ state, token, role, month, date, onMutate }: CoverageTabP
             placeholder="Note"
             onChange={(event) => setNoteDraft({ ...noteDraft, note: event.target.value })}
           />
-          <button title={isAdmin ? "Add note" : "Request note"} className="icon-button" type="submit">
+          <button title={canEdit ? "Add note" : "Request note"} className="icon-button" type="submit">
             <Plus size={15} />
           </button>
         </form>
@@ -268,7 +289,9 @@ function CoverageSlotSelect({
   entry,
   state,
   token,
-  isAdmin,
+  selectedService,
+  canEdit,
+  canRequest,
   disabled,
   onMutate
 }: {
@@ -278,7 +301,9 @@ function CoverageSlotSelect({
   entry?: CoverageEntry;
   state: PlannerState;
   token: string;
-  isAdmin: boolean;
+  selectedService: string;
+  canEdit: boolean;
+  canRequest: boolean;
   disabled: boolean;
   onMutate: MutationRunner;
 }) {
@@ -293,22 +318,29 @@ function CoverageSlotSelect({
     if (disabled) return;
     if (!entry && !residentId) return;
 
-    if (isAdmin) {
+    if (canEdit) {
       if (!residentId && entry) {
-        await onMutate(() => deleteCoverageEntry(token, entry.id), "Calendar assignment cleared");
+        await onMutate(() => deleteCoverageEntry(token, entry.id, selectedService), "Calendar assignment cleared");
         return;
       }
       if (entry) {
-        await onMutate(() => updateCoverageEntry(token, entry.id, { residentId }), "Calendar assignment saved");
+        await onMutate(() => updateCoverageEntry(token, entry.id, { residentId }, selectedService), "Calendar assignment saved");
         return;
       }
-      await onMutate(() => createCoverageEntry(token, { date, kind, residentId, note: "" }), "Calendar assignment saved");
+      await onMutate(() => createCoverageEntry(token, { date, kind, residentId, note: "" }, selectedService), "Calendar assignment saved");
       return;
     }
 
+    if (!canRequest) return;
+
     if (!residentId && entry) {
       await onMutate(
-        () => submitCoverageRequest(token, { action: "delete", entryId: entry.id, message: `Request clearing ${kind}` }),
+        () =>
+          submitCoverageRequest(
+            token,
+            { action: "delete", entryId: entry.id, message: `Request clearing ${kind}` },
+            selectedService
+          ),
         "Request submitted"
       );
       return;
@@ -320,12 +352,16 @@ function CoverageSlotSelect({
         : makeClientCoverageEntry(date, kind, residentId, "");
       await onMutate(
         () =>
-          submitCoverageRequest(token, {
-            action: entry ? "update" : "create",
-            entryId: entry?.id,
-            requestedEntry,
-            message: `Request ${kind} assignment`
-          }),
+          submitCoverageRequest(
+            token,
+            {
+              action: entry ? "update" : "create",
+              entryId: entry?.id,
+              requestedEntry,
+              message: `Request ${kind} assignment`
+            },
+            selectedService
+          ),
         "Request submitted"
       );
     }
@@ -355,14 +391,18 @@ function CoverageChip({
   entry,
   residents,
   canDelete,
-  isAdmin,
+  selectedService,
+  canEdit,
+  canRequest,
   token,
   onMutate
 }: {
   entry: CoverageEntry;
   residents: Resident[];
   canDelete: boolean;
-  isAdmin: boolean;
+  selectedService: string;
+  canEdit: boolean;
+  canRequest: boolean;
   token: string;
   onMutate: MutationRunner;
 }) {
@@ -389,15 +429,19 @@ function CoverageChip({
 
   async function deleteEntry() {
     if (!canDelete) return;
-    const action = isAdmin
-      ? () => deleteCoverageEntry(token, entry.id)
+    const action = canEdit
+      ? () => deleteCoverageEntry(token, entry.id, selectedService)
       : () =>
-          submitCoverageRequest(token, {
-            action: "delete",
-            entryId: entry.id,
-            message: `Request removing ${entry.kind}`
-          });
-    await onMutate(action, isAdmin ? "Calendar entry removed" : "Request submitted");
+          submitCoverageRequest(
+            token,
+            {
+              action: "delete",
+              entryId: entry.id,
+              message: `Request removing ${entry.kind}`
+            },
+            selectedService
+          );
+    await onMutate(action, canEdit ? "Calendar entry removed" : "Request submitted");
     setShowActions(false);
   }
 
@@ -409,16 +453,20 @@ function CoverageChip({
       residentId: editDraft.residentId || undefined,
       note: editDraft.note.trim()
     };
-    const action = isAdmin
-      ? () => updateCoverageEntry(token, entry.id, nextEntry)
+    const action = canEdit
+      ? () => updateCoverageEntry(token, entry.id, nextEntry, selectedService)
       : () =>
-          submitCoverageRequest(token, {
-            action: "update",
-            entryId: entry.id,
-            requestedEntry: nextEntry,
-            message: `Request editing ${entry.kind}`
-          });
-    await onMutate(action, isAdmin ? "Calendar entry updated" : "Request submitted");
+          submitCoverageRequest(
+            token,
+            {
+              action: "update",
+              entryId: entry.id,
+              requestedEntry: nextEntry,
+              message: `Request editing ${entry.kind}`
+            },
+            selectedService
+          );
+    await onMutate(action, canEdit ? "Calendar entry updated" : "Request submitted");
     setIsEditing(false);
     setShowActions(false);
   }
@@ -430,9 +478,9 @@ function CoverageChip({
         <strong>{residentName}</strong>
         {entry.note && <em>{entry.note}</em>}
       </div>
-      {canDelete && (
+      {canDelete && (canEdit || canRequest) && (
         <button
-          title={isAdmin ? "Edit entry" : "Request edit"}
+          title={canEdit ? "Edit entry" : "Request edit"}
           className="icon-button"
           onClick={() => {
             setShowActions((current) => !current);
@@ -496,8 +544,17 @@ function CoverageChip({
   );
 }
 
-export function RequestsTab({ state, token, role, onMutate }: CoverageTabProps) {
-  const isAdmin = role === "admin";
+export function RequestsTab({
+  state,
+  token,
+  canApprove,
+  onMutate
+}: {
+  state: PlannerState;
+  token: string;
+  canApprove: boolean;
+  onMutate: MutationRunner;
+}) {
   const sortedRequests = [...state.coverageRequests].sort((a, b) => {
     if (a.status !== b.status) return a.status === "pending" ? -1 : b.status === "pending" ? 1 : 0;
     return b.updatedAt.localeCompare(a.updatedAt);
@@ -522,7 +579,7 @@ export function RequestsTab({ state, token, role, onMutate }: CoverageTabProps) 
             <p>{coverageRequest.message || "No extra note"}</p>
             <span>{new Date(coverageRequest.createdAt).toLocaleString()}</span>
           </div>
-          {isAdmin && coverageRequest.status === "pending" && (
+          {canApprove && coverageRequest.status === "pending" && (
             <div className="request-actions">
               <button
                 className="secondary-button"

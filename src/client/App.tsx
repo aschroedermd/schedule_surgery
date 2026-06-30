@@ -2,9 +2,11 @@ import {
   CalendarDays,
   ClipboardCopy,
   Lock,
+  LogIn,
   LogOut,
   Plus,
   RefreshCw,
+  Scissors,
   Trash2,
   Unlock,
   UserPlus,
@@ -19,14 +21,18 @@ import {
   deleteAssignment,
   deleteEntity,
   fetchSchedule,
+  fetchSession,
   fetchState,
   getUncoveredMessage,
   login,
   runSuggestion,
+  Session,
+  UnauthorizedError,
   updateAssignment,
   updateEntity
 } from "./api";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
+import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import { addDays, displayDate, getCurrentMonday, getMondayForDate, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
 import {
@@ -40,23 +46,33 @@ import {
   ProcedureDefault,
   Resident,
   Role,
+  SERVICE_LINES,
   ScheduledBlock,
   ScheduledCase,
   ScheduledClinicSession,
-  ServiceStatus,
   SurgeryCase,
   TrainingLevel,
+  UserSummary,
   Week,
   WeekSchedule
 } from "../shared/types";
+import {
+  DEFAULT_SERVICE_LINE,
+  clinicMatchesService,
+  getAttendingsForService,
+  getStateServiceLines,
+  isResidentOnService,
+  sortResidentsForService
+} from "../shared/services";
 
-type Tab = "board" | "calendar" | "requests" | "entry" | "roster" | "defaults" | "activity";
+type Tab = "board" | "calendar" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
+type PlannerSession = Session;
 
 const emptyResident: Resident = {
   id: "",
   name: "",
   trainingLevel: "PGY3",
-  serviceStatus: "on-service",
+  serviceTags: [DEFAULT_SERVICE_LINE],
   color: "#2f78c4",
   tags: [],
   trainingInterests: [],
@@ -64,23 +80,69 @@ const emptyResident: Resident = {
 };
 
 export function App() {
-  const [session, setSession] = useState<{ token: string; role: Role } | undefined>(() => {
-    const token = localStorage.getItem("plannerToken");
-    const role = localStorage.getItem("plannerRole") as Role | null;
-    return token && role ? { token, role } : undefined;
-  });
+  const [session, setSession] = useState<PlannerSession | undefined>(() => getStoredSession());
+  const [showLoggedOut, setShowLoggedOut] = useState(false);
   const [state, setState] = useState<PlannerState | undefined>();
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
   const [selectedWeekId, setSelectedWeekId] = useState(() => localStorage.getItem("plannerSelectedWeekId") ?? "");
+  const [selectedService, setSelectedService] = useState(() => getStoredServiceLine());
   const [activeTab, setActiveTab] = useState<Tab>("board");
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
 
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
+  const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
   const isAdmin = session?.role === "admin";
+  const selectedPrivilege = session ? getSessionPrivilege(session, selectedService) : "view";
+  const canEditSelectedService = Boolean(session && (isAdmin || selectedPrivilege === "edit"));
+  const canRequestSelectedService = Boolean(session && (canEditSelectedService || selectedPrivilege === "request"));
+  const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session)));
   const pendingCoverageRequestCount = state?.coverageRequests.filter((request) => request.status === "pending").length ?? 0;
 
-  async function refresh(nextState?: PlannerState, preferredWeekId = selectedWeekId) {
+  function showLoggedOutScreen() {
+    clearStoredSession();
+    setSession(undefined);
+    setState(undefined);
+    setSchedule(undefined);
+    setError(undefined);
+    setToast(undefined);
+    setShowLoggedOut(true);
+  }
+
+  function handleExpiredSession(error: unknown): boolean {
+    if (!(error instanceof UnauthorizedError)) return false;
+    showLoggedOutScreen();
+    return true;
+  }
+
+  function handleLogout() {
+    showLoggedOutScreen();
+  }
+
+  function handleLogin(nextSession: PlannerSession) {
+    setShowLoggedOut(false);
+    storeSession(nextSession);
+    setSession(nextSession);
+  }
+
+  function handlePasswordChanged(user: UserSummary) {
+    if (!session) return;
+    const nextSession: PlannerSession = {
+      ...session,
+      username: user.username,
+      displayName: user.displayName,
+      role: user.role,
+      servicePrivileges: user.servicePrivileges,
+      mustChangePassword: user.mustChangePassword,
+      temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
+    };
+    storeSession(nextSession);
+    setSession(nextSession);
+    setError(undefined);
+    setToast("Password changed");
+  }
+
+  async function refresh(nextState?: PlannerState, preferredWeekId = selectedWeekId, serviceLine = selectedService) {
     if (!session) return;
     const loadedState = nextState ?? (await fetchState(session.token));
     const weekId = chooseWeekId(loadedState.weeks, preferredWeekId);
@@ -88,7 +150,7 @@ export function App() {
     if (weekId) {
       setSelectedWeekId(weekId);
       localStorage.setItem("plannerSelectedWeekId", weekId);
-      setSchedule(await fetchSchedule(session.token, weekId));
+      setSchedule(await fetchSchedule(session.token, weekId, serviceLine));
     } else {
       setSelectedWeekId("");
       localStorage.removeItem("plannerSelectedWeekId");
@@ -104,6 +166,7 @@ export function App() {
       await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
       if (message) setToast(message);
     } catch (mutationError) {
+      if (handleExpiredSession(mutationError)) return;
       setError(mutationError instanceof Error ? mutationError.message : "Something went wrong");
     }
   }
@@ -114,32 +177,93 @@ export function App() {
       setError(undefined);
       setSelectedWeekId(weekId);
       localStorage.setItem("plannerSelectedWeekId", weekId);
-      setSchedule(await fetchSchedule(session.token, weekId));
+      setSchedule(await fetchSchedule(session.token, weekId, selectedService));
     } catch (loadError) {
+      if (handleExpiredSession(loadError)) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load week");
+    }
+  }
+
+  async function selectServiceLine(serviceLine: string) {
+    if (serviceLine === selectedService) return;
+    setSelectedService(serviceLine);
+    localStorage.setItem("plannerSelectedServiceLine", serviceLine);
+    if (!session || !selectedWeekId) return;
+    try {
+      setError(undefined);
+      setSchedule(await fetchSchedule(session.token, selectedWeekId, serviceLine));
+    } catch (loadError) {
+      if (handleExpiredSession(loadError)) return;
+      setError(loadError instanceof Error ? loadError.message : "Unable to load service");
     }
   }
 
   useEffect(() => {
     if (!session) return;
-    refresh().catch((loadError) => {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load planner");
-    });
-  }, [session?.token]);
+    const token = session.token;
+    let cancelled = false;
+    async function loadPlanner() {
+      try {
+        const currentSession = await fetchSession(token);
+        if (cancelled) return;
+        const nextSession = { token, ...currentSession };
+        storeSession(nextSession);
+        setSession(nextSession);
+        if (nextSession.mustChangePassword) return;
+        await refresh();
+      } catch (loadError) {
+        if (cancelled || handleExpiredSession(loadError)) return;
+        setError(loadError instanceof Error ? loadError.message : "Unable to load planner");
+      }
+    }
+    if (session.mustChangePassword) return;
+    loadPlanner();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.token, session?.mustChangePassword]);
+
+  useEffect(() => {
+    if (!session) return;
+    if ((activeTab === "users" || activeTab === "entry" || activeTab === "roster" || activeTab === "defaults") && !isAdmin) {
+      setActiveTab("board");
+      return;
+    }
+    if (activeTab === "requests" && !canUseRequests) {
+      setActiveTab("board");
+    }
+  }, [activeTab, canUseRequests, isAdmin, session?.username]);
 
   if (!session) {
-    return <LoginScreen onLogin={setSession} />;
+    if (showLoggedOut) {
+      return <LoggedOutScreen onReturn={() => setShowLoggedOut(false)} />;
+    }
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  if (session.mustChangePassword) {
+    return (
+      <PasswordChangeRequiredScreen
+        token={session.token}
+        username={session.username}
+        onPasswordChanged={handlePasswordChanged}
+      />
+    );
   }
 
   if (!state || !schedule || !selectedWeek || !selectedWeekId) {
-    return <Shell role={session.role} onLogout={() => logout(setSession)} error={error}>Loading planner...</Shell>;
+    return <Shell role={session.role} onLogout={handleLogout} error={error}>Loading planner...</Shell>;
   }
 
   return (
-    <Shell role={session.role} onLogout={() => logout(setSession)} error={error} toast={toast}>
+    <Shell role={session.role} onLogout={handleLogout} error={error} toast={toast}>
       <header className="planner-header">
         <div>
-          <p className="eyebrow">Resident OR Coverage</p>
+          <ServiceLinePicker
+            serviceLines={serviceLines}
+            selectedService={selectedService}
+            onSelect={selectServiceLine}
+          />
           <h1>{selectedWeek.label}</h1>
           <p className="week-range">{formatWeekRange(selectedWeek, state.settings.weekdayOnly)}</p>
         </div>
@@ -152,14 +276,23 @@ export function App() {
             onSelect={selectWeek}
             onMutate={runMutation}
           />
-          <button title="Refresh" className="icon-button" onClick={() => refresh()}>
+          <button
+            title="Refresh"
+            className="icon-button"
+            onClick={() =>
+              refresh(undefined, selectedWeekId, selectedService).catch((refreshError) => {
+                if (handleExpiredSession(refreshError)) return;
+                setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
+              })
+            }
+          >
             <RefreshCw size={18} />
           </button>
           {isAdmin && (
             <button
               title="Suggest schedule"
               className="primary-button"
-              onClick={() => runMutation(() => runSuggestion(session.token, selectedWeekId), "Suggestion refreshed")}
+              onClick={() => runMutation(() => runSuggestion(session.token, selectedWeekId, selectedService), "Suggestion refreshed")}
             >
               <Wand2 size={18} />
               Suggest
@@ -169,7 +302,7 @@ export function App() {
             title="Copy uncovered week"
             className="secondary-button"
             onClick={async () => {
-              const message = await getUncoveredMessage(session.token, selectedWeekId);
+              const message = await getUncoveredMessage(session.token, selectedWeekId, undefined, selectedService);
               await navigator.clipboard.writeText(message);
               setToast("Uncovered message copied");
             }}
@@ -184,11 +317,10 @@ export function App() {
         {([
           ["board", "Board"],
           ["calendar", "Calendar"],
-          ["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"],
-          ["entry", "Cases & Clinic"],
-          ["roster", "Residents"],
-          ["defaults", "Setup"],
-          ["activity", "Activity"]
+          ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"]] as const : []),
+          ...(isAdmin ? [["entry", "Cases & Clinic"], ["roster", "Residents"], ["defaults", "Setup"], ["users", "Users"]] as const : []),
+          ["activity", "Activity"],
+          ["account", "Account"]
         ] as const).map(([tab, label]) => (
           <button key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
             {label}
@@ -201,42 +333,64 @@ export function App() {
           state={state}
           schedule={schedule}
           token={session.token}
-          role={session.role}
+          selectedService={selectedService}
+          canEdit={canEditSelectedService}
           onMutate={runMutation}
           onCopied={(message) => setToast(message)}
         />
       )}
       {activeTab === "calendar" && (
-        <CalendarTab state={state} token={session.token} role={session.role} onMutate={runMutation} />
+        <CalendarTab
+          state={state}
+          token={session.token}
+          selectedService={selectedService}
+          canEdit={canEditSelectedService}
+          canRequest={canRequestSelectedService}
+          onMutate={runMutation}
+        />
       )}
       {activeTab === "requests" && (
-        <RequestsTab state={state} token={session.token} role={session.role} onMutate={runMutation} />
+        <RequestsTab
+          state={state}
+          token={session.token}
+          canApprove={canEditSelectedService || isAdmin}
+          onMutate={runMutation}
+        />
       )}
       {activeTab === "entry" && (
-        <EntryTab state={state} week={selectedWeek} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
+        <EntryTab state={state} week={selectedWeek} token={session.token} selectedService={selectedService} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "roster" && (
-        <RosterTab state={state} week={selectedWeek} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
+        <RosterTab state={state} week={selectedWeek} token={session.token} selectedService={selectedService} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "defaults" && (
-        <DefaultsTab state={state} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
+        <DefaultsTab state={state} token={session.token} selectedService={selectedService} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "activity" && <ActivityTab state={state} />}
+      {activeTab === "users" && isAdmin && (
+        <UsersTab token={session.token} serviceLines={serviceLines} onToast={(message) => setToast(message)} />
+      )}
+      {activeTab === "account" && (
+        <AccountTab
+          token={session.token}
+          username={session.username}
+          onToast={(message) => setToast(message)}
+          onPasswordChanged={handlePasswordChanged}
+        />
+      )}
     </Shell>
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (session: { token: string; role: Role }) => void }) {
-  const [role, setRole] = useState<Role>("admin");
+function LoginScreen({ onLogin }: { onLogin: (session: PlannerSession) => void }) {
+  const [username, setUsername] = useState("guest");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | undefined>();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     try {
-      const session = await login(role, password);
-      localStorage.setItem("plannerToken", session.token);
-      localStorage.setItem("plannerRole", session.role);
+      const session = await login(username, password);
       onLogin(session);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Login failed");
@@ -248,17 +402,13 @@ function LoginScreen({ onLogin }: { onLogin: (session: { token: string; role: Ro
       <form className="login-panel" onSubmit={submit}>
         <p className="eyebrow">Resident OR Coverage</p>
         <h1>Coverage Planner</h1>
-        <div className="segmented">
-          <button type="button" className={role === "admin" ? "active" : ""} onClick={() => setRole("admin")}>
-            Admin
-          </button>
-          <button type="button" className={role === "viewer" ? "active" : ""} onClick={() => setRole("viewer")}>
-            Viewer
-          </button>
-        </div>
+        <label>
+          Username
+          <input value={username} onChange={(event) => setUsername(event.target.value)} autoFocus />
+        </label>
         <label>
           Password
-          <input value={password} type="password" onChange={(event) => setPassword(event.target.value)} autoFocus />
+          <input value={password} type="password" onChange={(event) => setPassword(event.target.value)} />
         </label>
         {error && <p className="error-text">{error}</p>}
         <button className="primary-button" type="submit">
@@ -266,6 +416,22 @@ function LoginScreen({ onLogin }: { onLogin: (session: { token: string; role: Ro
           Open Planner
         </button>
       </form>
+    </main>
+  );
+}
+
+function LoggedOutScreen({ onReturn }: { onReturn: () => void }) {
+  return (
+    <main className="login-screen">
+      <section className="login-panel" aria-labelledby="logged-out-title">
+        <p className="eyebrow">Resident OR Coverage</p>
+        <h1 id="logged-out-title">Logged out...</h1>
+        <p className="muted-copy">Go back to login?</p>
+        <button className="primary-button" type="button" onClick={onReturn}>
+          <LogIn size={18} />
+          Back to Login
+        </button>
+      </section>
     </main>
   );
 }
@@ -286,7 +452,7 @@ function Shell({
   return (
     <main className="app-shell">
       <div className="top-strip">
-        <span>{role === "admin" ? "Admin" : "Viewer"}</span>
+        <span>{roleLabel(role)}</span>
         <button title="Log out" className="icon-button" onClick={onLogout}>
           <LogOut size={18} />
         </button>
@@ -295,6 +461,66 @@ function Shell({
       {toast && <div className="alert success">{toast}</div>}
       {children}
     </main>
+  );
+}
+
+function ServiceLinePicker({
+  serviceLines,
+  selectedService,
+  onSelect
+}: {
+  serviceLines: string[];
+  selectedService: string;
+  onSelect: (serviceLine: string) => void;
+}) {
+  return (
+    <label className="service-line-picker">
+      <Scissors size={16} aria-hidden="true" />
+      <select
+        aria-label="Service line"
+        value={selectedService}
+        onChange={(event) => onSelect(event.target.value)}
+      >
+        {serviceLines.map((serviceLine) => (
+          <option key={serviceLine} value={serviceLine}>
+            {serviceLine}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ServiceTagPicker({
+  state,
+  selected,
+  onChange
+}: {
+  state: PlannerState;
+  selected: string[];
+  onChange: (serviceTags: string[]) => void;
+}) {
+  return (
+    <div className="service-tag-picker">
+      {serviceLineOptions(state).map((serviceLine) => {
+        const checked = selected.includes(serviceLine.id);
+        return (
+          <label key={serviceLine.id} className="service-tag-option">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(event) => {
+                const next = event.target.checked
+                  ? [...selected, serviceLine.id]
+                  : selected.filter((serviceTag) => serviceTag !== serviceLine.id);
+                onChange([...new Set(next)]);
+              }}
+            />
+            <span>{serviceLine.name}</span>
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
@@ -385,18 +611,19 @@ function BoardTab({
   state,
   schedule,
   token,
-  role,
+  selectedService,
+  canEdit,
   onMutate,
   onCopied
 }: {
   state: PlannerState;
   schedule: WeekSchedule;
   token: string;
-  role: Role;
+  selectedService: string;
+  canEdit: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
   onCopied: (message: string) => void;
 }) {
-  const isAdmin = role === "admin";
   return (
     <section className="board-grid">
       {schedule.days.map((day) => (
@@ -410,7 +637,7 @@ function BoardTab({
               title="Copy day"
               className="icon-button"
               onClick={async () => {
-                const message = await getUncoveredMessage(token, schedule.week.id, day.date);
+                const message = await getUncoveredMessage(token, schedule.week.id, day.date, selectedService);
                 await navigator.clipboard.writeText(message);
                 onCopied("Day message copied");
               }}
@@ -424,8 +651,9 @@ function BoardTab({
               key={block.id}
               state={state}
               block={block}
-              isAdmin={isAdmin}
+              canEdit={canEdit}
               token={token}
+              selectedService={selectedService}
               onMutate={onMutate}
             />
           ))}
@@ -433,11 +661,12 @@ function BoardTab({
           {day.clinics.map((clinic) => (
             <ClinicView
               key={clinic.id}
-              state={state}
-              clinic={clinic}
-              isAdmin={isAdmin}
-              token={token}
-              onMutate={onMutate}
+            state={state}
+            clinic={clinic}
+            canEdit={canEdit}
+            token={token}
+            selectedService={selectedService}
+            onMutate={onMutate}
             />
           ))}
         </article>
@@ -449,14 +678,16 @@ function BoardTab({
 function BlockView({
   state,
   block,
-  isAdmin,
+  canEdit,
   token,
+  selectedService,
   onMutate
 }: {
   state: PlannerState;
   block: ScheduledBlock;
-  isAdmin: boolean;
+  canEdit: boolean;
   token: string;
+  selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const hospitalTone = getHospitalTone(block.hospital);
@@ -486,8 +717,9 @@ function BlockView({
           assignment={block.assignment}
           coveredWithoutDirectAssignment={allCasesCoveredIndividually}
           emptyLabel={allCasesCoveredIndividually ? "Individually assigned" : undefined}
-          disabled={!isAdmin}
-          claimable={!isAdmin && !block.assignment && !allCasesCoveredIndividually}
+          disabled={!canEdit}
+          claimable={false}
+          selectedService={selectedService}
           onMutate={onMutate}
         />
       </div>
@@ -498,8 +730,9 @@ function BlockView({
             key={surgeryCase.id}
             state={state}
             surgeryCase={surgeryCase}
-            isAdmin={isAdmin}
+            canEdit={canEdit}
             token={token}
+            selectedService={selectedService}
             onMutate={onMutate}
           />
         ))}
@@ -511,14 +744,16 @@ function BlockView({
 function CaseRow({
   state,
   surgeryCase,
-  isAdmin,
+  canEdit,
   token,
+  selectedService,
   onMutate
 }: {
   state: PlannerState;
   surgeryCase: ScheduledCase;
-  isAdmin: boolean;
+  canEdit: boolean;
   token: string;
+  selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const arrangementWarnings = surgeryCase.warningMessages.filter((warning) => warning === "check arrangement");
@@ -538,9 +773,10 @@ function CaseRow({
         targetId={surgeryCase.id}
         assignment={surgeryCase.assignment?.kind === "case" ? surgeryCase.assignment : undefined}
         inheritedAssignment={surgeryCase.assignment?.kind === "block" ? surgeryCase.assignment : undefined}
-        disabled={!isAdmin}
-        claimable={!isAdmin && !surgeryCase.assignment}
+        disabled={!canEdit}
+        claimable={false}
         arrangementWarnings={arrangementWarnings}
+        selectedService={selectedService}
         onMutate={onMutate}
       />
       <Warnings warnings={caseWarnings} />
@@ -551,14 +787,16 @@ function CaseRow({
 function ClinicView({
   state,
   clinic,
-  isAdmin,
+  canEdit,
   token,
+  selectedService,
   onMutate
 }: {
   state: PlannerState;
   clinic: ScheduledClinicSession;
-  isAdmin: boolean;
+  canEdit: boolean;
   token: string;
+  selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   return (
@@ -576,8 +814,9 @@ function ClinicView({
             kind="clinic"
             targetId={clinic.id}
             assignment={clinic.assignments[index]}
-            disabled={!isAdmin}
+            disabled={!canEdit}
             claimable={false}
+            selectedService={selectedService}
             onMutate={onMutate}
           />
         ))}
@@ -599,6 +838,7 @@ function AssignmentControl({
   disabled,
   claimable,
   arrangementWarnings = [],
+  selectedService,
   onMutate
 }: {
   state: PlannerState;
@@ -612,19 +852,26 @@ function AssignmentControl({
   disabled: boolean;
   claimable: boolean;
   arrangementWarnings?: string[];
+  selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const displayedAssignment = assignment ?? inheritedAssignment;
   const isCovered = Boolean(displayedAssignment || coveredWithoutDirectAssignment);
-  const [claimResidentId, setClaimResidentId] = useState(state.residents[0]?.id ?? "");
+  const residents = sortResidentsForService(state.residents, selectedService);
+  const [claimResidentId, setClaimResidentId] = useState(residents[0]?.id ?? "");
+
+  useEffect(() => {
+    if (claimResidentId || !residents[0]) return;
+    setClaimResidentId(residents[0].id);
+  }, [claimResidentId, residents]);
 
   if (claimable && kind !== "clinic") {
     return (
       <div className="assign-control">
         <select value={claimResidentId} onChange={(event) => setClaimResidentId(event.target.value)}>
-          {state.residents.map((resident) => (
+          {residents.map((resident) => (
             <option key={resident.id} value={resident.id}>
-              {resident.name}
+              {formatResidentOption(resident, selectedService)}
             </option>
           ))}
         </select>
@@ -668,9 +915,9 @@ function AssignmentControl({
         }}
       >
         <option value="">{emptyLabel ?? (inheritedAssignment ? residentLabel(state, inheritedAssignment.residentId) : "Unassigned")}</option>
-        {state.residents.map((resident) => (
+        {residents.map((resident) => (
           <option key={resident.id} value={resident.id}>
-            {resident.name}
+            {formatResidentOption(resident, selectedService)}
           </option>
         ))}
       </select>
@@ -695,38 +942,56 @@ function EntryTab({
   state,
   week,
   token,
+  selectedService,
   disabled,
   onMutate
 }: {
   state: PlannerState;
   week: Week;
   token: string;
+  selectedService: string;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
+  const serviceAttendings = getAttendingsForService(state.attendings, selectedService);
+  const attendingOptions = serviceAttendings;
   const [blockForm, setBlockForm] = useState({
     date: week.startDate,
-    attendingId: state.attendings[0]?.id ?? "",
+    attendingId: attendingOptions[0]?.id ?? "",
     hospitalId: state.hospitals[0]?.id ?? "",
     firstCaseStartTime: "07:30"
   });
   const [clinicForm, setClinicForm] = useState({
     date: week.startDate,
-    attendingId: state.attendings[0]?.id ?? "",
+    attendingId: attendingOptions[0]?.id ?? "",
     hospitalId: state.hospitals[0]?.id ?? "",
     startTime: "13:00",
     endTime: "17:00",
-    service: state.attendings[0]?.service ?? "",
+    service: selectedService,
     location: "",
     capacity: 1
   });
-  const weekBlocks = state.attendingBlocks.filter((block) => block.weekId === week.id);
-  const weekClinics = state.clinicSessions.filter((clinic) => clinic.weekId === week.id);
+  const weekBlocks = state.attendingBlocks.filter(
+    (block) =>
+      block.weekId === week.id &&
+      getAttendingsForService(state.attendings, selectedService).some((attending) => attending.id === block.attendingId)
+  );
+  const weekClinics = state.clinicSessions.filter((clinic) => clinic.weekId === week.id && clinicMatchesService(clinic, selectedService));
 
   useEffect(() => {
-    setBlockForm((current) => ({ ...current, date: week.startDate }));
-    setClinicForm((current) => ({ ...current, date: week.startDate }));
-  }, [week.id, week.startDate]);
+    const nextAttendingId = attendingOptions.some((attending) => attending.id === blockForm.attendingId)
+      ? blockForm.attendingId
+      : attendingOptions[0]?.id ?? "";
+    setBlockForm((current) => ({ ...current, date: week.startDate, attendingId: nextAttendingId }));
+    setClinicForm((current) => ({
+      ...current,
+      date: week.startDate,
+      attendingId: attendingOptions.some((attending) => attending.id === current.attendingId)
+        ? current.attendingId
+        : attendingOptions[0]?.id ?? "",
+      service: selectedService
+    }));
+  }, [week.id, week.startDate, selectedService]);
 
   return (
     <section className="two-column">
@@ -749,14 +1014,14 @@ function EntryTab({
         <h2>OR Blocks</h2>
         <fieldset disabled={disabled}>
           <label>Date<input type="date" min={week.startDate} max={getWeekEndDate(week, state.settings.weekdayOnly)} value={blockForm.date} onChange={(event) => setBlockForm({ ...blockForm, date: event.target.value })} /></label>
-          <label>Attending<Select value={blockForm.attendingId} onChange={(attendingId) => setBlockForm({ ...blockForm, attendingId })} options={state.attendings} /></label>
+          <label>Attending<Select value={blockForm.attendingId} onChange={(attendingId) => setBlockForm({ ...blockForm, attendingId })} options={attendingOptions} /></label>
           <label>Hospital<Select value={blockForm.hospitalId} onChange={(hospitalId) => setBlockForm({ ...blockForm, hospitalId })} options={state.hospitals} labelKey="shortName" /></label>
           <label>First start<input type="time" value={blockForm.firstCaseStartTime} onChange={(event) => setBlockForm({ ...blockForm, firstCaseStartTime: event.target.value })} /></label>
-          <button className="primary-button" type="submit"><Plus size={16} />Add Block</button>
+          <button className="primary-button" type="submit" disabled={!blockForm.attendingId}><Plus size={16} />Add Block</button>
         </fieldset>
         <div className="entity-list">
           {weekBlocks.map((block) => (
-            <BlockEditor key={block.id} state={state} block={block} token={token} disabled={disabled} onMutate={onMutate} />
+            <BlockEditor key={block.id} state={state} block={block} token={token} selectedService={selectedService} disabled={disabled} onMutate={onMutate} />
           ))}
         </div>
       </form>
@@ -779,11 +1044,11 @@ function EntryTab({
         <h2>Clinic Sessions</h2>
         <fieldset disabled={disabled}>
           <label>Date<input type="date" min={week.startDate} max={getWeekEndDate(week, state.settings.weekdayOnly)} value={clinicForm.date} onChange={(event) => setClinicForm({ ...clinicForm, date: event.target.value })} /></label>
-          <label>Attending<Select value={clinicForm.attendingId} onChange={(attendingId) => setClinicForm({ ...clinicForm, attendingId })} options={state.attendings} /></label>
+          <label>Attending<Select value={clinicForm.attendingId} onChange={(attendingId) => setClinicForm({ ...clinicForm, attendingId })} options={attendingOptions} /></label>
           <label>Hospital<Select value={clinicForm.hospitalId} onChange={(hospitalId) => setClinicForm({ ...clinicForm, hospitalId })} options={state.hospitals} labelKey="shortName" /></label>
           <label>Start<input type="time" value={clinicForm.startTime} onChange={(event) => setClinicForm({ ...clinicForm, startTime: event.target.value })} /></label>
           <label>End<input type="time" value={clinicForm.endTime} onChange={(event) => setClinicForm({ ...clinicForm, endTime: event.target.value })} /></label>
-          <label>Service<input value={clinicForm.service} onChange={(event) => setClinicForm({ ...clinicForm, service: event.target.value })} /></label>
+          <label>Service<Select value={clinicForm.service} onChange={(service) => setClinicForm({ ...clinicForm, service })} options={serviceLineOptions(state)} /></label>
           <label>Location<input value={clinicForm.location} onChange={(event) => setClinicForm({ ...clinicForm, location: event.target.value })} /></label>
           <label>Capacity<input type="number" min={1} value={clinicForm.capacity} onChange={(event) => setClinicForm({ ...clinicForm, capacity: Number(event.target.value) })} /></label>
           <button className="primary-button" type="submit"><Plus size={16} />Add Clinic</button>
@@ -808,15 +1073,19 @@ function BlockEditor({
   state,
   block,
   token,
+  selectedService,
   disabled,
   onMutate
 }: {
   state: PlannerState;
   block: AttendingBlock;
   token: string;
+  selectedService: string;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
+  const serviceAttendings = getAttendingsForService(state.attendings, selectedService);
+  const attendingOptions = serviceAttendings;
   const [blockDraft, setBlockDraft] = useState({
     date: block.date,
     attendingId: block.attendingId,
@@ -873,7 +1142,7 @@ function BlockEditor({
       </div>
       <fieldset disabled={disabled} className="inline-form block-edit-form">
         <input type="date" value={blockDraft.date} onChange={(event) => setBlockDraft({ ...blockDraft, date: event.target.value })} />
-        <Select value={blockDraft.attendingId} onChange={(attendingId) => setBlockDraft({ ...blockDraft, attendingId })} options={state.attendings} />
+        <Select value={blockDraft.attendingId} onChange={(attendingId) => setBlockDraft({ ...blockDraft, attendingId })} options={attendingOptions} />
         <Select value={blockDraft.hospitalId} onChange={(hospitalId) => setBlockDraft({ ...blockDraft, hospitalId })} options={state.hospitals} labelKey="shortName" />
         <input type="time" value={blockDraft.firstCaseStartTime} onChange={(event) => setBlockDraft({ ...blockDraft, firstCaseStartTime: event.target.value })} />
         <input value={blockDraft.notes} placeholder="Room / notes" onChange={(event) => setBlockDraft({ ...blockDraft, notes: event.target.value })} />
@@ -989,16 +1258,18 @@ function RosterTab({
   state,
   week,
   token,
+  selectedService,
   disabled,
   onMutate
 }: {
   state: PlannerState;
   week: Week;
   token: string;
+  selectedService: string;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
-  const [editing, setEditing] = useState<Resident>(emptyResident);
+  const [editing, setEditing] = useState<Resident>(() => makeEmptyResident(selectedService));
   const [offForm, setOffForm] = useState({ date: week.startDate, endDate: "", startTime: "", endTime: "", label: "off" });
 
   const isExisting = Boolean(state.residents.find((resident) => resident.id === editing.id));
@@ -1018,7 +1289,7 @@ function RosterTab({
             () => (isExisting ? updateEntity(token, "residents", resident.id, resident) : createEntity(token, "residents", resident)),
             "Resident saved"
           );
-          setEditing(emptyResident);
+          setEditing(makeEmptyResident(selectedService));
         }}
       >
         <h2>Resident Roster</h2>
@@ -1027,10 +1298,7 @@ function RosterTab({
           <label>Level<select value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
             {["PGY1", "PGY2", "PGY3", "PGY4", "PGY5", "Fellow"].map((level) => <option key={level}>{level}</option>)}
           </select></label>
-          <label>Status<select value={editing.serviceStatus} onChange={(event) => setEditing({ ...editing, serviceStatus: event.target.value as ServiceStatus })}>
-            <option value="on-service">on-service</option>
-            <option value="off-service">off-service</option>
-          </select></label>
+          <label>Service tags<ServiceTagPicker state={state} selected={editing.serviceTags} onChange={(serviceTags) => setEditing({ ...editing, serviceTags })} /></label>
           <label>Color<input type="color" value={editing.color ?? "#2f78c4"} onChange={(event) => setEditing({ ...editing, color: event.target.value })} /></label>
           <label>Tags<input value={editing.tags.join(", ")} onChange={(event) => setEditing({ ...editing, tags: splitTags(event.target.value) })} /></label>
           <label>Training interests<input value={editing.trainingInterests.join(", ")} onChange={(event) => setEditing({ ...editing, trainingInterests: splitTags(event.target.value) })} /></label>
@@ -1075,11 +1343,11 @@ function RosterTab({
       <section className="editor-panel">
         <h2>Current Residents</h2>
         <div className="entity-list">
-          {state.residents.map((resident) => (
+          {sortResidentsForService(state.residents, selectedService).map((resident) => (
             <CompactEntity
               key={resident.id}
               title={`${resident.name} · ${resident.trainingLevel}`}
-              subtitle={`${resident.serviceStatus} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
+              subtitle={`${formatServiceTags(resident.serviceTags)} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
               disabled={disabled}
               onEdit={() => setEditing(resident)}
               onDelete={() => onMutate(() => deleteEntity(token, "residents", resident.id), "Resident deleted")}
@@ -1094,43 +1362,27 @@ function RosterTab({
 function DefaultsTab({
   state,
   token,
+  selectedService,
   disabled,
   onMutate
 }: {
   state: PlannerState;
   token: string;
+  selectedService: string;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
-  const [attending, setAttending] = useState({ name: "", service: "", priority: 3, defaultHospitalId: state.hospitals[0]?.id ?? "" });
   const [hospital, setHospital] = useState({ name: "", shortName: "", color: "#2454a6" });
   const [procedureDefault, setProcedureDefault] = useState({ label: "", durationMinutes: 90, priority: 3, tags: "" });
 
   return (
     <section className="three-column">
-      <SetupList
-        title="Attendings"
+      <AttendingsSetup
+        state={state}
+        token={token}
+        selectedService={selectedService}
         disabled={disabled}
-        fields={
-          <>
-            <label>Name<input value={attending.name} onChange={(event) => setAttending({ ...attending, name: event.target.value })} /></label>
-            <label>Service<input value={attending.service} onChange={(event) => setAttending({ ...attending, service: event.target.value })} /></label>
-            <label>Priority<input type="number" min={1} max={5} value={attending.priority} onChange={(event) => setAttending({ ...attending, priority: Number(event.target.value) })} /></label>
-            <label>Default hospital<Select value={attending.defaultHospitalId} onChange={(defaultHospitalId) => setAttending({ ...attending, defaultHospitalId })} options={state.hospitals} labelKey="shortName" /></label>
-          </>
-        }
-        onAdd={() =>
-          onMutate(
-            () => createEntity<Attending>(token, "attendings", { id: createId("att"), ...attending, priority: clampPriority(attending.priority) }),
-            "Attending added"
-          )
-        }
-        items={state.attendings.map((item) => ({
-          id: item.id,
-          title: item.name,
-          subtitle: `${item.service} · P${item.priority}`,
-          onDelete: () => onMutate(() => deleteEntity(token, "attendings", item.id), "Attending deleted")
-        }))}
+        onMutate={onMutate}
       />
       <SetupList
         title="Hospitals"
@@ -1182,6 +1434,102 @@ function DefaultsTab({
         }))}
       />
     </section>
+  );
+}
+
+function AttendingsSetup({
+  state,
+  token,
+  selectedService,
+  disabled,
+  onMutate
+}: {
+  state: PlannerState;
+  token: string;
+  selectedService: string;
+  disabled: boolean;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const [attending, setAttending] = useState({
+    name: "",
+    service: selectedService,
+    priority: 3,
+    defaultHospitalId: state.hospitals[0]?.id ?? ""
+  });
+
+  useEffect(() => {
+    setAttending((current) => ({ ...current, service: current.service || selectedService }));
+  }, [selectedService]);
+
+  return (
+    <form
+      className="editor-panel"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onMutate(
+          () =>
+            createEntity<Attending>(token, "attendings", {
+              id: createId("att"),
+              ...attending,
+              priority: clampPriority(attending.priority)
+            }),
+          "Attending added"
+        );
+        setAttending({
+          name: "",
+          service: selectedService,
+          priority: 3,
+          defaultHospitalId: state.hospitals[0]?.id ?? ""
+        });
+      }}
+    >
+      <h2>Attendings</h2>
+      <fieldset disabled={disabled}>
+        <label>Name<input value={attending.name} onChange={(event) => setAttending({ ...attending, name: event.target.value })} /></label>
+        <label>Service<Select value={attending.service} onChange={(service) => setAttending({ ...attending, service })} options={serviceLineOptions(state)} /></label>
+        <label>Priority<input type="number" min={1} max={5} value={attending.priority} onChange={(event) => setAttending({ ...attending, priority: Number(event.target.value) })} /></label>
+        <label>Default hospital<Select value={attending.defaultHospitalId} onChange={(defaultHospitalId) => setAttending({ ...attending, defaultHospitalId })} options={state.hospitals} labelKey="shortName" /></label>
+        <button className="primary-button" type="submit"><Plus size={16} />Add</button>
+      </fieldset>
+      <div className="entity-list">
+        {state.attendings.map((item) => (
+          <div key={item.id} className="compact-entity attending-entity">
+            <div>
+              <strong>{item.name}</strong>
+              <span>{item.service} · P{item.priority}</span>
+            </div>
+            <div className="row-actions">
+              <select
+                aria-label={`${item.name} service`}
+                disabled={disabled}
+                value={item.service}
+                onChange={(event) =>
+                  onMutate(
+                    () => updateEntity<Attending>(token, "attendings", item.id, { service: event.target.value }),
+                    "Attending updated"
+                  )
+                }
+              >
+                {serviceLineOptions(state).map((serviceLine) => (
+                  <option key={serviceLine.id} value={serviceLine.id}>
+                    {serviceLine.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                title="Delete"
+                type="button"
+                className="icon-button"
+                disabled={disabled}
+                onClick={() => onMutate(() => deleteEntity(token, "attendings", item.id), "Attending deleted")}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </form>
   );
 }
 
@@ -1305,6 +1653,30 @@ function TagList({ tags }: { tags: string[] }) {
   );
 }
 
+function makeEmptyResident(selectedService: string): Resident {
+  return {
+    ...emptyResident,
+    serviceTags: [selectedService]
+  };
+}
+
+function serviceLineOptions(state: PlannerState): { id: string; name: string }[] {
+  return getStateServiceLines(state).map((serviceLine) => ({ id: serviceLine, name: serviceLine }));
+}
+
+function formatResidentOption(resident: Resident, selectedService: string): string {
+  const orderedTags = isResidentOnService(resident, selectedService)
+    ? [selectedService, ...resident.serviceTags.filter((serviceTag) => serviceTag !== selectedService)]
+    : resident.serviceTags;
+  const serviceLabel = formatServiceTags(orderedTags);
+  if (!serviceLabel) return resident.name;
+  return `${resident.name} (${serviceLabel})`;
+}
+
+function formatServiceTags(serviceTags: string[]): string {
+  return serviceTags.length ? serviceTags.join(", ") : "no service";
+}
+
 function residentLabel(state: PlannerState, residentId: string): string {
   return state.residents.find((resident) => resident.id === residentId)?.name ?? "Assigned";
 }
@@ -1395,8 +1767,71 @@ function clampPriority(value: number): 1 | 2 | 3 | 4 | 5 {
   return Math.max(1, Math.min(5, value)) as 1 | 2 | 3 | 4 | 5;
 }
 
-function logout(setSession: (session: undefined) => void) {
+function roleLabel(role: Role): string {
+  return role === "admin" ? "admin" : "user";
+}
+
+function getStoredSession(): PlannerSession | undefined {
+  const token = localStorage.getItem("plannerToken");
+  const role = localStorage.getItem("plannerRole");
+  const username = localStorage.getItem("plannerUsername");
+  const displayName = localStorage.getItem("plannerDisplayName");
+  const servicePrivileges = parseStoredPrivileges(localStorage.getItem("plannerServicePrivileges"));
+  const mustChangePassword = localStorage.getItem("plannerMustChangePassword") === "true";
+  const temporaryPasswordExpiresAt = localStorage.getItem("plannerTemporaryPasswordExpiresAt") ?? undefined;
+  return token && username && displayName && isRole(role)
+    ? { token, role, username, displayName, servicePrivileges, mustChangePassword, temporaryPasswordExpiresAt }
+    : undefined;
+}
+
+function storeSession(session: PlannerSession) {
+  localStorage.setItem("plannerToken", session.token);
+  localStorage.setItem("plannerRole", session.role);
+  localStorage.setItem("plannerUsername", session.username);
+  localStorage.setItem("plannerDisplayName", session.displayName);
+  localStorage.setItem("plannerServicePrivileges", JSON.stringify(session.servicePrivileges));
+  localStorage.setItem("plannerMustChangePassword", String(session.mustChangePassword));
+  if (session.temporaryPasswordExpiresAt) {
+    localStorage.setItem("plannerTemporaryPasswordExpiresAt", session.temporaryPasswordExpiresAt);
+  } else {
+    localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
+  }
+}
+
+function getStoredServiceLine(): string {
+  const serviceLine = localStorage.getItem("plannerSelectedServiceLine");
+  return serviceLine && SERVICE_LINES.includes(serviceLine as (typeof SERVICE_LINES)[number]) ? serviceLine : DEFAULT_SERVICE_LINE;
+}
+
+function isRole(role: string | null): role is Role {
+  return role === "admin" || role === "viewer";
+}
+
+function parseStoredPrivileges(value: string | null): PlannerSession["servicePrivileges"] {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as PlannerSession["servicePrivileges"];
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getSessionPrivilege(session: PlannerSession, serviceLine: string): "view" | "request" | "edit" {
+  const privilege = session.servicePrivileges[serviceLine];
+  return privilege === "request" || privilege === "edit" ? privilege : "view";
+}
+
+function hasAnyRequestPrivilege(session: PlannerSession): boolean {
+  return Object.values(session.servicePrivileges).some((privilege) => privilege === "request" || privilege === "edit");
+}
+
+function clearStoredSession() {
   localStorage.removeItem("plannerToken");
   localStorage.removeItem("plannerRole");
-  setSession(undefined);
+  localStorage.removeItem("plannerUsername");
+  localStorage.removeItem("plannerDisplayName");
+  localStorage.removeItem("plannerServicePrivileges");
+  localStorage.removeItem("plannerMustChangePassword");
+  localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
 }

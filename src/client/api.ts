@@ -5,31 +5,53 @@ import {
   CoverageEntry,
   PlannerState,
   Role,
+  ServicePrivileges,
+  SessionUser,
+  UserSummary,
   WeekSchedule
 } from "../shared/types";
 
-export interface Session {
+export interface Session extends SessionUser {
   token: string;
-  role: Role;
 }
 
-export async function login(role: Role, password: string): Promise<Session> {
+export class UnauthorizedError extends Error {
+  constructor(message = "Unauthorized") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+export interface UsersResponse {
+  users: UserSummary[];
+}
+
+export interface PasswordResetResponse extends UsersResponse {
+  user: UserSummary;
+  temporaryPassword: string;
+}
+
+export async function login(username: string, password: string): Promise<Session> {
   return request<Session>("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ role, password })
+    body: JSON.stringify({ username, password })
   });
+}
+
+export async function fetchSession(token: string): Promise<Omit<Session, "token">> {
+  return request<Omit<Session, "token">>("/api/session", { token });
 }
 
 export async function fetchState(token: string): Promise<PlannerState> {
   return request<PlannerState>("/api/state", { token });
 }
 
-export async function fetchSchedule(token: string, weekId: string): Promise<WeekSchedule> {
-  return request<WeekSchedule>(`/api/weeks/${weekId}/schedule`, { token });
+export async function fetchSchedule(token: string, weekId: string, serviceLine?: string): Promise<WeekSchedule> {
+  return request<WeekSchedule>(`/api/weeks/${weekId}/schedule${buildQuery({ service: serviceLine })}`, { token });
 }
 
-export async function runSuggestion(token: string, weekId: string): Promise<PlannerState> {
-  return request<PlannerState>(`/api/weeks/${weekId}/suggest`, {
+export async function runSuggestion(token: string, weekId: string, serviceLine?: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/weeks/${weekId}/suggest${buildQuery({ service: serviceLine })}`, {
     method: "POST",
     token
   });
@@ -84,34 +106,38 @@ export async function deleteAssignment(token: string, id: string): Promise<Plann
   });
 }
 
-export async function createCoverageEntry(token: string, entry: Partial<CoverageEntry>): Promise<PlannerState> {
+export async function createCoverageEntry(token: string, entry: Partial<CoverageEntry>, serviceLine?: string): Promise<PlannerState> {
   return request<PlannerState>("/api/coverage-entries", {
     method: "POST",
     token,
-    body: JSON.stringify(entry)
+    body: JSON.stringify({ ...entry, serviceLine })
   });
 }
 
-export async function updateCoverageEntry(token: string, id: string, patch: Partial<CoverageEntry>): Promise<PlannerState> {
+export async function updateCoverageEntry(token: string, id: string, patch: Partial<CoverageEntry>, serviceLine?: string): Promise<PlannerState> {
   return request<PlannerState>(`/api/coverage-entries/${id}`, {
     method: "PATCH",
     token,
-    body: JSON.stringify(patch)
+    body: JSON.stringify({ ...patch, serviceLine })
   });
 }
 
-export async function deleteCoverageEntry(token: string, id: string): Promise<PlannerState> {
-  return request<PlannerState>(`/api/coverage-entries/${id}`, {
+export async function deleteCoverageEntry(token: string, id: string, serviceLine?: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/coverage-entries/${id}${buildQuery({ service: serviceLine })}`, {
     method: "DELETE",
     token
   });
 }
 
-export async function submitCoverageRequest(token: string, payload: Partial<CoverageChangeRequest>): Promise<PlannerState> {
+export async function submitCoverageRequest(
+  token: string,
+  payload: Partial<CoverageChangeRequest>,
+  serviceLine?: string
+): Promise<PlannerState> {
   return request<PlannerState>("/api/coverage-requests", {
     method: "POST",
     token,
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ ...payload, serviceLine })
   });
 }
 
@@ -139,10 +165,82 @@ export async function claimCoverage(token: string, claim: ClaimRequest): Promise
   });
 }
 
-export async function getUncoveredMessage(token: string, weekId: string, date?: string): Promise<string> {
-  const query = date ? `?date=${encodeURIComponent(date)}` : "";
+export async function getUncoveredMessage(token: string, weekId: string, date?: string, serviceLine?: string): Promise<string> {
+  const query = buildQuery({ date, service: serviceLine });
   const result = await request<{ message: string }>(`/api/weeks/${weekId}/uncovered-message${query}`, { token });
   return result.message;
+}
+
+export async function fetchUsers(token: string, pin: string): Promise<UserSummary[]> {
+  const result = await request<UsersResponse>(`/api/users${buildQuery({ pin })}`, { token });
+  return result.users;
+}
+
+export async function createUser(
+  token: string,
+  pin: string,
+  payload: { username: string; displayName?: string; role?: Role; password?: string; servicePrivileges?: ServicePrivileges }
+): Promise<UserSummary[]> {
+  const result = await request<UsersResponse>("/api/users", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ ...payload, pin })
+  });
+  return result.users;
+}
+
+export async function updateUser(
+  token: string,
+  pin: string,
+  username: string,
+  patch: { displayName?: string; role?: Role; servicePrivileges?: ServicePrivileges }
+): Promise<UserSummary[]> {
+  const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ ...patch, pin })
+  });
+  return result.users;
+}
+
+export async function deleteUser(token: string, pin: string, username: string): Promise<UserSummary[]> {
+  const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}${buildQuery({ pin })}`, {
+    method: "DELETE",
+    token
+  });
+  return result.users;
+}
+
+export async function resetUserPassword(token: string, pin: string, username: string): Promise<PasswordResetResponse> {
+  return request<PasswordResetResponse>(`/api/users/${encodeURIComponent(username)}/password${buildQuery({ pin })}`, {
+    method: "PATCH",
+    token
+  });
+}
+
+export async function updateUsersPin(token: string, currentPin: string, nextPin: string): Promise<void> {
+  await request<{ ok: boolean }>("/api/users-pin", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ currentPin, nextPin })
+  });
+}
+
+export async function changeMyPassword(token: string, currentPassword: string, nextPassword: string): Promise<UserSummary> {
+  return request<UserSummary>("/api/me/password", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ currentPassword, nextPassword })
+  });
+}
+
+function buildQuery(params: Record<string, string | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) query.set(key, value);
+  }
+  const text = query.toString();
+  return text ? `?${text}` : "";
 }
 
 async function request<T>(url: string, init: RequestInit & { token?: string } = {}): Promise<T> {
@@ -159,6 +257,9 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
+    if (response.status === 401) {
+      throw new UnauthorizedError(payload?.error);
+    }
     throw new Error(payload?.error ?? `Request failed: ${response.status}`);
   }
 

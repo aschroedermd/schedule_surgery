@@ -28,9 +28,9 @@ export function getOpenApiDocument() {
       schemas: {
         LoginRequest: {
           type: "object",
-          required: ["role", "password"],
+          required: ["username", "password"],
           properties: {
-            role: { type: "string", enum: ["admin", "viewer"] },
+            username: { type: "string" },
             password: { type: "string" }
           }
         },
@@ -38,7 +38,32 @@ export function getOpenApiDocument() {
           type: "object",
           properties: {
             token: { type: "string" },
-            role: { type: "string", enum: ["admin", "viewer"] }
+            username: { type: "string" },
+            displayName: { type: "string" },
+            role: { type: "string", enum: ["admin", "viewer"] },
+            servicePrivileges: {
+              type: "object",
+              additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
+            },
+            mustChangePassword: { type: "boolean" },
+            temporaryPasswordExpiresAt: { type: "string", format: "date-time" }
+          }
+        },
+        UserSummary: {
+          type: "object",
+          properties: {
+            username: { type: "string" },
+            displayName: { type: "string" },
+            role: { type: "string", enum: ["admin", "viewer"] },
+            servicePrivileges: {
+              type: "object",
+              additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
+            },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" },
+            passwordUpdatedAt: { type: "string", format: "date-time" },
+            mustChangePassword: { type: "boolean" },
+            temporaryPasswordExpiresAt: { type: "string", format: "date-time" }
           }
         },
         ErrorResponse: {
@@ -80,6 +105,7 @@ export function getOpenApiDocument() {
           type: "object",
           required: ["action"],
           properties: {
+            serviceLine: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] },
             action: { type: "string", enum: ["create", "update", "delete"] },
             entryId: { type: "string" },
             requestedEntry: { $ref: "#/components/schemas/CoverageEntryInput" },
@@ -146,6 +172,88 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/users": {
+        get: {
+          summary: "List browser users",
+          description: "Admin-only and protected by the users pin code.",
+          parameters: [{ name: "pin", in: "query", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": {
+              description: "User list",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      users: { type: "array", items: { $ref: "#/components/schemas/UserSummary" } }
+                    }
+                  }
+                }
+              }
+            },
+            "403": { description: "Invalid pin or non-admin user" }
+          }
+        },
+        post: {
+          summary: "Create browser user",
+          description: "Admin-only and protected by the users pin code.",
+          responses: {
+            "201": { description: "Created user and refreshed user list" },
+            "403": { description: "Invalid pin or non-admin user" }
+          }
+        }
+      },
+      "/api/users/{username}": {
+        patch: {
+          summary: "Update browser user privileges",
+          description: "Admin-only and protected by the users pin code.",
+          parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Updated user and refreshed user list" },
+            "403": { description: "Invalid pin or non-admin user" }
+          }
+        },
+        delete: {
+          summary: "Delete browser user",
+          description: "Admin-only and protected by the users pin code. The built-in admin account cannot be deleted.",
+          parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Refreshed user list" },
+            "403": { description: "Invalid pin or non-admin user" }
+          }
+        }
+      },
+      "/api/users/{username}/password": {
+        patch: {
+          summary: "Generate a temporary password",
+          description:
+            "Admin-only and protected by the users pin code. Generates a temporary password, returns it once, stores only its hash, and requires the user to change it on next login.",
+          parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Temporary password, updated user, and refreshed user list" },
+            "403": { description: "Invalid pin or non-admin user" }
+          }
+        }
+      },
+      "/api/users-pin": {
+        patch: {
+          summary: "Change users-tab pin code",
+          description: "Admin-only. Requires currentPin and nextPin in the JSON body.",
+          responses: {
+            "200": { description: "Pin changed" },
+            "403": { description: "Non-admin user" }
+          }
+        }
+      },
+      "/api/me/password": {
+        patch: {
+          summary: "Change current browser user's password",
+          responses: {
+            "200": { description: "Password changed" },
+            "401": { description: "Unauthorized" }
+          }
+        }
+      },
       "/api/state": {
         get: {
           summary: "Get complete planner state",
@@ -159,7 +267,10 @@ export function getOpenApiDocument() {
       "/api/weeks/{weekId}/schedule": {
         get: {
           summary: "Get computed weekly schedule",
-          parameters: [{ name: "weekId", in: "path", required: true, schema: { type: "string" } }],
+          parameters: [
+            { name: "weekId", in: "path", required: true, schema: { type: "string" } },
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
+          ],
           responses: {
             "200": { description: "WeekSchedule JSON with computed case times and warnings" }
           }
@@ -168,7 +279,10 @@ export function getOpenApiDocument() {
       "/api/weeks/{weekId}/warnings": {
         get: {
           summary: "Get assignment warnings",
-          parameters: [{ name: "weekId", in: "path", required: true, schema: { type: "string" } }],
+          parameters: [
+            { name: "weekId", in: "path", required: true, schema: { type: "string" } },
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
+          ],
           responses: {
             "200": { description: "Warning array" }
           }
@@ -179,7 +293,8 @@ export function getOpenApiDocument() {
           summary: "Generate uncovered coverage text",
           parameters: [
             { name: "weekId", in: "path", required: true, schema: { type: "string" } },
-            { name: "date", in: "query", required: false, schema: { type: "string", format: "date" } }
+            { name: "date", in: "query", required: false, schema: { type: "string", format: "date" } },
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
           ],
           responses: {
             "200": { description: "Copyable uncovered message" }
@@ -190,7 +305,10 @@ export function getOpenApiDocument() {
         post: {
           summary: "Run schedule suggestion",
           description: "Admin only. Preserves locked/manual assignments and fills uncovered cases/clinics.",
-          parameters: [{ name: "weekId", in: "path", required: true, schema: { type: "string" } }],
+          parameters: [
+            { name: "weekId", in: "path", required: true, schema: { type: "string" } },
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
+          ],
           responses: {
             "200": { description: "Updated PlannerState" },
             "403": { description: "Admin access required" }
@@ -255,7 +373,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create or replace an assignment",
           description:
-            "Admin only. Case and block assignments replace same-target assignments. Creating a block assignment clears case-level assignments within that block.",
+            "Requires edit privilege for the assignment target service, or admin/API admin access. Case and block assignments replace same-target assignments. Creating a block assignment clears case-level assignments within that block.",
           requestBody: {
             required: true,
             content: {
@@ -266,14 +384,14 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit privilege required" }
           }
         }
       },
       "/api/assignments/{id}": {
         patch: {
           summary: "Patch an assignment",
-          description: "Admin only. Use this to change residentId or locked status.",
+          description: "Requires edit privilege for the assignment target service, or admin/API admin access. Use this to change residentId or locked status.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           requestBody: {
             required: true,
@@ -289,7 +407,7 @@ export function getOpenApiDocument() {
         },
         delete: {
           summary: "Delete an assignment",
-          description: "Admin only.",
+          description: "Requires edit privilege for the assignment target service, or admin/API admin access.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" }
@@ -300,7 +418,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Viewer/admin claim uncovered coverage",
           description:
-            "Viewer-accessible. Auto-assigns the selected resident to an uncovered case or block and records activity.",
+            "Requires edit privilege for the target service, or admin/API admin access. Auto-assigns the selected resident to an uncovered case or block and records activity.",
           requestBody: {
             required: true,
             content: {
@@ -318,7 +436,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create or replace a call calendar entry",
           description:
-            "Admin only. Call is allowed Friday-Sunday; rounding is allowed Saturday-Sunday. Call/rounding entries replace the same date/kind slot.",
+            "Requires edit privilege for serviceLine, or admin/API admin access. Call is allowed Friday-Sunday; rounding is allowed Saturday-Sunday. Call/rounding entries replace the same date/kind slot.",
           requestBody: {
             required: true,
             content: {
@@ -329,14 +447,14 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit privilege required" }
           }
         }
       },
       "/api/coverage-entries/{id}": {
         patch: {
           summary: "Patch a call calendar entry",
-          description: "Admin only.",
+          description: "Requires edit privilege for serviceLine, or admin/API admin access.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           requestBody: {
             required: true,
@@ -348,23 +466,23 @@ export function getOpenApiDocument() {
           },
           responses: {
             "200": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit privilege required" }
           }
         },
         delete: {
           summary: "Delete a call calendar entry",
-          description: "Admin only.",
+          description: "Requires edit privilege for serviceLine, or admin/API admin access.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit privilege required" }
           }
         }
       },
       "/api/coverage-requests": {
         post: {
-          summary: "Submit a viewer-edit calendar request",
-          description: "Viewer-accessible. Creates a pending request for an admin to approve or deny.",
+          summary: "Submit a calendar edit request",
+          description: "Requires request or edit privilege for serviceLine. Creates a pending request for a service editor to approve or deny.",
           requestBody: {
             required: true,
             content: {
@@ -381,22 +499,22 @@ export function getOpenApiDocument() {
       "/api/coverage-requests/{id}/approve": {
         post: {
           summary: "Approve and apply a calendar request",
-          description: "Admin only.",
+          description: "Requires edit privilege for the request serviceLine, or admin/API admin access.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit privilege required" }
           }
         }
       },
       "/api/coverage-requests/{id}/deny": {
         post: {
           summary: "Deny a calendar request",
-          description: "Admin only.",
+          description: "Requires edit privilege for the request serviceLine, or admin/API admin access.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit privilege required" }
           }
         }
       }

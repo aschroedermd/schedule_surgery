@@ -16,16 +16,17 @@ export function createInitialState(): PlannerState {
       { id: "hosp_west", name: "West Campus Hospital", shortName: "WCH", color: "#16856d" }
     ],
     attendings: [
-      { id: "att_chen", name: "Dr. Chen", service: "HPB", priority: 5, defaultHospitalId: "hosp_main" },
-      { id: "att_patel", name: "Dr. Patel", service: "Bariatrics", priority: 4, defaultHospitalId: "hosp_west" },
-      { id: "att_morris", name: "Dr. Morris", service: "General Surgery", priority: 3, defaultHospitalId: "hosp_main" }
+      { id: "att_chen", name: "Dr. Chen", service: "Davies", priority: 5, defaultHospitalId: "hosp_main" },
+      { id: "att_patel", name: "Dr. Patel", service: "Davies", priority: 4, defaultHospitalId: "hosp_west" },
+      { id: "att_morris", name: "Dr. Morris", service: "Davies", priority: 3, defaultHospitalId: "hosp_main" },
+      { id: "att_nussbaum", name: "Dr. Nussbaum", service: "Berry", priority: 3, defaultHospitalId: "hosp_main" }
     ],
     residents: [
       {
         id: "res_chief",
-        name: "Schroeder",
+        name: "Andrew Schroeder",
         trainingLevel: "PGY5",
-        serviceStatus: "on-service",
+        serviceTags: ["Davies"],
         color: "#f4cf55",
         tags: ["home"],
         trainingInterests: ["HPB", "chief-level", "complex open"],
@@ -33,9 +34,9 @@ export function createInitialState(): PlannerState {
       },
       {
         id: "res_fellow",
-        name: "Adeleke",
+        name: "Adedayo Adeleke",
         trainingLevel: "Fellow",
-        serviceStatus: "on-service",
+        serviceTags: ["Davies"],
         color: "#c89af7",
         tags: ["fellow"],
         trainingInterests: ["bariatrics", "fellow-priority", "foregut"],
@@ -43,9 +44,9 @@ export function createInitialState(): PlannerState {
       },
       {
         id: "res_offservice",
-        name: "Cao",
+        name: "T-Cao",
         trainingLevel: "PGY3",
-        serviceStatus: "off-service",
+        serviceTags: ["Davies"],
         color: "#f37d6e",
         tags: ["available-for-requests"],
         trainingInterests: ["general surgery", "clinic"],
@@ -61,12 +62,22 @@ export function createInitialState(): PlannerState {
       },
       {
         id: "res_swaak",
-        name: "Swaak",
+        name: "Amanda Swaak",
         trainingLevel: "PGY4",
-        serviceStatus: "on-service",
+        serviceTags: ["Davies"],
         color: "#e65245",
         tags: ["home"],
         trainingInterests: ["general surgery", "abdominal wall", "clinic"],
+        unavailable: []
+      },
+      {
+        id: "res_broden",
+        name: "Nicole Broden",
+        trainingLevel: "PGY2",
+        serviceTags: ["Davies"],
+        color: "#55a6d9",
+        tags: ["home"],
+        trainingInterests: ["general surgery", "endoscopy", "clinic"],
         unavailable: []
       }
     ],
@@ -162,7 +173,7 @@ export function createInitialState(): PlannerState {
         startTime: "13:00",
         endTime: "17:00",
         attendingId: "att_chen",
-        service: "HPB",
+        service: "Davies",
         location: "University Hospital Clinic",
         hospitalId: "hosp_main",
         capacity: 1
@@ -174,7 +185,7 @@ export function createInitialState(): PlannerState {
         startTime: "08:00",
         endTime: "12:00",
         attendingId: "att_patel",
-        service: "Bariatrics",
+        service: "Davies",
         location: "West Campus Clinic",
         hospitalId: "hosp_west",
         capacity: 1

@@ -17,6 +17,7 @@ import {
 } from "./types";
 import { getWeekDates, minutesToTime, timeToMinutes } from "./date";
 import { createId } from "./id";
+import { isResidentOnService, servicesMatch } from "./services";
 
 interface Interval {
   assignment: Assignment;
@@ -34,15 +35,15 @@ type AssignmentTarget =
   | { kind: "block"; block: ScheduledBlock }
   | { kind: "clinic"; clinic: ScheduledClinicSession };
 
-export function buildWeekSchedule(state: PlannerState, weekId: string): WeekSchedule {
+export function buildWeekSchedule(state: PlannerState, weekId: string, serviceLine?: string): WeekSchedule {
   const week = requireWeek(state, weekId);
 
   const dates = getWeekDates(week.startDate, state.settings.weekdayOnly);
-  const scheduledCases = computeScheduledCases(state, week.id);
+  const scheduledCases = computeScheduledCases(state, week.id, serviceLine);
   const blockAssignments = state.assignments.filter((assignment) => assignment.kind === "block");
 
   const blocks = state.attendingBlocks
-    .filter((block) => block.weekId === week.id)
+    .filter((block) => block.weekId === week.id && blockMatchesService(state, block, serviceLine))
     .map<ScheduledBlock>((block) => {
       const attending = requireEntity(state.attendings, block.attendingId, "attending");
       const hospital = requireEntity(state.hospitals, block.hospitalId, "hospital");
@@ -60,7 +61,7 @@ export function buildWeekSchedule(state: PlannerState, weekId: string): WeekSche
     .sort((a, b) => a.date.localeCompare(b.date) || timeToMinutes(a.firstCaseStartTime) - timeToMinutes(b.firstCaseStartTime));
 
   const clinics = state.clinicSessions
-    .filter((clinic) => clinic.weekId === week.id)
+    .filter((clinic) => clinic.weekId === week.id && servicesMatch(clinic.service, serviceLine))
     .map<ScheduledClinicSession>((clinic) => ({
       ...clinic,
       attending: clinic.attendingId ? state.attendings.find((attending) => attending.id === clinic.attendingId) : undefined,
@@ -70,7 +71,7 @@ export function buildWeekSchedule(state: PlannerState, weekId: string): WeekSche
     }))
     .sort((a, b) => a.date.localeCompare(b.date) || timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
-  const warnings = collectWarnings(state, week.id);
+  const warnings = collectWarnings(state, week.id, serviceLine);
   const warningLookup = new Map<string, string[]>();
   for (const warning of warnings) {
     if (!warning.targetId) continue;
@@ -108,12 +109,12 @@ export function buildWeekSchedule(state: PlannerState, weekId: string): WeekSche
   };
 }
 
-export function computeScheduledCases(state: PlannerState, weekId: string): ScheduledCase[] {
+export function computeScheduledCases(state: PlannerState, weekId: string, serviceLine?: string): ScheduledCase[] {
   const blockAssignments = state.assignments.filter((assignment) => assignment.kind === "block");
   const caseAssignments = state.assignments.filter((assignment) => assignment.kind === "case");
 
   return state.attendingBlocks
-    .filter((block) => block.weekId === weekId)
+    .filter((block) => block.weekId === weekId && blockMatchesService(state, block, serviceLine))
     .flatMap((block) => {
       const attending = requireEntity(state.attendings, block.attendingId, "attending");
       const hospital = requireEntity(state.hospitals, block.hospitalId, "hospital");
@@ -146,8 +147,8 @@ export function computeScheduledCases(state: PlannerState, weekId: string): Sche
     .sort((a, b) => a.date.localeCompare(b.date) || a.startMinutes - b.startMinutes || b.priority - a.priority);
 }
 
-export function collectWarnings(state: PlannerState, weekId: string): Warning[] {
-  const intervals = buildAssignmentIntervals(state, weekId);
+export function collectWarnings(state: PlannerState, weekId: string, serviceLine?: string): Warning[] {
+  const intervals = buildAssignmentIntervals(state, weekId, serviceLine);
   const warnings: Warning[] = [];
 
   for (const interval of intervals) {
@@ -202,7 +203,7 @@ export function collectWarnings(state: PlannerState, weekId: string): Warning[] 
     }
   }
 
-  for (const scheduledCase of computeScheduledCases(state, weekId)) {
+  for (const scheduledCase of computeScheduledCases(state, weekId, serviceLine)) {
     if (!scheduledCase.assignment) continue;
     const resident = state.residents.find((candidate) => candidate.id === scheduledCase.assignment?.residentId);
     if (!resident) continue;
@@ -219,17 +220,26 @@ export function collectWarnings(state: PlannerState, weekId: string): Warning[] 
     }
   }
 
-  for (const warning of getArrangementWarnings(state, weekId)) {
+  for (const warning of getArrangementWarnings(state, weekId, serviceLine)) {
     warnings.push(warning);
   }
 
   return warnings;
 }
 
-export function applySuggestion(state: PlannerState, weekId: string, actorRole: "admin" | "viewer" = "admin"): PlannerState {
-  const weekCases = computeScheduledCases(state, weekId);
+export function applySuggestion(
+  state: PlannerState,
+  weekId: string,
+  actorRole: "admin" | "viewer" = "admin",
+  serviceLine?: string
+): PlannerState {
+  const weekCases = computeScheduledCases(state, weekId, serviceLine);
   const caseIds = new Set(weekCases.map((surgeryCase) => surgeryCase.id));
-  const clinicIds = new Set(state.clinicSessions.filter((clinic) => clinic.weekId === weekId).map((clinic) => clinic.id));
+  const clinicIds = new Set(
+    state.clinicSessions
+      .filter((clinic) => clinic.weekId === weekId && servicesMatch(clinic.service, serviceLine))
+      .map((clinic) => clinic.id)
+  );
   const preservedAssignments = state.assignments.filter((assignment) => {
     if (assignment.source !== "suggestion") return true;
     if (assignment.kind === "case" && caseIds.has(assignment.targetId)) return false;
@@ -247,7 +257,7 @@ export function applySuggestion(state: PlannerState, weekId: string, actorRole: 
     .sort((a, b) => b.priority - a.priority || a.date.localeCompare(b.date) || a.startMinutes - b.startMinutes);
 
   for (const scheduledCase of casesToFill) {
-    const resident = chooseResidentForTarget(draft, weekId, { kind: "case", case: scheduledCase });
+    const resident = chooseResidentForTarget(draft, weekId, { kind: "case", case: scheduledCase }, serviceLine);
     if (!resident) continue;
     draft = {
       ...draft,
@@ -258,12 +268,12 @@ export function applySuggestion(state: PlannerState, weekId: string, actorRole: 
     };
   }
 
-  for (const clinic of state.clinicSessions.filter((candidate) => candidate.weekId === weekId)) {
-    const scheduledClinic = buildWeekSchedule(draft, weekId).days.flatMap((day) => day.clinics).find((candidate) => candidate.id === clinic.id);
+  for (const clinic of state.clinicSessions.filter((candidate) => candidate.weekId === weekId && servicesMatch(candidate.service, serviceLine))) {
+    const scheduledClinic = buildWeekSchedule(draft, weekId, serviceLine).days.flatMap((day) => day.clinics).find((candidate) => candidate.id === clinic.id);
     if (!scheduledClinic) continue;
     const remainingCapacity = Math.max(0, clinic.capacity - scheduledClinic.assignments.length);
     for (let count = 0; count < remainingCapacity; count += 1) {
-      const resident = chooseResidentForTarget(draft, weekId, { kind: "clinic", clinic: scheduledClinic });
+      const resident = chooseResidentForTarget(draft, weekId, { kind: "clinic", clinic: scheduledClinic }, serviceLine);
       if (!resident) break;
       draft = {
         ...draft,
@@ -336,8 +346,8 @@ export function addActivity(
   };
 }
 
-export function buildUncoveredMessage(state: PlannerState, weekId: string, date?: string): string {
-  const schedule = buildWeekSchedule(state, weekId);
+export function buildUncoveredMessage(state: PlannerState, weekId: string, date?: string, serviceLine?: string): string {
+  const schedule = buildWeekSchedule(state, weekId, serviceLine);
   const days = date ? schedule.days.filter((day) => day.date === date) : schedule.days;
   const lines = days
     .map((day) => {
@@ -362,8 +372,8 @@ export function buildUncoveredMessage(state: PlannerState, weekId: string, date?
   return lines.join("\n");
 }
 
-export function buildAssignmentIntervals(state: PlannerState, weekId: string): Interval[] {
-  const schedule = buildWeekScheduleWithoutWarnings(state, weekId);
+export function buildAssignmentIntervals(state: PlannerState, weekId: string, serviceLine?: string): Interval[] {
+  const schedule = buildWeekScheduleWithoutWarnings(state, weekId, serviceLine);
   const intervals: Interval[] = [];
 
   for (const day of schedule.days) {
@@ -427,12 +437,12 @@ export function buildAssignmentIntervals(state: PlannerState, weekId: string): I
   return intervals;
 }
 
-function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string): WeekSchedule {
+function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string, serviceLine?: string): WeekSchedule {
   const week = requireWeek(state, weekId);
   const dates = getWeekDates(week.startDate, state.settings.weekdayOnly);
-  const scheduledCases = computeScheduledCases(state, week.id);
+  const scheduledCases = computeScheduledCases(state, week.id, serviceLine);
   const blocks = state.attendingBlocks
-    .filter((block) => block.weekId === week.id)
+    .filter((block) => block.weekId === week.id && blockMatchesService(state, block, serviceLine))
     .map<ScheduledBlock>((block) => {
       const attending = requireEntity(state.attendings, block.attendingId, "attending");
       const hospital = requireEntity(state.hospitals, block.hospitalId, "hospital");
@@ -446,7 +456,7 @@ function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string): 
       };
     });
   const clinics = state.clinicSessions
-    .filter((clinic) => clinic.weekId === week.id)
+    .filter((clinic) => clinic.weekId === week.id && servicesMatch(clinic.service, serviceLine))
     .map<ScheduledClinicSession>((clinic) => ({
       ...clinic,
       attending: clinic.attendingId ? state.attendings.find((attending) => attending.id === clinic.attendingId) : undefined,
@@ -469,7 +479,12 @@ function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string): 
   };
 }
 
-function chooseResidentForTarget(state: PlannerState, weekId: string, target: AssignmentTarget): Resident | undefined {
+function chooseResidentForTarget(
+  state: PlannerState,
+  weekId: string,
+  target: AssignmentTarget,
+  serviceLine?: string
+): Resident | undefined {
   const candidates = state.residents.map((resident) => {
     const simulated = {
       ...state,
@@ -478,7 +493,7 @@ function chooseResidentForTarget(state: PlannerState, weekId: string, target: As
         makeAssignment(target.kind, getTargetId(target), resident.id, "suggestion", false)
       ]
     };
-    const warnings = collectWarnings(simulated, weekId).filter((warning) => warning.residentId === resident.id);
+    const warnings = collectWarnings(simulated, weekId, serviceLine).filter((warning) => warning.residentId === resident.id);
     const blockingWarnings = warnings.filter((warning) => warning.severity !== "info");
     if (blockingWarnings.length > 0) return undefined;
     return {
@@ -493,8 +508,11 @@ function chooseResidentForTarget(state: PlannerState, weekId: string, target: As
 }
 
 function scoreResidentForTarget(resident: Resident, target: AssignmentTarget): number {
+  const targetService = getTargetService(target);
+  const serviceScore = targetService && isResidentOnService(resident, targetService) ? 10 : 0;
+
   if (target.kind === "clinic") {
-    return resident.serviceStatus === "on-service" ? 10 : 4;
+    return (serviceScore ? 10 : 4) + serviceScore;
   }
 
   const scheduledCase = target.kind === "case" ? target.case : target.block.cases[0];
@@ -504,7 +522,7 @@ function scoreResidentForTarget(resident: Resident, target: AssignmentTarget): n
   const tagMatches = caseTags.filter((tag) => interests.includes(tag)).length;
   const chiefFit = caseTags.includes("chief-level") && resident.trainingLevel === "PGY5" ? 8 : 0;
   const fellowFit = caseTags.includes("fellow-priority") && resident.trainingLevel === "Fellow" ? 8 : 0;
-  return 20 + scheduledCase.priority * 4 + tagMatches * 6 + chiefFit + fellowFit;
+  return 20 + serviceScore + scheduledCase.priority * 4 + tagMatches * 6 + chiefFit + fellowFit;
 }
 
 function getTrainingLevelWarning(resident: Resident, scheduledCase: ScheduledCase): string | undefined {
@@ -521,8 +539,8 @@ function getTrainingLevelWarning(resident: Resident, scheduledCase: ScheduledCas
   return undefined;
 }
 
-function getArrangementWarnings(state: PlannerState, weekId: string): Warning[] {
-  const scheduledCases = computeScheduledCases(state, weekId);
+function getArrangementWarnings(state: PlannerState, weekId: string, serviceLine?: string): Warning[] {
+  const scheduledCases = computeScheduledCases(state, weekId, serviceLine);
   const casesByDate = groupBy(scheduledCases, (scheduledCase) => scheduledCase.date);
   const warnings: Warning[] = [];
 
@@ -562,6 +580,18 @@ function getTargetId(target: AssignmentTarget): string {
   if (target.kind === "case") return target.case.id;
   if (target.kind === "block") return target.block.id;
   return target.clinic.id;
+}
+
+function getTargetService(target: AssignmentTarget): string | undefined {
+  if (target.kind === "clinic") return target.clinic.service;
+  if (target.kind === "block") return target.block.attending.service;
+  return target.case.attending.service;
+}
+
+function blockMatchesService(state: PlannerState, block: AttendingBlock, serviceLine?: string): boolean {
+  if (!serviceLine) return true;
+  const attending = state.attendings.find((candidate) => candidate.id === block.attendingId);
+  return servicesMatch(attending?.service, serviceLine);
 }
 
 function describeTarget(state: PlannerState, kind: Assignment["kind"], targetId: string): string {

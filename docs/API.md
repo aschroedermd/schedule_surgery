@@ -13,17 +13,25 @@ curl -H "X-API-Key: $ADMIN_API_KEY" https://your-domain.example/api/state
 Roles:
 
 - Admin API key: full read/write access.
-- Viewer API key: read access plus viewer coverage claims.
+- Viewer API key: read access.
 
-Browser logins still use:
+Browser logins use username/password credentials:
 
 ```bash
 curl -X POST https://your-domain.example/api/auth/login \
   -H "content-type: application/json" \
-  -d '{"role":"admin","password":"..."}'
+  -d '{"username":"admin","password":"..."}'
 ```
 
 The response token can be passed as `Authorization: Bearer <token>`, but MCP/tools should prefer `X-API-Key`.
+
+Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. `guest` and named users start with `schroeder1`; named users are forced to change it after first login. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. Admin resets generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
+
+The admin Users tab is protected by a separate pin, initially `9480`. It can change that pin, add/delete users, generate temporary reset passwords, and grant per-service privileges:
+
+- `view`: read-only.
+- `request`: can submit coverage calendar edit requests for that service.
+- `edit`: can directly edit service assignments and coverage entries, and approve/deny requests for that service.
 
 ## Discovery
 
@@ -44,14 +52,18 @@ GET /api/docs
 ```text
 GET /api/state
 GET /api/weeks/:weekId/schedule
+GET /api/weeks/:weekId/schedule?service=Davies
 GET /api/weeks/:weekId/warnings
 GET /api/weeks/:weekId/uncovered-message
 GET /api/weeks/:weekId/uncovered-message?date=2026-07-02
+GET /api/weeks/:weekId/uncovered-message?service=Davies&date=2026-07-02
 ```
 
 `/api/state` returns the complete persisted planner state and is usually the best first call for tools.
 
 `/api/weeks/:weekId/schedule` returns computed case times, assignments, uncovered cases, and warnings.
+
+The app supports service lines `Davies`, `Berry`, `Fogel`, `Keeley`, and `NRV`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags`.
 
 ## Entity Collections
 
@@ -167,7 +179,7 @@ curl -X POST https://your-domain.example/api/claims \
 Run schedule suggestion:
 
 ```bash
-curl -X POST https://your-domain.example/api/weeks/week_2026_06_29/suggest \
+curl -X POST 'https://your-domain.example/api/weeks/week_2026_06_29/suggest?service=Davies' \
   -H "X-API-Key: $ADMIN_API_KEY"
 ```
 

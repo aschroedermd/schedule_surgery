@@ -101,12 +101,14 @@ PUBLIC_BASE_URL=https://schedule.yourdomain.com
 POSTGRES_PASSWORD=<long random password>
 APP_SECRET=<long random secret>
 
-ADMIN_PASSWORD=<admin login password>
-VIEWER_PASSWORD=<viewer login password>
+ADMIN_PASSWORD=<initial admin login password>
+USER_STORE_PATH=/data/users.json
 
 ADMIN_API_KEY=<long random admin API key>
 VIEWER_API_KEY=<long random viewer API key>
 ```
+
+`ADMIN_PASSWORD` is only used when the persistent browser-user store is first created. The production compose file stores browser users and password hashes in the `planner-users` Docker volume at `/data/users.json`, so rebuilds do not reset changed passwords or privileges.
 
 If you do not have a domain yet, change the `Caddyfile` first line from `{$APP_DOMAIN}` to `:80`, set:
 
