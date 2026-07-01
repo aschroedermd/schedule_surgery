@@ -1,5 +1,7 @@
 import {
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCopy,
   Lock,
   LogIn,
@@ -56,6 +58,7 @@ import {
   Week,
   WeekSchedule
 } from "../shared/types";
+import { formatClinicLabel } from "../shared/scheduler";
 import {
   DEFAULT_SERVICE_LINE,
   clinicMatchesService,
@@ -184,6 +187,27 @@ export function App() {
     }
   }
 
+  async function navigateToWeekForDate(date: string) {
+    if (!session || !state || !date) return;
+    const startDate = getMondayForDate(date);
+    const existingWeek = state.weeks.find((week) => week.startDate === startDate);
+    if (existingWeek) {
+      await selectWeek(existingWeek.id);
+      return;
+    }
+    if (!isAdmin) {
+      setError("Only admins can open a new blank week.");
+      return;
+    }
+
+    const week: Week = {
+      id: buildWeekId(startDate),
+      startDate,
+      label: formatWeekLabel(startDate)
+    };
+    await runMutation(() => createEntity<Week>(session.token, "weeks", week), "Week opened", week.id);
+  }
+
   async function selectServiceLine(serviceLine: string) {
     if (serviceLine === selectedService) return;
     setSelectedService(serviceLine);
@@ -264,58 +288,60 @@ export function App() {
             selectedService={selectedService}
             onSelect={selectServiceLine}
           />
-          <h1>{selectedWeek.label}</h1>
-          <p className="week-range">{formatWeekRange(selectedWeek, state.settings.weekdayOnly)}</p>
+          <h1>{activeTab === "board" ? selectedWeek.label : getTabTitle(activeTab)}</h1>
+          {activeTab === "board" && <p className="week-range">{formatWeekRange(selectedWeek, state.settings.weekdayOnly)}</p>}
         </div>
-        <div className="header-actions">
-          <WeekManager
-            state={state}
-            selectedWeek={selectedWeek}
-            token={session.token}
-            disabled={!isAdmin}
-            onSelect={selectWeek}
-            onMutate={runMutation}
-          />
-          <button
-            title="Refresh"
-            className="icon-button"
-            onClick={() =>
-              refresh(undefined, selectedWeekId, selectedService).catch((refreshError) => {
-                if (handleExpiredSession(refreshError)) return;
-                setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
-              })
-            }
-          >
-            <RefreshCw size={18} />
-          </button>
-          {isAdmin && (
+        {activeTab === "board" && (
+          <div className="header-actions">
+            <WeekNavigator
+              state={state}
+              selectedWeek={selectedWeek}
+              token={session.token}
+              canCreateWeek={isAdmin}
+              onNavigateToDate={navigateToWeekForDate}
+              onMutate={runMutation}
+            />
             <button
-              title="Suggest schedule"
-              className="primary-button"
-              onClick={() => runMutation(() => runSuggestion(session.token, selectedWeekId, selectedService), "Suggestion refreshed")}
+              title="Refresh"
+              className="icon-button"
+              onClick={() =>
+                refresh(undefined, selectedWeekId, selectedService).catch((refreshError) => {
+                  if (handleExpiredSession(refreshError)) return;
+                  setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
+                })
+              }
             >
-              <Wand2 size={18} />
-              Suggest
+              <RefreshCw size={18} />
             </button>
-          )}
-          <button
-            title="Copy uncovered week"
-            className="secondary-button"
-            onClick={async () => {
-              const message = await getUncoveredMessage(session.token, selectedWeekId, undefined, selectedService);
-              await navigator.clipboard.writeText(message);
-              setToast("Uncovered message copied");
-            }}
-          >
-            <ClipboardCopy size={18} />
-            Copy Week
-          </button>
-        </div>
+            {isAdmin && (
+              <button
+                title="Suggest schedule"
+                className="primary-button"
+                onClick={() => runMutation(() => runSuggestion(session.token, selectedWeekId, selectedService), "Suggestion refreshed")}
+              >
+                <Wand2 size={18} />
+                Suggest
+              </button>
+            )}
+            <button
+              title="Copy uncovered week"
+              className="secondary-button"
+              onClick={async () => {
+                const message = await getUncoveredMessage(session.token, selectedWeekId, undefined, selectedService);
+                await navigator.clipboard.writeText(message);
+                setToast("Uncovered message copied");
+              }}
+            >
+              <ClipboardCopy size={18} />
+              Copy Week
+            </button>
+          </div>
+        )}
       </header>
 
       <nav className="tabs" aria-label="Planner sections">
         {([
-          ["board", "Board"],
+          ["board", "O.R."],
           ["calendar", "Calendar"],
           ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"]] as const : []),
           ...(isAdmin ? [["entry", "Cases & Clinic"], ["roster", "Residents"], ["defaults", "Setup"], ["users", "Users"]] as const : []),
@@ -344,8 +370,9 @@ export function App() {
           state={state}
           token={session.token}
           selectedService={selectedService}
-          canEdit={canEditSelectedService}
-          canRequest={canRequestSelectedService}
+          serviceLines={serviceLines}
+          isAdmin={isAdmin}
+          servicePrivileges={session.servicePrivileges}
           onMutate={runMutation}
         />
       )}
@@ -524,44 +551,22 @@ function ServiceTagPicker({
   );
 }
 
-function WeekManager({
+function WeekNavigator({
   state,
   selectedWeek,
   token,
-  disabled,
-  onSelect,
+  canCreateWeek,
+  onNavigateToDate,
   onMutate
 }: {
   state: PlannerState;
   selectedWeek: Week;
   token: string;
-  disabled: boolean;
-  onSelect: (weekId: string) => Promise<void>;
+  canCreateWeek: boolean;
+  onNavigateToDate: (date: string) => Promise<void>;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string, preferredWeekId?: string) => Promise<void>;
 }) {
   const sortedWeeks = sortWeeks(state.weeks);
-  const [newWeekDate, setNewWeekDate] = useState(addDays(selectedWeek.startDate, 7));
-
-  useEffect(() => {
-    setNewWeekDate(addDays(selectedWeek.startDate, 7));
-  }, [selectedWeek.id, selectedWeek.startDate]);
-
-  async function addWeek(event: FormEvent) {
-    event.preventDefault();
-    const startDate = getMondayForDate(newWeekDate);
-    const existingWeek = state.weeks.find((week) => week.startDate === startDate);
-    if (existingWeek) {
-      await onSelect(existingWeek.id);
-      return;
-    }
-
-    const week: Week = {
-      id: buildWeekId(startDate),
-      startDate,
-      label: formatWeekLabel(startDate)
-    };
-    await onMutate(() => createEntity<Week>(token, "weeks", week), "Week added", week.id);
-  }
 
   async function deleteSelectedWeek() {
     const index = sortedWeeks.findIndex((week) => week.id === selectedWeek.id);
@@ -571,39 +576,39 @@ function WeekManager({
   }
 
   return (
-    <form className="week-manager" onSubmit={addWeek}>
-      <select
-        aria-label="Selected week"
-        value={selectedWeek.id}
-        onChange={(event) => onSelect(event.target.value)}
+    <div className="week-manager" aria-label="Week navigation">
+      <button
+        title="Previous week"
+        type="button"
+        className="icon-button"
+        onClick={() => onNavigateToDate(addDays(selectedWeek.startDate, -7))}
       >
-        {sortedWeeks.map((week) => (
-          <option key={week.id} value={week.id}>
-            {week.label} ({formatWeekRange(week, state.settings.weekdayOnly)})
-          </option>
-        ))}
-      </select>
+        <ChevronLeft size={18} />
+      </button>
       <input
-        aria-label="New week date"
+        aria-label="Choose day in week"
         type="date"
-        disabled={disabled}
-        value={newWeekDate}
-        onChange={(event) => setNewWeekDate(event.target.value)}
+        value={selectedWeek.startDate}
+        onChange={(event) => onNavigateToDate(event.target.value)}
       />
-      <button className="secondary-button" type="submit" disabled={disabled}>
-        <Plus size={16} />
-        Week
+      <button
+        title="Next week"
+        type="button"
+        className="icon-button"
+        onClick={() => onNavigateToDate(addDays(selectedWeek.startDate, 7))}
+      >
+        <ChevronRight size={18} />
       </button>
       <button
         title="Delete selected week"
         type="button"
         className="icon-button"
-        disabled={disabled || sortedWeeks.length <= 1}
+        disabled={!canCreateWeek || sortedWeeks.length <= 1}
         onClick={deleteSelectedWeek}
       >
         <Trash2 size={15} />
       </button>
-    </form>
+    </div>
   );
 }
 
@@ -661,12 +666,12 @@ function BoardTab({
           {day.clinics.map((clinic) => (
             <ClinicView
               key={clinic.id}
-            state={state}
-            clinic={clinic}
-            canEdit={canEdit}
-            token={token}
-            selectedService={selectedService}
-            onMutate={onMutate}
+              state={state}
+              clinic={clinic}
+              canEdit={canEdit}
+              token={token}
+              selectedService={selectedService}
+              onMutate={onMutate}
             />
           ))}
         </article>
@@ -802,7 +807,7 @@ function ClinicView({
   return (
     <section className="clinic-section">
       <div>
-        <strong>{clinic.service} clinic</strong>
+        <strong>{formatClinicLabel(clinic)}</strong>
         <span>{clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
       </div>
       <div className="clinic-assignments">
@@ -969,7 +974,8 @@ function EntryTab({
     endTime: "17:00",
     service: selectedService,
     location: "",
-    capacity: 1
+    capacity: 1,
+    isProcedure: false
   });
   const weekBlocks = state.attendingBlocks.filter(
     (block) =>
@@ -1049,23 +1055,78 @@ function EntryTab({
           <label>Start<input type="time" value={clinicForm.startTime} onChange={(event) => setClinicForm({ ...clinicForm, startTime: event.target.value })} /></label>
           <label>End<input type="time" value={clinicForm.endTime} onChange={(event) => setClinicForm({ ...clinicForm, endTime: event.target.value })} /></label>
           <label>Service<Select value={clinicForm.service} onChange={(service) => setClinicForm({ ...clinicForm, service })} options={serviceLineOptions(state)} /></label>
+          <label className="inline-checkbox">
+            <input type="checkbox" checked={clinicForm.isProcedure} onChange={(event) => setClinicForm({ ...clinicForm, isProcedure: event.target.checked })} />
+            <span>Procedure</span>
+          </label>
           <label>Location<input value={clinicForm.location} onChange={(event) => setClinicForm({ ...clinicForm, location: event.target.value })} /></label>
           <label>Capacity<input type="number" min={1} value={clinicForm.capacity} onChange={(event) => setClinicForm({ ...clinicForm, capacity: Number(event.target.value) })} /></label>
           <button className="primary-button" type="submit"><Plus size={16} />Add Clinic</button>
         </fieldset>
         <div className="entity-list">
           {weekClinics.map((clinic) => (
-            <CompactEntity
+            <ClinicSessionEditor
               key={clinic.id}
-              title={`${clinic.service} clinic`}
-              subtitle={`${clinic.date} ${clinic.startTime}-${clinic.endTime} · ${clinic.location}`}
+              state={state}
+              clinic={clinic}
+              token={token}
               disabled={disabled}
-              onDelete={() => onMutate(() => deleteEntity(token, "clinicSessions", clinic.id), "Clinic deleted")}
+              onMutate={onMutate}
             />
           ))}
         </div>
       </form>
     </section>
+  );
+}
+
+function ClinicSessionEditor({
+  state,
+  clinic,
+  token,
+  disabled,
+  onMutate
+}: {
+  state: PlannerState;
+  clinic: ClinicSession;
+  token: string;
+  disabled: boolean;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const attending = state.attendings.find((candidate) => candidate.id === clinic.attendingId);
+
+  return (
+    <div className="compact-entity">
+      <div>
+        <strong>{formatClinicLabel({ ...clinic, attending })}</strong>
+        <span>{clinic.date} {clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
+      </div>
+      <div className="row-actions">
+        <label className="inline-checkbox">
+          <input
+            type="checkbox"
+            checked={clinic.isProcedure}
+            disabled={disabled}
+            onChange={(event) =>
+              onMutate(
+                () => updateEntity<ClinicSession>(token, "clinicSessions", clinic.id, { isProcedure: event.target.checked }),
+                "Clinic updated"
+              )
+            }
+          />
+          <span>Procedure</span>
+        </label>
+        <button
+          title="Delete"
+          type="button"
+          className="icon-button"
+          disabled={disabled}
+          onClick={() => onMutate(() => deleteEntity(token, "clinicSessions", clinic.id), "Clinic deleted")}
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1683,6 +1744,29 @@ function residentLabel(state: PlannerState, residentId: string): string {
 
 function sortWeeks(weeks: Week[]): Week[] {
   return [...weeks].sort((a, b) => a.startDate.localeCompare(b.startDate));
+}
+
+function getTabTitle(tab: Tab): string {
+  switch (tab) {
+    case "board":
+      return "O.R.";
+    case "calendar":
+      return "Calendar";
+    case "requests":
+      return "Requests";
+    case "entry":
+      return "Cases & Clinic";
+    case "roster":
+      return "Residents";
+    case "defaults":
+      return "Setup";
+    case "activity":
+      return "Activity";
+    case "users":
+      return "Users";
+    case "account":
+      return "Account";
+  }
 }
 
 function chooseWeekId(weeks: Week[], preferredWeekId?: string): string | undefined {

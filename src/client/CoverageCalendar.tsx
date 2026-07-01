@@ -36,28 +36,86 @@ import {
   CoverageEntry,
   CoverageKind,
   PlannerState,
-  Resident
+  Resident,
+  ServicePrivileges
 } from "../shared/types";
+import {
+  DEFAULT_SERVICE_LINE,
+  isResidentOnService,
+  servicesMatch
+} from "../shared/services";
 
 type MutationRunner = (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 
-interface CoverageTabProps {
+interface CalendarTabProps {
   state: PlannerState;
   token: string;
   selectedService: string;
-  canEdit: boolean;
-  canRequest: boolean;
+  serviceLines: string[];
+  isAdmin: boolean;
+  servicePrivileges: ServicePrivileges;
   onMutate: MutationRunner;
 }
 
-export function CalendarTab({ state, token, selectedService, canEdit, canRequest, onMutate }: CoverageTabProps) {
+interface CalendarAccessProps {
+  state: PlannerState;
+  token: string;
+  selectedService: string;
+  visibleServices: string[];
+  isAdmin: boolean;
+  servicePrivileges: ServicePrivileges;
+  onMutate: MutationRunner;
+}
+
+export function CalendarTab({
+  state,
+  token,
+  selectedService,
+  serviceLines,
+  isAdmin,
+  servicePrivileges,
+  onMutate
+}: CalendarTabProps) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCoverageMonth(state));
+  const [visibleServices, setVisibleServices] = useState(() => getStoredCalendarServices(serviceLines));
   const dates = useMemo(() => getMonthGridDates(month), [month]);
-  const pendingCount = state.coverageRequests.filter((request) => request.status === "pending").length;
+  const serviceLineKey = serviceLines.join("\u0000");
+  const visibleResidents = useMemo(
+    () => state.residents.filter((resident) => residentMatchesServices(resident, visibleServices)),
+    [state.residents, visibleServices]
+  );
+  const visibleCoverageEntries = useMemo(
+    () => state.coverageEntries.filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices)),
+    [state, visibleServices]
+  );
+  const pendingCount = state.coverageRequests.filter(
+    (request) => request.status === "pending" && coverageRequestMatchesServices(state, request, visibleServices)
+  ).length;
+  const allServicesChecked = serviceLines.length > 0 && serviceLines.every((serviceLine) => serviceIsVisible(visibleServices, serviceLine));
 
   useEffect(() => {
     localStorage.setItem("coverageCalendarMonth", month);
   }, [month]);
+
+  useEffect(() => {
+    setVisibleServices((current) => {
+      const normalized = normalizeCalendarServices(current, serviceLines);
+      return serviceSelectionsEqual(current, normalized) ? current : normalized;
+    });
+  }, [serviceLineKey]);
+
+  useEffect(() => {
+    localStorage.setItem("coverageCalendarServices", JSON.stringify(visibleServices));
+  }, [visibleServices]);
+
+  function updateVisibleService(serviceLine: string, checked: boolean) {
+    setVisibleServices((current) => {
+      const next = checked
+        ? [...current, serviceLine]
+        : current.filter((candidate) => !servicesMatch(candidate, serviceLine));
+      return normalizeCalendarServices(next, serviceLines);
+    });
+  }
 
   return (
     <section className="coverage-page">
@@ -82,9 +140,30 @@ export function CalendarTab({ state, token, selectedService, canEdit, canRequest
         </div>
       </div>
 
+      <div className="coverage-service-filter" aria-label="Calendar services">
+        <label className="service-filter-option">
+          <input
+            type="checkbox"
+            checked={allServicesChecked}
+            onChange={(event) => setVisibleServices(event.target.checked ? [...serviceLines] : getDefaultCalendarServices(serviceLines))}
+          />
+          <span>All services</span>
+        </label>
+        {serviceLines.map((serviceLine) => (
+          <label key={serviceLine} className="service-filter-option">
+            <input
+              type="checkbox"
+              checked={serviceIsVisible(visibleServices, serviceLine)}
+              onChange={(event) => updateVisibleService(serviceLine, event.target.checked)}
+            />
+            <span>{serviceLine}</span>
+          </label>
+        ))}
+      </div>
+
       <div className="coverage-summary">
         <div className="coverage-legend">
-          {state.residents.map((resident) => (
+          {visibleResidents.map((resident) => (
             <span key={resident.id} className="resident-legend-item">
               <span className="resident-dot" style={{ backgroundColor: getResidentColor(resident) }} />
               {resident.name}
@@ -109,8 +188,11 @@ export function CalendarTab({ state, token, selectedService, canEdit, canRequest
             state={state}
             token={token}
             selectedService={selectedService}
-            canEdit={canEdit}
-            canRequest={canRequest}
+            visibleServices={visibleServices}
+            visibleResidents={visibleResidents}
+            coverageEntries={visibleCoverageEntries}
+            isAdmin={isAdmin}
+            servicePrivileges={servicePrivileges}
             month={month}
             date={date}
             onMutate={onMutate}
@@ -125,39 +207,61 @@ function CoverageDay({
   state,
   token,
   selectedService,
-  canEdit,
-  canRequest,
+  visibleServices,
+  visibleResidents,
+  coverageEntries,
+  isAdmin,
+  servicePrivileges,
   month,
   date,
   onMutate
-}: CoverageTabProps & { month: string; date: string }) {
+}: CalendarAccessProps & { visibleResidents: Resident[]; coverageEntries: CoverageEntry[]; month: string; date: string }) {
   const inMonth = getMonthFromDate(date) === month;
-  const entries = state.coverageEntries.filter((entry) => entry.date === date);
-  const callEntry = getCoverageSlot(state.coverageEntries, date, "call");
-  const roundingEntry = getCoverageSlot(state.coverageEntries, date, "rounding");
+  const entries = coverageEntries.filter((entry) => entry.date === date);
+  const callEntry = getCoverageSlot(coverageEntries, date, "call");
+  const roundingEntry = getCoverageSlot(coverageEntries, date, "rounding");
   const required = inMonth && isWeekendCoverageRequired(date);
-  const unassigned = required && !hasWeekendCoverage(state.coverageEntries, date);
+  const unassigned = required && !hasWeekendCoverage(coverageEntries, date);
   const pendingRequests = state.coverageRequests.filter(
-    (request) => request.status === "pending" && requestTouchesDate(state, request, date)
+    (request) =>
+      request.status === "pending" &&
+      requestTouchesDate(state, request, date) &&
+      coverageRequestMatchesServices(state, request, visibleServices)
+  );
+  const canEditVisibleServices = visibleServices.some((serviceLine) =>
+    canEditService(isAdmin, servicePrivileges, serviceLine)
+  );
+  const canCreateForVisibleServices = visibleServices.some((serviceLine) =>
+    canRequestService(isAdmin, servicePrivileges, serviceLine)
   );
   const dayNumber = parseLocalDate(date).getDate();
   const [noteDraft, setNoteDraft] = useState({
-    residentId: state.residents[0]?.id ?? "",
+    residentId: visibleResidents[0]?.id ?? "",
     kind: "off" as Extract<CoverageKind, "off" | "note">,
     note: ""
   });
   const [showNoteForm, setShowNoteForm] = useState(false);
 
   useEffect(() => {
-    if (noteDraft.residentId || !state.residents[0]) return;
-    setNoteDraft((current) => ({ ...current, residentId: state.residents[0]?.id ?? "" }));
-  }, [noteDraft.residentId, state.residents]);
+    if (!noteDraft.residentId) {
+      if (visibleResidents[0]) {
+        setNoteDraft((current) => ({ ...current, residentId: visibleResidents[0]?.id ?? "" }));
+      }
+      return;
+    }
+    if (visibleResidents.some((resident) => resident.id === noteDraft.residentId)) return;
+    setNoteDraft((current) => ({ ...current, residentId: visibleResidents[0]?.id ?? "" }));
+  }, [noteDraft.residentId, visibleResidents]);
 
   async function addNote(event: FormEvent) {
     event.preventDefault();
     const entry = makeClientCoverageEntry(date, noteDraft.kind, noteDraft.residentId || undefined, noteDraft.note);
+    const serviceLine = resolveEntryMutationService(state, entry, visibleServices, selectedService);
+    const canEdit = canEditService(isAdmin, servicePrivileges, serviceLine);
+    const canRequest = canRequestService(isAdmin, servicePrivileges, serviceLine);
+    if (!canRequest) return;
     const action = canEdit
-      ? () => createCoverageEntry(token, entry, selectedService)
+      ? () => createCoverageEntry(token, entry, serviceLine)
       : () =>
           submitCoverageRequest(
             token,
@@ -166,7 +270,7 @@ function CoverageDay({
               requestedEntry: entry,
               message: `Request ${entry.kind} entry`
             },
-            selectedService
+            serviceLine
           );
     await onMutate(action, canEdit ? "Calendar note saved" : "Request submitted");
     setNoteDraft((current) => ({ ...current, note: "" }));
@@ -200,9 +304,11 @@ function CoverageDay({
             state={state}
             token={token}
             selectedService={selectedService}
-            canEdit={canEdit}
-            canRequest={canRequest}
-            disabled={!inMonth || (!canEdit && !canRequest)}
+            visibleServices={visibleServices}
+            visibleResidents={visibleResidents}
+            isAdmin={isAdmin}
+            servicePrivileges={servicePrivileges}
+            disabled={!inMonth || !canCreateForVisibleServices}
             onMutate={onMutate}
           />
         )}
@@ -215,9 +321,11 @@ function CoverageDay({
             state={state}
             token={token}
             selectedService={selectedService}
-            canEdit={canEdit}
-            canRequest={canRequest}
-            disabled={!inMonth || (!canEdit && !canRequest)}
+            visibleServices={visibleServices}
+            visibleResidents={visibleResidents}
+            isAdmin={isAdmin}
+            servicePrivileges={servicePrivileges}
+            disabled={!inMonth || !canCreateForVisibleServices}
             onMutate={onMutate}
           />
         )}
@@ -228,18 +336,20 @@ function CoverageDay({
           <CoverageChip
             key={entry.id}
             entry={entry}
-            residents={state.residents}
+            residents={visibleResidents}
             canDelete={inMonth}
             selectedService={selectedService}
-            canEdit={canEdit}
-            canRequest={canRequest}
+            visibleServices={visibleServices}
+            state={state}
+            isAdmin={isAdmin}
+            servicePrivileges={servicePrivileges}
             token={token}
             onMutate={onMutate}
           />
         ))}
       </div>
 
-      {inMonth && (canEdit || canRequest) && !isRoundingDate(date) && !showNoteForm && (
+      {inMonth && canCreateForVisibleServices && !isRoundingDate(date) && !showNoteForm && (
         <button type="button" className="secondary-button coverage-add-note-button" onClick={() => setShowNoteForm(true)}>
           add+
         </button>
@@ -253,7 +363,7 @@ function CoverageDay({
             onChange={(event) => setNoteDraft({ ...noteDraft, residentId: event.target.value })}
           >
             <option value="">General</option>
-            {state.residents.map((resident) => (
+            {visibleResidents.map((resident) => (
               <option key={resident.id} value={resident.id}>
                 {resident.name}
               </option>
@@ -273,7 +383,7 @@ function CoverageDay({
             placeholder="Note"
             onChange={(event) => setNoteDraft({ ...noteDraft, note: event.target.value })}
           />
-          <button title={canEdit ? "Add note" : "Request note"} className="icon-button" type="submit">
+          <button title={canEditVisibleServices ? "Add note" : "Request note"} className="icon-button" type="submit">
             <Plus size={15} />
           </button>
         </form>
@@ -290,8 +400,10 @@ function CoverageSlotSelect({
   state,
   token,
   selectedService,
-  canEdit,
-  canRequest,
+  visibleServices,
+  visibleResidents,
+  isAdmin,
+  servicePrivileges,
   disabled,
   onMutate
 }: {
@@ -302,8 +414,10 @@ function CoverageSlotSelect({
   state: PlannerState;
   token: string;
   selectedService: string;
-  canEdit: boolean;
-  canRequest: boolean;
+  visibleServices: string[];
+  visibleResidents: Resident[];
+  isAdmin: boolean;
+  servicePrivileges: ServicePrivileges;
   disabled: boolean;
   onMutate: MutationRunner;
 }) {
@@ -318,20 +432,25 @@ function CoverageSlotSelect({
     if (disabled) return;
     if (!entry && !residentId) return;
 
+    const serviceLine = entry && !residentId
+      ? resolveEntryMutationService(state, entry, visibleServices, selectedService)
+      : resolveResidentMutationService(state, residentId, visibleServices, selectedService);
+    const canEdit = canEditService(isAdmin, servicePrivileges, serviceLine);
+    const canRequest = canRequestService(isAdmin, servicePrivileges, serviceLine);
+    if (!canRequest) return;
+
     if (canEdit) {
       if (!residentId && entry) {
-        await onMutate(() => deleteCoverageEntry(token, entry.id, selectedService), "Calendar assignment cleared");
+        await onMutate(() => deleteCoverageEntry(token, entry.id, serviceLine), "Calendar assignment cleared");
         return;
       }
       if (entry) {
-        await onMutate(() => updateCoverageEntry(token, entry.id, { residentId }, selectedService), "Calendar assignment saved");
+        await onMutate(() => updateCoverageEntry(token, entry.id, { residentId }, serviceLine), "Calendar assignment saved");
         return;
       }
-      await onMutate(() => createCoverageEntry(token, { date, kind, residentId, note: "" }, selectedService), "Calendar assignment saved");
+      await onMutate(() => createCoverageEntry(token, { date, kind, residentId, note: "" }, serviceLine), "Calendar assignment saved");
       return;
     }
-
-    if (!canRequest) return;
 
     if (!residentId && entry) {
       await onMutate(
@@ -339,7 +458,7 @@ function CoverageSlotSelect({
           submitCoverageRequest(
             token,
             { action: "delete", entryId: entry.id, message: `Request clearing ${kind}` },
-            selectedService
+            serviceLine
           ),
         "Request submitted"
       );
@@ -360,7 +479,7 @@ function CoverageSlotSelect({
               requestedEntry,
               message: `Request ${kind} assignment`
             },
-            selectedService
+            serviceLine
           ),
         "Request submitted"
       );
@@ -377,7 +496,7 @@ function CoverageSlotSelect({
         onChange={(event) => changeResident(event.target.value)}
       >
         <option value="">Unassigned</option>
-        {state.residents.map((residentOption) => (
+        {visibleResidents.map((residentOption) => (
           <option key={residentOption.id} value={residentOption.id}>
             {residentOption.name}
           </option>
@@ -392,8 +511,10 @@ function CoverageChip({
   residents,
   canDelete,
   selectedService,
-  canEdit,
-  canRequest,
+  visibleServices,
+  state,
+  isAdmin,
+  servicePrivileges,
   token,
   onMutate
 }: {
@@ -401,8 +522,10 @@ function CoverageChip({
   residents: Resident[];
   canDelete: boolean;
   selectedService: string;
-  canEdit: boolean;
-  canRequest: boolean;
+  visibleServices: string[];
+  state: PlannerState;
+  isAdmin: boolean;
+  servicePrivileges: ServicePrivileges;
   token: string;
   onMutate: MutationRunner;
 }) {
@@ -418,6 +541,9 @@ function CoverageChip({
     kind: entry.kind as Extract<CoverageKind, "off" | "note">,
     note: entry.note
   });
+  const entryServiceLine = resolveEntryMutationService(state, entry, visibleServices, selectedService);
+  const canEdit = canEditService(isAdmin, servicePrivileges, entryServiceLine);
+  const canRequest = canRequestService(isAdmin, servicePrivileges, entryServiceLine);
 
   useEffect(() => {
     setEditDraft({
@@ -430,7 +556,7 @@ function CoverageChip({
   async function deleteEntry() {
     if (!canDelete) return;
     const action = canEdit
-      ? () => deleteCoverageEntry(token, entry.id, selectedService)
+      ? () => deleteCoverageEntry(token, entry.id, entryServiceLine)
       : () =>
           submitCoverageRequest(
             token,
@@ -439,7 +565,7 @@ function CoverageChip({
               entryId: entry.id,
               message: `Request removing ${entry.kind}`
             },
-            selectedService
+            entryServiceLine
           );
     await onMutate(action, canEdit ? "Calendar entry removed" : "Request submitted");
     setShowActions(false);
@@ -453,8 +579,14 @@ function CoverageChip({
       residentId: editDraft.residentId || undefined,
       note: editDraft.note.trim()
     };
-    const action = canEdit
-      ? () => updateCoverageEntry(token, entry.id, nextEntry, selectedService)
+    const serviceLine = editDraft.residentId
+      ? resolveResidentMutationService(state, editDraft.residentId, visibleServices, selectedService)
+      : entryServiceLine;
+    const canEditTarget = canEditService(isAdmin, servicePrivileges, serviceLine);
+    const canRequestTarget = canRequestService(isAdmin, servicePrivileges, serviceLine);
+    if (!canRequestTarget) return;
+    const action = canEditTarget
+      ? () => updateCoverageEntry(token, entry.id, nextEntry, serviceLine)
       : () =>
           submitCoverageRequest(
             token,
@@ -464,9 +596,9 @@ function CoverageChip({
               requestedEntry: nextEntry,
               message: `Request editing ${entry.kind}`
             },
-            selectedService
+            serviceLine
           );
-    await onMutate(action, canEdit ? "Calendar entry updated" : "Request submitted");
+    await onMutate(action, canEditTarget ? "Calendar entry updated" : "Request submitted");
     setIsEditing(false);
     setShowActions(false);
   }
@@ -625,6 +757,90 @@ function requestTouchesDate(state: PlannerState, coverageRequest: CoverageChange
   if (coverageRequest.requestedEntry?.date === date) return true;
   if (!coverageRequest.entryId) return false;
   return state.coverageEntries.some((entry) => entry.id === coverageRequest.entryId && entry.date === date);
+}
+
+function coverageRequestMatchesServices(
+  state: PlannerState,
+  coverageRequest: CoverageChangeRequest,
+  visibleServices: string[]
+): boolean {
+  if (coverageRequest.serviceLine) return serviceIsVisible(visibleServices, coverageRequest.serviceLine);
+  if (coverageRequest.requestedEntry) return coverageEntryMatchesServices(state, coverageRequest.requestedEntry, visibleServices);
+  const entry = state.coverageEntries.find((candidate) => candidate.id === coverageRequest.entryId);
+  return entry ? coverageEntryMatchesServices(state, entry, visibleServices) : true;
+}
+
+function coverageEntryMatchesServices(state: PlannerState, entry: CoverageEntry, visibleServices: string[]): boolean {
+  if (!entry.residentId) return true;
+  const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
+  return resident ? residentMatchesServices(resident, visibleServices) : true;
+}
+
+function residentMatchesServices(resident: Resident, visibleServices: string[]): boolean {
+  return visibleServices.some((serviceLine) => isResidentOnService(resident, serviceLine));
+}
+
+function serviceIsVisible(visibleServices: string[], serviceLine: string): boolean {
+  return visibleServices.some((candidate) => servicesMatch(candidate, serviceLine));
+}
+
+function getStoredCalendarServices(serviceLines: string[]): string[] {
+  const stored = localStorage.getItem("coverageCalendarServices");
+  if (!stored) return getDefaultCalendarServices(serviceLines);
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? normalizeCalendarServices(parsed.filter((item) => typeof item === "string"), serviceLines) : getDefaultCalendarServices(serviceLines);
+  } catch {
+    return getDefaultCalendarServices(serviceLines);
+  }
+}
+
+function getDefaultCalendarServices(serviceLines: string[]): string[] {
+  const defaultService = serviceLines.find((serviceLine) => servicesMatch(serviceLine, DEFAULT_SERVICE_LINE));
+  return defaultService ? [defaultService] : serviceLines.slice(0, 1);
+}
+
+function normalizeCalendarServices(selectedServices: string[], serviceLines: string[]): string[] {
+  const normalized = serviceLines.filter((serviceLine) => selectedServices.some((candidate) => servicesMatch(candidate, serviceLine)));
+  return normalized.length > 0 ? normalized : getDefaultCalendarServices(serviceLines);
+}
+
+function serviceSelectionsEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((serviceLine, index) => servicesMatch(serviceLine, b[index]));
+}
+
+function resolveEntryMutationService(
+  state: PlannerState,
+  entry: CoverageEntry,
+  visibleServices: string[],
+  selectedService: string
+): string {
+  return resolveResidentMutationService(state, entry.residentId, visibleServices, selectedService);
+}
+
+function resolveResidentMutationService(
+  state: PlannerState,
+  residentId: string | undefined,
+  visibleServices: string[],
+  selectedService: string
+): string {
+  const resident = residentId ? state.residents.find((candidate) => candidate.id === residentId) : undefined;
+  if (resident) {
+    const visibleMatch = visibleServices.find((serviceLine) => isResidentOnService(resident, serviceLine));
+    if (visibleMatch) return visibleMatch;
+    if (isResidentOnService(resident, selectedService)) return selectedService;
+    if (resident.serviceTags[0]) return resident.serviceTags[0];
+  }
+  return visibleServices.find((serviceLine) => servicesMatch(serviceLine, selectedService)) ?? visibleServices[0] ?? selectedService;
+}
+
+function canEditService(isAdmin: boolean, servicePrivileges: ServicePrivileges, serviceLine: string): boolean {
+  return isAdmin || servicePrivileges[serviceLine] === "edit";
+}
+
+function canRequestService(isAdmin: boolean, servicePrivileges: ServicePrivileges, serviceLine: string): boolean {
+  const privilege = servicePrivileges[serviceLine];
+  return canEditService(isAdmin, servicePrivileges, serviceLine) || privilege === "request";
 }
 
 function describeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {

@@ -50,7 +50,7 @@ The database stores one JSON planner state. Important collections:
 - `residents`: reusable resident/fellow list and availability blocks.
 - `attendingBlocks`: one surgeon operating at one hospital on one date, with a first-case start time and `weekId`.
 - `cases`: ordered cases inside an attending block. Later case times are computed from prior estimated durations.
-- `clinicSessions`: entered clinic sessions with `weekId`.
+- `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
 - `assignments`: resident coverage of a whole block, individual case, or clinic.
 - `activityEvents`: audit trail of changes.
 
@@ -60,8 +60,11 @@ Service lines are selected client-side and persisted by each browser. The built-
 
 - `attendings[].service` stores the attending's service line.
 - `residents[].serviceTags` stores the service lines where the resident is currently on service.
+- `clinicSessions[].service` controls service-line filtering and edit permissions for clinics.
 - Legacy or non-service-specific planner data is normalized into `Davies`.
 - Pass `?service=Davies` or another service line to week schedule, warning, suggestion, and uncovered-message endpoints when you need the same filtered view the browser shows.
+
+Clinic schedule labels are surgeon-based, not service-based. If a clinic session has a resolvable `attendingId`, clients should display `{attending.name} clinic` or `{attending.name} procedure clinic`. If `attendingId` is missing or stale, fall back to `{service} clinic` or `{service} procedure clinic`.
 
 ## Multi-Week Handling
 
@@ -144,6 +147,8 @@ hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cas
 
 Creating a block assignment clears individual case assignments inside that block, which prevents false overlap warnings.
 
+For clinic-only writes, create or patch a `clinicSessions` entity instead of creating an OR block. Match existing clinics by `weekId`, `date`, `attendingId`, `startTime`, `endTime`, and `location` before creating a duplicate. Use `isProcedure: false` for ordinary clinic and `isProcedure: true` when the user says procedure clinic.
+
 ## Minimal JSON Shapes
 
 Create a week:
@@ -185,6 +190,34 @@ Create a case:
 }
 ```
 
+Create a clinic session:
+
+```json
+{
+  "id": "clinic_2026_07_29_katz",
+  "weekId": "week_2026_07_27",
+  "date": "2026-07-29",
+  "startTime": "13:00",
+  "endTime": "17:00",
+  "attendingId": "att_...",
+  "service": "Davies",
+  "location": "RMH Clinic",
+  "hospitalId": "hosp_...",
+  "capacity": 1,
+  "isProcedure": false
+}
+```
+
+Use `isProcedure: true` when the user means a procedure clinic; leave it `false` or omit it only for ordinary clinic. The server normalizes missing `isProcedure` to `false` for older clients. Browser schedule labels use the attending name, such as `Katz clinic` or `Katz procedure clinic`.
+
+Patch an existing clinic to become a procedure clinic:
+
+```json
+{
+  "isProcedure": true
+}
+```
+
 Assign Broden to that case:
 
 ```json
@@ -201,9 +234,11 @@ Assign Broden to that case:
 - When a user says “covered by Broden,” resolve Broden from `residents` by substring/name, then preserve the actual `id`.
 - When a user is working in a service line, filter reads and suggestions with the same `service` query parameter. Davies is the default seeded service.
 - When a user says “Katz at RMH,” resolve Katz from `attendings` and RMH from `hospitals.shortName`.
+- When a user says “Bower clinic,” resolve Bower from `attendings`, set `clinicSessions.attendingId`, and use the attending's service unless the user explicitly chose another service line.
+- When a user says “Bower procedure clinic,” create or patch a `clinicSessions` row with `isProcedure: true`; do not model that as an OR `case`.
 - When a user names a date or says "next week", resolve the target Monday, match or create a `weeks` row, and keep that `weekId` through the whole operation.
 - If the user gives a weekday and date that conflict, ask before leaving persistent changes. For temporary smoke tests, create and delete test data in the same run.
-- Use deterministic ids for scripted writes, such as `block_YYYY_MM_DD_katz_rmh` and `case_YYYY_MM_DD_katz_egd_1`, but check for existing ids first.
+- Use deterministic ids for scripted writes, such as `block_YYYY_MM_DD_katz_rmh`, `case_YYYY_MM_DD_katz_egd_1`, or `clinic_YYYY_MM_DD_katz`, but check for existing ids first.
 - Delete temporary data either in dependency order or by deleting the temporary week. Week deletion cascades to blocks, cases, clinics, and assignments for that week.
 - Warnings are allowed. The scheduler intentionally permits manual overrides while surfacing off-day, overlap, and cross-hospital travel risks.
 - For uncovered coverage requests, prefer the built-in message endpoint instead of writing custom wording.
@@ -211,4 +246,4 @@ Assign Broden to that case:
 
 ## Smoke Test Pattern
 
-For a write test, create a temporary week/block/case/assignment, verify it appears in `/api/weeks/{weekId}/schedule`, then delete the temporary week and confirm the block, case, clinic, and assignment targets are gone from `GET /api/state`. This proves the agent can safely write and clean up without changing the real schedule.
+For a write test, create a temporary week/block/case/assignment and, when clinic behavior matters, a temporary clinic with `isProcedure: true`. Verify the entities appear in `/api/weeks/{weekId}/schedule`; for a procedure clinic, confirm the schedule clinic has `isProcedure: true` and a resolved `attending.name`. Then delete the temporary week and confirm the block, case, clinic, and assignment targets are gone from `GET /api/state`. This proves the agent can safely write and clean up without changing the real schedule.

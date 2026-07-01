@@ -97,73 +97,23 @@ export function normalizePlannerState(state: PlannerState): PlannerState {
 }
 
 function normalizeResidents(residents: Resident[]): Resident[] {
-  const migrated = residents.map(normalizeResident);
-
-  if (!migrated.some((resident) => resident.id === "res_swaak")) {
-    migrated.push({
-      id: "res_swaak",
-      name: "Amanda Swaak",
-      trainingLevel: "PGY4",
-      serviceTags: ["Davies"],
-      color: "#e65245",
-      tags: ["home"],
-      trainingInterests: ["general surgery", "abdominal wall", "clinic"],
-      unavailable: []
-    });
-  }
-
-  if (!migrated.some((resident) => resident.id === "res_broden")) {
-    migrated.push({
-      id: "res_broden",
-      name: "Nicole Broden",
-      trainingLevel: "PGY2",
-      serviceTags: ["Davies"],
-      color: "#55a6d9",
-      tags: ["home"],
-      trainingInterests: ["general surgery", "endoscopy", "clinic"],
-      unavailable: []
-    });
-  }
-
-  return migrated;
+  return residents.map(normalizeResident);
 }
 
 function normalizeResident(resident: Resident): Resident {
   const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" };
-  const base = {
+  return {
     ...resident,
     serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus),
     tags: resident.tags ?? [],
     trainingInterests: resident.trainingInterests ?? [],
     unavailable: resident.unavailable ?? []
   };
-
-  if (resident.id === "res_chief") {
-    return { ...base, name: "Andrew Schroeder", color: base.color ?? "#f4cf55", serviceTags: ensureDavies(base.serviceTags) };
-  }
-  if (resident.id === "res_fellow") {
-    return { ...base, name: "Adedayo Adeleke", color: base.color ?? "#c89af7", serviceTags: ensureDavies(base.serviceTags) };
-  }
-  if (resident.id === "res_offservice") {
-    return { ...base, name: "T-Cao", color: base.color ?? "#f37d6e", serviceTags: ensureDavies(base.serviceTags) };
-  }
-  if (resident.id === "res_swaak") {
-    return { ...base, name: "Amanda Swaak", color: base.color ?? "#e65245", serviceTags: ensureDavies(base.serviceTags) };
-  }
-  if (resident.id === "res_broden") {
-    return { ...base, name: "Nicole Broden", color: base.color ?? "#55a6d9", serviceTags: ensureDavies(base.serviceTags) };
-  }
-
-  return base;
 }
 
 function normalizeServiceTags(serviceTags: string[] | undefined, legacyStatus?: "on-service" | "off-service"): string[] {
   if (serviceTags?.length) return uniqueTrimmed(serviceTags);
   return legacyStatus === "off-service" ? [] : ["Davies"];
-}
-
-function ensureDavies(serviceTags: string[]): string[] {
-  return serviceTags.includes("Davies") ? serviceTags : [...serviceTags, "Davies"];
 }
 
 function normalizeAttendings(attendings: Attending[], defaultHospitalId?: string): Attending[] {
@@ -188,7 +138,8 @@ function normalizeAttendings(attendings: Attending[], defaultHospitalId?: string
 function normalizeClinicSessions(clinicSessions: ClinicSession[]): ClinicSession[] {
   return clinicSessions.map((clinic) => ({
     ...clinic,
-    service: normalizeLegacyService(clinic.service)
+    service: normalizeLegacyService(clinic.service),
+    isProcedure: Boolean(clinic.isProcedure)
   }));
 }
 

@@ -3,6 +3,7 @@ import {
   applySuggestion,
   collectWarnings,
   computeScheduledCases,
+  formatClinicLabel,
   makeAssignment
 } from "./scheduler";
 import { createInitialState } from "../server/sampleData";
@@ -176,5 +177,15 @@ describe("scheduler core", () => {
       expect.arrayContaining(["case_chen_whipple", "case_patel_bypass", "case_morris_hernia"])
     );
     expect(berrySchedule).toEqual([]);
+  });
+
+  it("labels clinics by surgeon and procedure setting", () => {
+    const state = createInitialState();
+    const clinic = state.clinicSessions[0];
+    const attending = state.attendings.find((candidate) => candidate.id === clinic.attendingId);
+
+    expect(formatClinicLabel({ ...clinic, attending })).toBe("Dr. Chen clinic");
+    expect(formatClinicLabel({ ...clinic, attending, isProcedure: true })).toBe("Dr. Chen procedure clinic");
+    expect(formatClinicLabel({ ...clinic, attending: undefined, isProcedure: true })).toBe("Davies procedure clinic");
   });
 });

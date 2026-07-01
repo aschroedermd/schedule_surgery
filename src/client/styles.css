@@ -445,6 +445,7 @@ h2 {
   gap: 5px;
 }
 
+.inline-checkbox,
 .service-tag-option {
   width: fit-content;
   display: inline-flex;
@@ -459,6 +460,7 @@ h2 {
   font-weight: 900;
 }
 
+.inline-checkbox input,
 .service-tag-option input {
   width: 14px;
   min-height: 14px;
@@ -634,6 +636,37 @@ h2 {
 
 .coverage-toolbar-actions input {
   width: 150px;
+}
+
+.coverage-service-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid #d5dce5;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 10px;
+}
+
+.service-filter-option {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d6dee7;
+  border-radius: 999px;
+  background: #f6f8fb;
+  padding: 4px 8px;
+  color: #294965;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.service-filter-option input {
+  width: 14px;
+  min-height: 14px;
+  padding: 0;
 }
 
 .coverage-summary {

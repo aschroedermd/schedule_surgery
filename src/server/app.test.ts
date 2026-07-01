@@ -204,6 +204,36 @@ describe("planner API", () => {
     );
   });
 
+  it("does not resurrect or canonicalize seeded residents after roster edits", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app)
+      .delete("/api/entities/residents/res_swaak")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+    await request(app)
+      .patch("/api/entities/residents/res_chief")
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "Edited Resident", trainingLevel: "PGY4", serviceTags: ["Berry"] })
+      .expect(200);
+
+    const response = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
+
+    expect(response.body.residents).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "res_swaak" })])
+    );
+    expect(response.body.residents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "res_chief",
+          name: "Edited Resident",
+          trainingLevel: "PGY4",
+          serviceTags: ["Berry"]
+        })
+      ])
+    );
+  });
+
   it("serves OpenAPI JSON for external clients and MCP builders", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 

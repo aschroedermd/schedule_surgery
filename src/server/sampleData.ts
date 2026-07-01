@@ -176,7 +176,8 @@ export function createInitialState(): PlannerState {
         service: "Davies",
         location: "University Hospital Clinic",
         hospitalId: "hosp_main",
-        capacity: 1
+        capacity: 1,
+        isProcedure: false
       },
       {
         id: "clinic_bari_wed",
@@ -188,7 +189,8 @@ export function createInitialState(): PlannerState {
         service: "Davies",
         location: "West Campus Clinic",
         hospitalId: "hosp_west",
-        capacity: 1
+        capacity: 1,
+        isProcedure: false
       }
     ],
     assignments: [],

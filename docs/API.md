@@ -161,6 +161,27 @@ curl -X PATCH https://your-domain.example/api/entities/cases/case_unique_id \
   -d '{"procedureLabel":"Lap ventral hernia","durationMinutes":90}'
 ```
 
+Create a clinic session. Use `isProcedure: true` for a procedure clinic; schedule displays use the attending name, for example `Bower procedure clinic`.
+
+```bash
+curl -X POST https://your-domain.example/api/entities/clinicSessions \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "id": "clinic_2026_07_02_bower",
+    "weekId": "week_2026_06_29",
+    "date": "2026-07-02",
+    "startTime": "13:00",
+    "endTime": "17:00",
+    "attendingId": "att_9f4a9822",
+    "service": "Davies",
+    "location": "University Hospital Clinic",
+    "hospitalId": "hosp_1657f72b",
+    "capacity": 1,
+    "isProcedure": true
+  }'
+```
+
 Assign a resident to a case:
 
 ```bash

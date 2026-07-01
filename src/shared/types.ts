@@ -111,6 +111,7 @@ export interface ClinicSession {
   location: string;
   hospitalId?: string;
   capacity: number;
+  isProcedure: boolean;
 }
 
 export interface Assignment {

@@ -372,6 +372,13 @@ export function buildUncoveredMessage(state: PlannerState, weekId: string, date?
   return lines.join("\n");
 }
 
+export function formatClinicLabel(
+  clinic: Pick<ClinicSession, "service" | "isProcedure"> & { attending?: Pick<Attending, "name"> }
+): string {
+  const surgeonName = clinic.attending?.name?.trim() || clinic.service;
+  return `${surgeonName} ${clinic.isProcedure ? "procedure clinic" : "clinic"}`;
+}
+
 export function buildAssignmentIntervals(state: PlannerState, weekId: string, serviceLine?: string): Interval[] {
   const schedule = buildWeekScheduleWithoutWarnings(state, weekId, serviceLine);
   const intervals: Interval[] = [];
@@ -427,7 +434,7 @@ export function buildAssignmentIntervals(state: PlannerState, weekId: string, se
           start: timeToMinutes(clinic.startTime),
           end: timeToMinutes(clinic.endTime),
           hospitalId: clinic.hospitalId,
-          label: `${clinic.service} clinic`,
+          label: formatClinicLabel(clinic),
           targetId: clinic.id
         });
       }
