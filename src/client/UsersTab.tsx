@@ -330,15 +330,18 @@ export function UsersTab({
                   onChange={(event) => updateDraft(user.username, { displayName: event.target.value })}
                 />
               </div>
-              <select
-                aria-label={`${user.username} role`}
-                value={draft.role}
-                disabled={user.username === "admin"}
-                onChange={(event) => updateDraft(user.username, { role: event.target.value as Role })}
-              >
-                <option value="viewer">user</option>
-                <option value="admin">admin</option>
-              </select>
+              <label className="user-role-field">
+                <span>Role</span>
+                <select
+                  aria-label={`${user.username} role`}
+                  value={draft.role}
+                  disabled={user.username === "admin"}
+                  onChange={(event) => updateDraft(user.username, { role: event.target.value as Role })}
+                >
+                  <option value="viewer">user</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
               <div className="privilege-grid">
                 {serviceLines.map((serviceLine) => (
                   <label key={serviceLine}>

@@ -283,6 +283,7 @@ function CoverageDay({
     <article className={`coverage-day${inMonth ? "" : " outside-month"}${unassigned ? " unassigned" : ""}`} data-date={date}>
       <header className="coverage-day-header">
         <strong>{dayNumber}</strong>
+        <span className="coverage-day-mobile-date">{formatMobileCoverageDate(date)}</span>
         <div className="coverage-day-flags">
           {pendingRequests.length > 0 && <span className="pending-flag">{pendingRequests.length} pending</span>}
           {unassigned && (
@@ -872,6 +873,14 @@ function shiftMonth(month: string, delta: number): string {
   const [year, monthNumber] = month.split("-").map(Number);
   const shifted = new Date(year, monthNumber - 1 + delta, 1);
   return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMobileCoverageDate(date: string): string {
+  return parseLocalDate(date).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric"
+  });
 }
 
 function capitalize(value: string): string {

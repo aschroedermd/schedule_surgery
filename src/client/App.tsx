@@ -70,6 +70,11 @@ import {
 
 type Tab = "board" | "calendar" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
 type PlannerSession = Session;
+type LayoutMode = "desktop" | "mobile";
+type InputMode = "pointer" | "touch";
+
+const MOBILE_LAYOUT_QUERY = "(max-width: 760px), (hover: none) and (pointer: coarse) and (orientation: portrait) and (max-width: 900px)";
+const TOUCH_INPUT_QUERY = "(hover: none) and (pointer: coarse)";
 
 const emptyResident: Resident = {
   id: "",
@@ -476,8 +481,14 @@ function Shell({
   error?: string;
   toast?: string;
 }) {
+  const responsiveMode = useResponsiveMode();
+
   return (
-    <main className="app-shell">
+    <main
+      className="app-shell"
+      data-layout-mode={responsiveMode.layoutMode}
+      data-input-mode={responsiveMode.inputMode}
+    >
       <div className="top-strip">
         <span>{roleLabel(role)}</span>
         <button title="Log out" className="icon-button" onClick={onLogout}>
@@ -1767,6 +1778,38 @@ function getTabTitle(tab: Tab): string {
     case "account":
       return "Account";
   }
+}
+
+function useResponsiveMode(): { layoutMode: LayoutMode; inputMode: InputMode } {
+  const [responsiveMode, setResponsiveMode] = useState(getResponsiveMode);
+
+  useEffect(() => {
+    const mobileQuery = window.matchMedia(MOBILE_LAYOUT_QUERY);
+    const touchQuery = window.matchMedia(TOUCH_INPUT_QUERY);
+    const updateResponsiveMode = () => setResponsiveMode(getResponsiveMode());
+
+    mobileQuery.addEventListener("change", updateResponsiveMode);
+    touchQuery.addEventListener("change", updateResponsiveMode);
+    updateResponsiveMode();
+
+    return () => {
+      mobileQuery.removeEventListener("change", updateResponsiveMode);
+      touchQuery.removeEventListener("change", updateResponsiveMode);
+    };
+  }, []);
+
+  return responsiveMode;
+}
+
+function getResponsiveMode(): { layoutMode: LayoutMode; inputMode: InputMode } {
+  if (typeof window === "undefined" || !window.matchMedia) {
+    return { layoutMode: "desktop", inputMode: "pointer" };
+  }
+
+  return {
+    layoutMode: window.matchMedia(MOBILE_LAYOUT_QUERY).matches ? "mobile" : "desktop",
+    inputMode: window.matchMedia(TOUCH_INPUT_QUERY).matches ? "touch" : "pointer"
+  };
 }
 
 function chooseWeekId(weeks: Week[], preferredWeekId?: string): string | undefined {
