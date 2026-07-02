@@ -9,12 +9,12 @@ Use this guide when an AI agent, script, or MCP server needs to read or update t
 - Always fetch `GET /api/state` before mutating. Resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state.
 - Include `X-State-Version: state.version` on every mutating request. On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate.
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
-- Use the admin API key only for intentional writes. Use the viewer API key for read-only tools.
+- If API keys are configured, use the admin API key only for intentional writes and the viewer API key for read-only tools. Otherwise use browser-session bearer tokens.
 - After writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings.
 
 ## Authentication
 
-External tools should pass an API key:
+External tools can pass an API key when one is configured:
 
 ```bash
 curl -H "X-API-Key: $ADMIN_API_KEY" "$BASE_URL/api/state"

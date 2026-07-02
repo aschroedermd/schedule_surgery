@@ -104,6 +104,7 @@ APP_SECRET=<long random secret>
 ADMIN_PASSWORD=<initial admin login password>
 USER_STORE_PATH=/data/users.json
 
+# Optional: only needed for scripts, MCP servers, or external tools.
 ADMIN_API_KEY=<long random admin API key>
 VIEWER_API_KEY=<long random viewer API key>
 ```
@@ -195,4 +196,4 @@ scp root@YOUR_DROPLET_IP:/opt/schedule_surgery/planner-backup-YYYYMMDD.sql .
 - Caddy handles HTTPS.
 - The app stores no PHI by design.
 - Keep `.env.production` private.
-- Rotate API keys if they are pasted into the wrong place.
+- API keys are optional. If you use them for scripts or external tools, rotate them if they are pasted into the wrong place.

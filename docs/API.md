@@ -4,7 +4,7 @@ The app exposes a JSON API for browser users, scripts, and future MCP servers.
 
 ## Authentication
 
-For external tools, use API-key auth:
+For external tools, you can enable API-key auth by setting `ADMIN_API_KEY` and/or `VIEWER_API_KEY`:
 
 ```bash
 curl -H "X-API-Key: $ADMIN_API_KEY" https://your-domain.example/api/state
@@ -23,7 +23,7 @@ curl -X POST https://your-domain.example/api/auth/login \
   -d '{"username":"admin","password":"..."}'
 ```
 
-The response token can be passed as `Authorization: Bearer <token>`, but MCP/tools should prefer `X-API-Key`.
+The response token can be passed as `Authorization: Bearer <token>`. MCP/tools can use `X-API-Key` when API keys are configured.
 
 Seeded browser users are `admin` and anonymized resident placeholders such as `resident01`. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
 

@@ -24,12 +24,8 @@ export function assertProductionAuthConfig(): void {
   if (process.env.NODE_ENV !== "production") return;
   const config = getAuthConfig();
   const missingOrDefaultSecret = !process.env.APP_SECRET || config.secret === DEV_APP_SECRET || config.secret.length < 32;
-  const missingOrWeakAdminApiKey = !config.adminApiKey || config.adminApiKey.length < 32;
   if (missingOrDefaultSecret) {
     throw new Error("APP_SECRET must be set to a non-default value of at least 32 characters in production");
-  }
-  if (missingOrWeakAdminApiKey) {
-    throw new Error("ADMIN_API_KEY must be set to a value of at least 32 characters in production");
   }
 }
 
