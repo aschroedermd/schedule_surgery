@@ -98,7 +98,7 @@ export function buildWeekSchedule(state: PlannerState, weekId: string, serviceLi
     days: dates.map<DaySchedule>((date) => {
       const dayBlocks = blocks.filter((block) => block.date === date);
       const dayClinics = clinicsWithWarnings.filter((clinic) => clinic.date === date);
-      const uncoveredCases = dayBlocks.flatMap((block) => block.cases).filter((surgeryCase) => !surgeryCase.assignment);
+      const uncoveredCases = dayBlocks.flatMap((block) => block.cases).filter((surgeryCase) => surgeryCase.assignments.length === 0);
       return {
         date,
         blocks: dayBlocks,
@@ -128,7 +128,9 @@ export function computeScheduledCases(state: PlannerState, weekId: string, servi
         const startMinutes = currentStart;
         const endMinutes = startMinutes + surgeryCase.durationMinutes;
         currentStart = endMinutes + (index < blockCases.length - 1 ? state.settings.turnoverMinutes : 0);
-        const assignment = caseAssignments.find((candidate) => candidate.targetId === surgeryCase.id) ?? blockAssignment;
+        const directAssignments = caseAssignments.filter((candidate) => candidate.targetId === surgeryCase.id);
+        const assignments = directAssignments.length > 0 ? directAssignments : blockAssignment ? [blockAssignment] : [];
+        const assignment = assignments[0];
         return {
           ...surgeryCase,
           date: block.date,
@@ -140,6 +142,7 @@ export function computeScheduledCases(state: PlannerState, weekId: string, servi
           hospital,
           block,
           assignment,
+          assignments,
           warningMessages: []
         };
       });
@@ -233,19 +236,20 @@ export function collectWarnings(state: PlannerState, weekId: string, serviceLine
   }
 
   for (const scheduledCase of computeScheduledCases(state, weekId, serviceLine)) {
-    if (!scheduledCase.assignment) continue;
-    const resident = state.residents.find((candidate) => candidate.id === scheduledCase.assignment?.residentId);
-    if (!resident) continue;
-    const levelWarning = getTrainingLevelWarning(resident, scheduledCase);
-    if (levelWarning) {
-      warnings.push({
-        id: createId("warn"),
-        severity: "info",
-        residentId: resident.id,
-        assignmentId: scheduledCase.assignment.id,
-        targetId: scheduledCase.id,
-        message: levelWarning
-      });
+    for (const assignment of getScheduledCaseAssignments(scheduledCase)) {
+      const resident = state.residents.find((candidate) => candidate.id === assignment.residentId);
+      if (!resident) continue;
+      const levelWarning = getTrainingLevelWarning(resident, scheduledCase);
+      if (levelWarning) {
+        warnings.push({
+          id: createId("warn"),
+          severity: "info",
+          residentId: resident.id,
+          assignmentId: assignment.id,
+          targetId: scheduledCase.id,
+          message: levelWarning
+        });
+      }
     }
   }
 
@@ -282,7 +286,7 @@ export function applySuggestion(
   };
 
   const casesToFill = computeScheduledCases(draft, weekId, serviceLine)
-    .filter((surgeryCase) => !surgeryCase.assignment)
+    .filter((surgeryCase) => surgeryCase.assignments.length === 0)
     .sort((a, b) => b.priority - a.priority || a.date.localeCompare(b.date) || a.startMinutes - b.startMinutes);
 
   for (const scheduledCase of casesToFill) {
@@ -418,7 +422,9 @@ export function buildAssignmentIntervals(state: PlannerState, weekId: string, se
         const resident = state.residents.find((candidate) => candidate.id === block.assignment?.residentId);
         if (resident) {
           const blockCoveredRuns = getConsecutiveCaseRuns(
-            block.cases.filter((scheduledCase) => scheduledCase.assignment?.id === block.assignment?.id)
+            block.cases.filter((scheduledCase) =>
+              getScheduledCaseAssignments(scheduledCase).some((assignment) => assignment.id === block.assignment?.id)
+            )
           );
           for (const run of blockCoveredRuns) {
             intervals.push({
@@ -436,19 +442,20 @@ export function buildAssignmentIntervals(state: PlannerState, weekId: string, se
       }
 
       for (const scheduledCase of block.cases) {
-        if (!scheduledCase.assignment || scheduledCase.assignment.kind === "block") continue;
-        const resident = state.residents.find((candidate) => candidate.id === scheduledCase.assignment?.residentId);
-        if (!resident) continue;
-        intervals.push({
-          assignment: scheduledCase.assignment,
-          resident,
-          date: scheduledCase.date,
-          start: scheduledCase.startMinutes,
-          end: scheduledCase.endMinutes,
-          hospitalId: scheduledCase.hospital.id,
-          label: `${scheduledCase.attending.name} ${scheduledCase.procedureLabel}`,
-          targetId: scheduledCase.id
-        });
+        for (const assignment of getScheduledCaseAssignments(scheduledCase).filter((candidate) => candidate.kind === "case")) {
+          const resident = state.residents.find((candidate) => candidate.id === assignment.residentId);
+          if (!resident) continue;
+          intervals.push({
+            assignment,
+            resident,
+            date: scheduledCase.date,
+            start: scheduledCase.startMinutes,
+            end: scheduledCase.endMinutes,
+            hospitalId: scheduledCase.hospital.id,
+            label: `${scheduledCase.attending.name} ${scheduledCase.procedureLabel}`,
+            targetId: scheduledCase.id
+          });
+        }
       }
     }
 
@@ -509,7 +516,7 @@ function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string, s
         date,
         blocks: dayBlocks,
         clinics: clinics.filter((clinic) => clinic.date === date),
-        uncoveredCases: dayBlocks.flatMap((block) => block.cases).filter((surgeryCase) => !surgeryCase.assignment)
+        uncoveredCases: dayBlocks.flatMap((block) => block.cases).filter((surgeryCase) => surgeryCase.assignments.length === 0)
       };
     })
   };
@@ -582,29 +589,34 @@ function getArrangementWarnings(state: PlannerState, weekId: string, serviceLine
   const warnings: Warning[] = [];
 
   for (const scheduledCase of scheduledCases) {
-    if (!scheduledCase.assignment) continue;
-    const resident = state.residents.find((candidate) => candidate.id === scheduledCase.assignment?.residentId);
-    if (!resident) continue;
-    const currentMatches = countTrainingInterestMatches(resident, scheduledCase);
-    const betterSameDayCase = (casesByDate.get(scheduledCase.date) ?? []).some((candidate) => {
-      if (candidate.id === scheduledCase.id) return false;
-      if (candidate.assignment?.residentId === resident.id) return false;
-      return countTrainingInterestMatches(resident, candidate) > currentMatches;
-    });
-
-    if (betterSameDayCase) {
-      warnings.push({
-        id: createId("warn"),
-        severity: "info",
-        residentId: resident.id,
-        assignmentId: scheduledCase.assignment.id,
-        targetId: scheduledCase.id,
-        message: "check arrangement"
+    for (const assignment of getScheduledCaseAssignments(scheduledCase)) {
+      const resident = state.residents.find((candidate) => candidate.id === assignment.residentId);
+      if (!resident) continue;
+      const currentMatches = countTrainingInterestMatches(resident, scheduledCase);
+      const betterSameDayCase = (casesByDate.get(scheduledCase.date) ?? []).some((candidate) => {
+        if (candidate.id === scheduledCase.id) return false;
+        if (getScheduledCaseAssignments(candidate).some((candidateAssignment) => candidateAssignment.residentId === resident.id)) return false;
+        return countTrainingInterestMatches(resident, candidate) > currentMatches;
       });
+
+      if (betterSameDayCase) {
+        warnings.push({
+          id: createId("warn"),
+          severity: "info",
+          residentId: resident.id,
+          assignmentId: assignment.id,
+          targetId: scheduledCase.id,
+          message: "check arrangement"
+        });
+      }
     }
   }
 
   return warnings;
+}
+
+function getScheduledCaseAssignments(scheduledCase: ScheduledCase): Assignment[] {
+  return scheduledCase.assignments ?? (scheduledCase.assignment ? [scheduledCase.assignment] : []);
 }
 
 function countTrainingInterestMatches(resident: Resident, scheduledCase: ScheduledCase): number {

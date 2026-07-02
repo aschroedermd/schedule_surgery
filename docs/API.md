@@ -219,6 +219,8 @@ curl -X POST https://your-domain.example/api/assignments \
   }'
 ```
 
+Posting another case assignment with the same `targetId` and a different `residentId` adds a co-assigned resident. Duplicate resident/case pairs are rejected.
+
 Assign a resident to a block:
 
 ```bash

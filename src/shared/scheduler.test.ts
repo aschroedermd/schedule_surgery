@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   applySuggestion,
+  buildAssignmentIntervals,
+  buildWeekSchedule,
   collectWarnings,
   computeScheduledCases,
   formatClinicLabel,
@@ -89,6 +91,25 @@ describe("scheduler core", () => {
     const warnings = collectWarnings(state, "week_current").map((warning) => warning.message);
 
     expect(warnings.some((warning) => warning.includes("overlapping assignments"))).toBe(false);
+  });
+
+  it("supports multiple residents assigned directly to the same case", () => {
+    const state = {
+      ...createInitialState(),
+      assignments: [
+        makeAssignment("case", "case_chen_whipple", "res_chief", "admin", false),
+        makeAssignment("case", "case_chen_whipple", "res_fellow", "admin", false)
+      ]
+    };
+
+    const scheduledCase = computeScheduledCases(state, "week_current").find((surgeryCase) => surgeryCase.id === "case_chen_whipple");
+    const uncoveredCases = buildWeekSchedule(state, "week_current").days.flatMap((day) => day.uncoveredCases);
+    const caseIntervals = buildAssignmentIntervals(state, "week_current").filter((interval) => interval.targetId === "case_chen_whipple");
+
+    expect(scheduledCase?.assignments.map((assignment) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
+    expect(scheduledCase?.assignment?.residentId).toBe("res_chief");
+    expect(uncoveredCases.map((surgeryCase) => surgeryCase.id)).not.toContain("case_chen_whipple");
+    expect(caseIntervals.map((interval) => interval.resident.id)).toEqual(["res_chief", "res_fellow"]);
   });
 
   it("warns for date-range availability blocks", () => {

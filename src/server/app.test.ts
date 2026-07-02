@@ -557,6 +557,47 @@ describe("planner API", () => {
     expect(lingeringCaseAssignments).toEqual([]);
   });
 
+  it("allows multiple different residents to be assigned to the same case", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: "res_chief" })
+      .expect(201);
+    const secondResponse = await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: "res_fellow" })
+      .expect(201);
+
+    const caseAssignments = secondResponse.body.assignments.filter(
+      (assignment: { kind: string; targetId: string }) => assignment.kind === "case" && assignment.targetId === "case_chen_whipple"
+    );
+    expect(caseAssignments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ residentId: "res_chief" }),
+        expect.objectContaining({ residentId: "res_fellow" })
+      ])
+    );
+
+    const scheduleResponse = await request(app)
+      .get("/api/weeks/week_current/schedule")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+    const scheduledCase = scheduleResponse.body.days
+      .flatMap((day: { blocks: { cases: unknown[] }[] }) => day.blocks)
+      .flatMap((block: { cases: { id: string; assignments: { residentId: string }[] }[] }) => block.cases)
+      .find((surgeryCase: { id: string }) => surgeryCase.id === "case_chen_whipple");
+    expect(scheduledCase.assignments.map((assignment: { residentId: string }) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: "res_fellow" })
+      .expect(400);
+  });
+
   it("stores multiple weeks and cascades week deletes", async () => {
     const { app, token } = await loginAs("admin");
 

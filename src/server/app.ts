@@ -377,12 +377,24 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       if (!requireServiceEdit(req, res, serviceLine)) return;
       requireResident(state, req.body.residentId);
       const assignment = makeAssignment(req.body.kind, req.body.targetId, req.body.residentId, "admin", Boolean(req.body.locked));
+      if (
+        assignment.kind === "case" &&
+        state.assignments.some(
+          (candidate) =>
+            candidate.kind === "case" &&
+            candidate.targetId === assignment.targetId &&
+            candidate.residentId === assignment.residentId
+        )
+      ) {
+        res.status(400).json({ error: "Resident is already assigned to this case" });
+        return;
+      }
       const caseIdsInAssignedBlock =
         assignment.kind === "block"
           ? new Set(state.cases.filter((surgeryCase) => surgeryCase.blockId === assignment.targetId).map((surgeryCase) => surgeryCase.id))
           : new Set<string>();
       const replacedAssignments =
-        assignment.kind === "clinic"
+        assignment.kind === "case" || assignment.kind === "clinic"
           ? state.assignments
           : state.assignments.filter((candidate) => {
               if (candidate.kind === assignment.kind && candidate.targetId === assignment.targetId) return false;
@@ -409,6 +421,21 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const serviceLine = getAssignmentTargetServiceLine(state, existing.kind, existing.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
       if (req.body.residentId) requireResident(state, req.body.residentId);
+      const nextResidentId = typeof req.body.residentId === "string" ? req.body.residentId : existing.residentId;
+      const nextTargetId = typeof req.body.targetId === "string" ? req.body.targetId : existing.targetId;
+      if (
+        existing.kind === "case" &&
+        state.assignments.some(
+          (assignment) =>
+            assignment.id !== id &&
+            assignment.kind === "case" &&
+            assignment.targetId === nextTargetId &&
+            assignment.residentId === nextResidentId
+        )
+      ) {
+        res.status(400).json({ error: "Resident is already assigned to this case" });
+        return;
+      }
       const nextState: PlannerState = {
         ...state,
         assignments: state.assignments.map((assignment) =>
@@ -785,7 +812,9 @@ function buildResidentCalendarIcs(state: PlannerState, residentId: string): stri
     const schedule = buildWeekSchedule(state, week.id);
     for (const day of schedule.days) {
       for (const block of day.blocks) {
-        for (const surgeryCase of block.cases.filter((candidate) => candidate.assignment?.residentId === residentId)) {
+        for (const surgeryCase of block.cases.filter((candidate) =>
+          candidate.assignments.some((assignment) => assignment.residentId === residentId)
+        )) {
           events.push(
             timedIcsEvent({
               uid: `${surgeryCase.id}@schedule-surgery`,

@@ -394,6 +394,18 @@ h2 {
   padding: 7px;
 }
 
+.case-assignment-stack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-resident-button {
+  min-height: 34px;
+  padding-inline: 9px;
+}
+
 .attending-label {
   display: flex;
   align-items: center;
@@ -1538,6 +1550,15 @@ h2 {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
+  }
+
+  .case-assignment-stack {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .add-resident-button {
+    width: 100%;
   }
 
   .assign-control select {

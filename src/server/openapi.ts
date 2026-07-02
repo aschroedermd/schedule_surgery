@@ -517,9 +517,9 @@ export function getOpenApiDocument() {
       },
       "/api/assignments": {
         post: {
-          summary: "Create or replace an assignment",
+          summary: "Create an assignment",
           description:
-            "Requires edit privilege for the assignment target service, or admin/API admin access. Case and block assignments replace same-target assignments. Creating a block assignment clears case-level assignments within that block.",
+            "Requires edit privilege for the assignment target service, or admin/API admin access. Case assignments can add a second resident to the same case, but duplicate resident/case pairs are rejected. Creating a block assignment replaces the same-target block assignment and clears case-level assignments within that block.",
           requestBody: {
             required: true,
             content: {
@@ -530,6 +530,7 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" },
+            "400": { description: "Invalid or duplicate assignment" },
             "403": { description: "Edit privilege required" }
           }
         }

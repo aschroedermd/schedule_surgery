@@ -154,6 +154,8 @@ hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cas
    - clinic: `POST /api/assignments` with `kind: "clinic"`
 7. Verify by reading the computed weekly schedule and warnings for the same `weekId`.
 
+Posting a case assignment for a different resident on the same `targetId` adds that resident as a co-assignee. The API rejects duplicate resident/case pairs.
+
 Creating a block assignment clears individual case assignments inside that block, which prevents false overlap warnings.
 
 For clinic-only writes, create or patch a `clinicSessions` entity instead of creating an OR block. Match existing clinics by `weekId`, `date`, `attendingId`, `startTime`, `endTime`, and `location` before creating a duplicate. Use `isProcedure: false` for ordinary clinic and `isProcedure: true` when the user says procedure clinic.

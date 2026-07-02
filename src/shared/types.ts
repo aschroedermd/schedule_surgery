@@ -208,6 +208,7 @@ export interface ScheduledCase extends SurgeryCase {
   hospital: Hospital;
   block: AttendingBlock;
   assignment?: Assignment;
+  assignments: Assignment[];
   warningMessages: string[];
 }
 

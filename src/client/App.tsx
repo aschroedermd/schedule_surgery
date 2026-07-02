@@ -809,7 +809,7 @@ function MyScheduleTab({
   const weekDates = new Set(getWeekDates(schedule.week.startDate, state.settings.weekdayOnly));
   const cases = schedule.days.flatMap((day) =>
     day.blocks.flatMap((block) =>
-      block.cases.filter((surgeryCase) => surgeryCase.assignment?.residentId === resident.id)
+      block.cases.filter((surgeryCase) => surgeryCase.assignments.some((assignment) => assignment.residentId === resident.id))
     )
   );
   const clinics = schedule.days.flatMap((day) =>
@@ -918,7 +918,8 @@ function BlockView({
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const hospitalTone = getHospitalTone(block.hospital);
-  const allCasesCoveredIndividually = block.cases.length > 0 && block.cases.every((surgeryCase) => surgeryCase.assignment?.kind === "case");
+  const allCasesCoveredIndividually =
+    block.cases.length > 0 && block.cases.every((surgeryCase) => surgeryCase.assignments.some((assignment) => assignment.kind === "case"));
   const blockStyle = {
     borderTopColor: hospitalTone.border,
     "--hospital-bg": hospitalTone.background,
@@ -985,6 +986,17 @@ function CaseRow({
 }) {
   const arrangementWarnings = surgeryCase.warningMessages.filter((warning) => warning === "check arrangement");
   const caseWarnings = surgeryCase.warningMessages.filter((warning) => warning !== "check arrangement");
+  const directAssignments = surgeryCase.assignments.filter((assignment) => assignment.kind === "case");
+  const inheritedAssignment =
+    directAssignments.length === 0 ? surgeryCase.assignments.find((assignment) => assignment.kind === "block") : undefined;
+  const [isAddingResident, setIsAddingResident] = useState(false);
+  const assignedResidentIds = directAssignments.map((assignment) => assignment.residentId);
+  const assignmentControls = directAssignments.length > 0 ? directAssignments : [undefined];
+  const canAddResident = canEdit && directAssignments.length === 1 && !isAddingResident;
+  const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
+    await onMutate(action, message);
+    setIsAddingResident(false);
+  };
 
   return (
     <div className="case-row">
@@ -993,19 +1005,43 @@ function CaseRow({
         <strong>{surgeryCase.procedureLabel}</strong>
         <span>{surgeryCase.durationMinutes} min</span>
       </div>
-      <AssignmentControl
-        state={state}
-        token={token}
-        kind="case"
-        targetId={surgeryCase.id}
-        assignment={surgeryCase.assignment?.kind === "case" ? surgeryCase.assignment : undefined}
-        inheritedAssignment={surgeryCase.assignment?.kind === "block" ? surgeryCase.assignment : undefined}
-        disabled={!canEdit}
-        claimable={false}
-        arrangementWarnings={arrangementWarnings}
-        selectedService={selectedService}
-        onMutate={onMutate}
-      />
+      <div className="case-assignment-stack">
+        {assignmentControls.map((assignment, index) => (
+          <AssignmentControl
+            key={assignment?.id ?? `${surgeryCase.id}-unassigned`}
+            state={state}
+            token={token}
+            kind="case"
+            targetId={surgeryCase.id}
+            assignment={assignment}
+            inheritedAssignment={index === 0 ? inheritedAssignment : undefined}
+            disabled={!canEdit}
+            claimable={false}
+            arrangementWarnings={index === 0 ? arrangementWarnings : []}
+            selectedService={selectedService}
+            excludedResidentIds={assignedResidentIds}
+            onMutate={onMutate}
+          />
+        ))}
+        {isAddingResident && (
+          <AssignmentControl
+            state={state}
+            token={token}
+            kind="case"
+            targetId={surgeryCase.id}
+            disabled={!canEdit}
+            claimable={false}
+            selectedService={selectedService}
+            excludedResidentIds={assignedResidentIds}
+            onMutate={onAdditionalResidentMutate}
+          />
+        )}
+        {canAddResident && (
+          <button type="button" className="secondary-button add-resident-button" onClick={() => setIsAddingResident(true)}>
+            +resident
+          </button>
+        )}
+      </div>
       <Warnings warnings={caseWarnings} />
     </div>
   );
@@ -1066,6 +1102,7 @@ function AssignmentControl({
   claimable,
   arrangementWarnings = [],
   selectedService,
+  excludedResidentIds = [],
   onMutate
 }: {
   state: PlannerState;
@@ -1080,12 +1117,15 @@ function AssignmentControl({
   claimable: boolean;
   arrangementWarnings?: string[];
   selectedService: string;
+  excludedResidentIds?: string[];
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const displayedAssignment = assignment ?? inheritedAssignment;
   const isCovered = Boolean(displayedAssignment || coveredWithoutDirectAssignment);
   const assignmentDate = getAssignmentDate(state, kind, targetId);
-  const residents = sortResidentsForService(state.residents, selectedService, assignmentDate);
+  const residents = sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
+    (resident) => !excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId
+  );
   const [claimResidentId, setClaimResidentId] = useState(residents[0]?.id ?? "");
 
   useEffect(() => {
