@@ -15,7 +15,7 @@ import {
   Warning,
   WeekSchedule
 } from "./types";
-import { getWeekDates, minutesToTime, timeToMinutes } from "./date";
+import { addDays, getWeekDates, minutesToTime, timeToMinutes } from "./date";
 import { createId } from "./id";
 import { isResidentOnService, servicesMatch } from "./services";
 
@@ -124,10 +124,10 @@ export function computeScheduledCases(state: PlannerState, weekId: string, servi
       let currentStart = timeToMinutes(block.firstCaseStartTime);
       const blockAssignment = blockAssignments.find((assignment) => assignment.targetId === block.id);
 
-      return blockCases.map<ScheduledCase>((surgeryCase) => {
+      return blockCases.map<ScheduledCase>((surgeryCase, index) => {
         const startMinutes = currentStart;
         const endMinutes = startMinutes + surgeryCase.durationMinutes;
-        currentStart = endMinutes;
+        currentStart = endMinutes + (index < blockCases.length - 1 ? state.settings.turnoverMinutes : 0);
         const assignment = caseAssignments.find((candidate) => candidate.targetId === surgeryCase.id) ?? blockAssignment;
         return {
           ...surgeryCase,
@@ -152,6 +152,35 @@ export function collectWarnings(state: PlannerState, weekId: string, serviceLine
   const warnings: Warning[] = [];
 
   for (const interval of intervals) {
+    const calendarOffEntries = state.coverageEntries.filter(
+      (entry) => entry.kind === "off" && entry.residentId === interval.resident.id && entry.date === interval.date
+    );
+    for (const entry of calendarOffEntries) {
+      warnings.push({
+        id: createId("warn"),
+        severity: "danger",
+        residentId: interval.resident.id,
+        assignmentId: interval.assignment.id,
+        targetId: interval.targetId,
+        message: `${interval.resident.name} is off on the calendar${entry.note ? ` (${entry.note})` : ""}`
+      });
+    }
+
+    const previousDay = addDays(interval.date, -1);
+    const postCallEntry = state.coverageEntries.find(
+      (entry) => entry.kind === "call" && entry.residentId === interval.resident.id && entry.date === previousDay
+    );
+    if (postCallEntry) {
+      warnings.push({
+        id: createId("warn"),
+        severity: "warning",
+        residentId: interval.resident.id,
+        assignmentId: interval.assignment.id,
+        targetId: interval.targetId,
+        message: `${interval.resident.name} is post-call after ${previousDay}`
+      });
+    }
+
     for (const unavailable of interval.resident.unavailable.filter((block) => availabilityIncludesDate(block, interval.date))) {
       const offStart = unavailable.startTime ? timeToMinutes(unavailable.startTime) : 0;
       const offEnd = unavailable.endTime ? timeToMinutes(unavailable.endTime) : 24 * 60;

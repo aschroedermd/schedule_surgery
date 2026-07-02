@@ -25,9 +25,9 @@ curl -X POST https://your-domain.example/api/auth/login \
 
 The response token can be passed as `Authorization: Bearer <token>`, but MCP/tools should prefer `X-API-Key`.
 
-Seeded browser users are `admin`, `guest`, and resident accounts from the 2026-2027 rotation roster. Resident usernames use `<first-initial><last-name>`, such as `aschroeder`, and start view-only with password `Schroeder1`. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
+Seeded browser users are `admin` and anonymized resident placeholders such as `resident01`. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
 
-The admin Users tab is protected by a separate pin, initially `9480`. It can change that pin, add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
+The admin Users tab is protected by a separate `USERS_PIN` of at least 8 characters. It can change that pin, add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
 
 - `view`: read-only.
 - `request`: can submit coverage calendar edit requests for that service.
@@ -36,12 +36,12 @@ The admin Users tab is protected by a separate pin, initially `9480`. It can cha
 User-management endpoints require an admin bearer token and the users pin:
 
 ```text
-GET    /api/users?pin=9480
+GET    /api/users?pin=$USERS_PIN
 POST   /api/users
 POST   /api/users/bulk
 PATCH  /api/users/:username
 PATCH  /api/users/:username/password
-DELETE /api/users/:username?pin=9480
+DELETE /api/users/:username?pin=$USERS_PIN
 PATCH  /api/users-pin
 ```
 
@@ -49,7 +49,7 @@ For `POST /api/users` and `POST /api/users/bulk`, omit `password` to have the se
 
 ```json
 {
-  "pin": "9480",
+  "pin": "$USERS_PIN",
   "users": [
     {
       "username": "jsmith",
@@ -84,13 +84,34 @@ GET /api/weeks/:weekId/warnings
 GET /api/weeks/:weekId/uncovered-message
 GET /api/weeks/:weekId/uncovered-message?date=2026-07-02
 GET /api/weeks/:weekId/uncovered-message?service=Davies&date=2026-07-02
+GET /api/residents/:residentId/calendar.ics?token=<browser-token>
 ```
 
 `/api/state` returns the complete persisted planner state and is usually the best first call for tools.
 
+`PlannerState` includes `version` and `updatedAt`. Send `X-State-Version: <version>` on mutating requests. If another client has saved first, the API returns `409` with `currentVersion`; refetch `/api/state`, reapply the intended change to the fresh state, and retry.
+
+Browser clients can subscribe to live state changes with:
+
+```text
+GET /api/events?token=<browser bearer token>
+```
+
 `/api/weeks/:weekId/schedule` returns computed case times, assignments, uncovered cases, and warnings.
 
+`/api/residents/:residentId/calendar.ics` returns a resident-specific ICS feed containing OR, clinic, call, rounding, off, and note entries. Admins can export any resident; non-admin browser users can export only the resident linked by `residents[].username`.
+
 The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`.
+
+## Calendar Requests and Resident Trades
+
+```text
+POST /api/coverage-requests
+POST /api/coverage-requests/:id/approve
+POST /api/coverage-requests/:id/deny
+```
+
+Default calendar requests require `request` or `edit` privilege for `serviceLine` and are approved or denied by a service editor. Resident call trades use `requestType: "resident-trade"` and must come from the logged-in resident who owns `entryId`; `targetResidentId` can accept or deny. Include `swapEntryId` to swap two call or rounding entries, or omit it for a one-way handoff.
 
 ## Entity Collections
 
@@ -114,6 +135,8 @@ attendingBlocks
 cases
 clinicSessions
 ```
+
+Free-text scheduler fields are no-PHI. The server rejects obvious patient identifiers in procedure labels, block/case notes, calendar notes, request messages, and similar scheduler write fields.
 
 ## Useful Shapes
 
@@ -243,6 +266,8 @@ Recommended MCP tools:
 - `assign_resident`: `POST /api/assignments`
 - `delete_assignment`: `DELETE /api/assignments/{id}`
 - `claim_coverage`: `POST /api/claims`
+- `submit_coverage_request`: `POST /api/coverage-requests`
+- `resolve_coverage_request`: `POST /api/coverage-requests/{id}/approve` or `/deny`
 
 MCP safety defaults:
 

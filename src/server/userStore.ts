@@ -4,10 +4,9 @@ import path from "node:path";
 import { Role, SERVICE_LINES, ServicePrivileges, UserSummary } from "../shared/types";
 import { RESIDENT_USER_SEEDS } from "./residentRotationSeed";
 
-const DEFAULT_PASSWORD = "Schroeder1";
-const DEFAULT_PIN = "9480";
-const DEFAULT_USERS = [{ username: "guest", displayName: "guest" }, ...RESIDENT_USER_SEEDS];
+const DEFAULT_USERS = RESIDENT_USER_SEEDS;
 const TEMPORARY_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000;
+const MIN_PIN_LENGTH = 8;
 
 interface PasswordHash {
   algorithm: "scrypt";
@@ -164,7 +163,7 @@ export class FileUserStore implements UserStore {
   }
 
   async updatePin(currentPin: string, nextPin: string): Promise<void> {
-    assertUsableSecret(nextPin, "Pin code");
+    assertUsablePin(nextPin);
     const data = await this.load();
     if (!verifySecret(currentPin, data.pinHash)) throw new Error("Current pin code is incorrect");
     data.pinHash = hashSecret(nextPin);
@@ -235,24 +234,19 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
   }
 
   if (!users.has("admin")) {
-    users.set("admin", makeSeedUser("admin", "admin", "admin", process.env.ADMIN_PASSWORD ?? DEFAULT_PASSWORD, now));
+    users.set("admin", makeSeedUser("admin", "admin", "admin", getInitialAdminPassword(), now, false));
   }
+  const seedPassword = getInitialSeedUserPassword();
   for (const user of DEFAULT_USERS) {
     const existing = users.get(user.username);
     if (!existing) {
-      users.set(user.username, makeSeedUser(user.username, user.displayName, "viewer", DEFAULT_PASSWORD, now, false));
-    } else if (existing.mustChangePassword && !existing.temporaryPasswordExpiresAt) {
-      existing.displayName = user.displayName;
-      existing.passwordHash = hashSecret(DEFAULT_PASSWORD);
-      existing.passwordUpdatedAt = now;
-      existing.updatedAt = now;
-      existing.mustChangePassword = false;
+      users.set(user.username, makeSeedUser(user.username, user.displayName, "viewer", seedPassword, now, true));
     }
   }
 
   return {
     version: 1,
-    pinHash: input?.pinHash ?? hashSecret(DEFAULT_PIN),
+    pinHash: input?.pinHash ?? hashSecret(getInitialUsersPin()),
     users: [...users.values()]
   };
 }
@@ -284,7 +278,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
   const role: Role = username === "admin" ? "admin" : input.role === "admin" ? "admin" : "viewer";
   const providedPassword = readOptionalString(input.password);
   const temporaryPassword = providedPassword ? undefined : generateTemporaryPassword();
-  const password = providedPassword ?? temporaryPassword ?? DEFAULT_PASSWORD;
+  const password = providedPassword ?? temporaryPassword ?? generateTemporaryPassword();
   const temporaryPasswordExpiresAt = temporaryPassword
     ? new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString()
     : undefined;
@@ -301,7 +295,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
       createdAt: now,
       updatedAt: now,
       passwordUpdatedAt: now,
-      mustChangePassword: username !== "guest",
+      mustChangePassword: Boolean(temporaryPassword),
       temporaryPasswordExpiresAt
     },
     temporaryPassword
@@ -368,6 +362,22 @@ function normalizeUsername(username: string): string {
 
 function assertUsableSecret(secret: string, label: string) {
   if (secret.length < 4) throw new Error(`${label} must be at least 4 characters`);
+}
+
+function assertUsablePin(pin: string) {
+  if (pin.length < MIN_PIN_LENGTH) throw new Error(`Pin code must be at least ${MIN_PIN_LENGTH} characters`);
+}
+
+function getInitialAdminPassword(): string {
+  return process.env.ADMIN_PASSWORD ?? generateTemporaryPassword();
+}
+
+function getInitialSeedUserPassword(): string {
+  return process.env.SEED_USER_PASSWORD ?? generateTemporaryPassword();
+}
+
+function getInitialUsersPin(): string {
+  return process.env.USERS_PIN ?? generateTemporaryPassword();
 }
 
 function generateTemporaryPassword(): string {

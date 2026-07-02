@@ -7,6 +7,7 @@ import {
   LogIn,
   LogOut,
   Plus,
+  Printer,
   RefreshCw,
   Save,
   Scissors,
@@ -16,9 +17,10 @@ import {
   Wand2
 } from "lucide-react";
 import type { CSSProperties, FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   claimCoverage,
+  ConflictError,
   createAssignment,
   createEntity,
   deleteAssignment,
@@ -28,15 +30,18 @@ import {
   fetchState,
   getUncoveredMessage,
   login,
+  PasswordChangeResponse,
   runSuggestion,
   Session,
+  setExpectedStateVersion,
+  subscribeToStateEvents,
   UnauthorizedError,
   updateAssignment,
   updateEntity
 } from "./api";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
-import { addDays, displayDate, getCurrentMonday, getMondayForDate, parseLocalDate } from "../shared/date";
+import { addDays, displayDate, getCurrentMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
 import {
   Assignment,
@@ -78,7 +83,7 @@ import {
   normalizeRotationServiceToServiceLine
 } from "../shared/rotations";
 
-type Tab = "board" | "calendar" | "schedule" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
+type Tab = "board" | "my" | "calendar" | "schedule" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
 type PlannerSession = Session;
 type LayoutMode = "desktop" | "mobile";
 type InputMode = "pointer" | "touch";
@@ -88,7 +93,9 @@ const TOUCH_INPUT_QUERY = "(hover: none) and (pointer: coarse)";
 
 const emptyResident: Resident = {
   id: "",
+  username: "",
   name: "",
+  emoji: "",
   trainingLevel: "PGY3",
   serviceTags: [DEFAULT_SERVICE_LINE],
   color: "#2f78c4",
@@ -107,6 +114,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<Tab>("board");
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
+  const stateVersionRef = useRef<number | undefined>();
 
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
@@ -114,7 +122,8 @@ export function App() {
   const selectedPrivilege = session ? getSessionPrivilege(session, selectedService) : "view";
   const canEditSelectedService = Boolean(session && (isAdmin || selectedPrivilege === "edit"));
   const canRequestSelectedService = Boolean(session && (canEditSelectedService || selectedPrivilege === "request"));
-  const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session)));
+  const linkedResident = state && session ? findResidentForSession(state, session) : undefined;
+  const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session) || linkedResident || (state?.coverageRequests.length ?? 0) > 0));
   const pendingCoverageRequestCount = state?.coverageRequests.filter((request) => request.status === "pending").length ?? 0;
 
   function showLoggedOutScreen() {
@@ -145,14 +154,16 @@ export function App() {
     setSession(nextSession);
   }
 
-  function handlePasswordChanged(user: UserSummary) {
+  function handlePasswordChanged(user: PasswordChangeResponse) {
     if (!session) return;
     const nextSession: PlannerSession = {
       ...session,
+      token: user.token,
       username: user.username,
       displayName: user.displayName,
       role: user.role,
       servicePrivileges: user.servicePrivileges,
+      passwordUpdatedAt: user.passwordUpdatedAt,
       mustChangePassword: user.mustChangePassword,
       temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
     };
@@ -185,13 +196,35 @@ export function App() {
 
   async function runMutation(action: () => Promise<PlannerState | void>, message?: string, preferredWeekId?: string) {
     if (!session) return;
+    async function runOnce(version: number | undefined) {
+      setExpectedStateVersion(version);
+      try {
+        return await action();
+      } finally {
+        setExpectedStateVersion(undefined);
+      }
+    }
     try {
       setError(undefined);
-      const result = await action();
+      const result = await runOnce(state?.version);
       await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
       if (message) setToast(message);
     } catch (mutationError) {
       if (handleExpiredSession(mutationError)) return;
+      if (mutationError instanceof ConflictError) {
+        try {
+          const latest = await fetchState(session.token);
+          stateVersionRef.current = latest.version;
+          const result = await runOnce(latest.version);
+          await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
+          setToast(message ? `${message} after refresh` : "Saved after refresh");
+          return;
+        } catch (retryError) {
+          if (handleExpiredSession(retryError)) return;
+          setError(retryError instanceof Error ? retryError.message : "Planner changed; refresh and retry");
+          return;
+        }
+      }
       setError(mutationError instanceof Error ? mutationError.message : "Something went wrong");
     }
   }
@@ -272,6 +305,25 @@ export function App() {
       cancelled = true;
     };
   }, [session?.token, session?.mustChangePassword]);
+
+  useEffect(() => {
+    stateVersionRef.current = state?.version;
+  }, [state?.version]);
+
+  useEffect(() => {
+    if (!session || session.mustChangePassword) return;
+    return subscribeToStateEvents(
+      session.token,
+      (event) => {
+        if ((stateVersionRef.current ?? 0) >= event.version) return;
+        refresh(undefined, selectedWeekId, selectedService, session.token).catch((refreshError) => {
+          if (handleExpiredSession(refreshError)) return;
+          setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
+        });
+      },
+      showLoggedOutScreen
+    );
+  }, [session?.token, session?.mustChangePassword, selectedWeekId, selectedService]);
 
   useEffect(() => {
     if (!session) return;
@@ -361,6 +413,10 @@ export function App() {
               <ClipboardCopy size={18} />
               Copy Week
             </button>
+            <button title="Print board" className="secondary-button" onClick={() => window.print()}>
+              <Printer size={18} />
+              Print
+            </button>
           </div>
         )}
       </header>
@@ -368,6 +424,7 @@ export function App() {
       <nav className="tabs" aria-label="Planner sections">
         {([
           ["board", "O.R."],
+          ["my", "Mine"],
           ["calendar", "Calendar"],
           ["schedule", "Resident Schedule"],
           ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"]] as const : []),
@@ -392,6 +449,14 @@ export function App() {
           onCopied={(message) => setToast(message)}
         />
       )}
+      {activeTab === "my" && (
+        <MyScheduleTab
+          state={state}
+          schedule={schedule}
+          session={session}
+          selectedService={selectedService}
+        />
+      )}
       {activeTab === "calendar" && (
         <CalendarTab
           state={state}
@@ -411,7 +476,9 @@ export function App() {
         <RequestsTab
           state={state}
           token={session.token}
-          canApprove={canEditSelectedService || isAdmin}
+          username={session.username}
+          isAdmin={isAdmin}
+          servicePrivileges={session.servicePrivileges}
           onMutate={runMutation}
         />
       )}
@@ -441,7 +508,7 @@ export function App() {
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: PlannerSession) => void }) {
-  const [username, setUsername] = useState("guest");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | undefined>();
 
@@ -713,6 +780,124 @@ function BoardTab({
           ))}
         </article>
       ))}
+    </section>
+  );
+}
+
+function MyScheduleTab({
+  state,
+  schedule,
+  session,
+  selectedService
+}: {
+  state: PlannerState;
+  schedule: WeekSchedule;
+  session: PlannerSession;
+  selectedService: string;
+}) {
+  const resident = findResidentForSession(state, session);
+  if (!resident) {
+    return (
+      <section className="my-schedule-empty">
+        <CalendarDays size={20} />
+        <strong>No linked resident profile</strong>
+        <span>Ask an admin to set your resident username in the roster.</span>
+      </section>
+    );
+  }
+
+  const weekDates = new Set(getWeekDates(schedule.week.startDate, state.settings.weekdayOnly));
+  const cases = schedule.days.flatMap((day) =>
+    day.blocks.flatMap((block) =>
+      block.cases.filter((surgeryCase) => surgeryCase.assignment?.residentId === resident.id)
+    )
+  );
+  const clinics = schedule.days.flatMap((day) =>
+    day.clinics
+      .filter((clinic) => clinic.assignments.some((assignment) => assignment.residentId === resident.id))
+      .map((clinic) => ({
+        clinic,
+        assignmentCount: clinic.assignments.filter((assignment) => assignment.residentId === resident.id).length
+      }))
+  );
+  const coverageEntries = state.coverageEntries
+    .filter((entry) => entry.residentId === resident.id && weekDates.has(entry.date))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
+
+  return (
+    <section className="my-schedule-page">
+      <div className="my-schedule-header">
+        <div>
+          <p className="eyebrow">{selectedService}</p>
+          <h2>{formatResidentName(resident)}</h2>
+        </div>
+        <div className="my-schedule-actions">
+          <span className="service-line-chip">{formatServiceTags(getResidentServiceTagsForDate(resident, schedule.week.startDate))}</span>
+          <a
+            className="secondary-button"
+            href={`/api/residents/${encodeURIComponent(resident.id)}/calendar.ics?token=${encodeURIComponent(session.token)}`}
+          >
+            <CalendarDays size={16} />
+            ICS
+          </a>
+        </div>
+      </div>
+
+      <div className="my-schedule-grid">
+        <section className="editor-panel">
+          <h2>O.R.</h2>
+          {cases.length === 0 ? (
+            <p className="muted-copy">No O.R. assignments this week.</p>
+          ) : (
+            <div className="entity-list">
+              {cases.map((surgeryCase) => (
+                <div key={surgeryCase.id} className="compact-entity">
+                  <div>
+                    <strong>{surgeryCase.procedureLabel}</strong>
+                    <span>{displayDate(surgeryCase.date)} · {surgeryCase.startTime}-{surgeryCase.endTime} · {surgeryCase.attending.name}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="editor-panel">
+          <h2>Clinic</h2>
+          {clinics.length === 0 ? (
+            <p className="muted-copy">No clinic assignments this week.</p>
+          ) : (
+            <div className="entity-list">
+              {clinics.map(({ clinic, assignmentCount }) => (
+                <div key={clinic.id} className="compact-entity">
+                  <div>
+                    <strong>{formatClinicLabel(clinic)}</strong>
+                    <span>{displayDate(clinic.date)} · {clinic.startTime}-{clinic.endTime} · {assignmentCount} slot{assignmentCount === 1 ? "" : "s"}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="editor-panel">
+          <h2>Calendar</h2>
+          {coverageEntries.length === 0 ? (
+            <p className="muted-copy">No call, rounding, off, or note entries this week.</p>
+          ) : (
+            <div className="entity-list">
+              {coverageEntries.map((entry) => (
+                <div key={entry.id} className="compact-entity">
+                  <div>
+                    <strong>{entry.kind}</strong>
+                    <span>{displayDate(entry.date)}{entry.note ? ` · ${entry.note}` : ""}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </section>
   );
 }
@@ -1393,7 +1578,9 @@ function RosterTab({
       >
         <h2>Resident Roster</h2>
         <fieldset disabled={disabled}>
+          <label>Username<input value={editing.username ?? ""} onChange={(event) => setEditing({ ...editing, username: normalizeUsernameInput(event.target.value) })} /></label>
           <label>Name<input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label>
+          <label>Emoji<input value={editing.emoji ?? ""} onChange={(event) => setEditing({ ...editing, emoji: firstInputCharacter(event.target.value) })} /></label>
           <label>Level<select value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
             {["PGY1", "PGY2", "PGY3", "PGY4", "PGY5", "Fellow"].map((level) => <option key={level}>{level}</option>)}
           </select></label>
@@ -1445,8 +1632,8 @@ function RosterTab({
           {sortResidentsForService(state.residents, selectedService, week.startDate).map((resident) => (
             <CompactEntity
               key={resident.id}
-              title={`${resident.name} · ${resident.trainingLevel}`}
-              subtitle={`${formatServiceTags(getResidentServiceTagsForDate(resident, week.startDate))} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
+              title={`${formatResidentName(resident)} · ${resident.trainingLevel}`}
+              subtitle={`${resident.username ?? "no login"} · ${formatServiceTags(getResidentServiceTagsForDate(resident, week.startDate))} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
               disabled={disabled}
               onEdit={() => setEditing(resident)}
               onDelete={() => onMutate(() => deleteEntity(token, "residents", resident.id), "Resident deleted")}
@@ -1500,7 +1687,7 @@ function ResidentScheduleTab({
           <select value={selectedResident?.id ?? ""} onChange={(event) => setSelectedResidentId(event.target.value)}>
             {residents.map((resident) => (
               <option key={resident.id} value={resident.id}>
-                {resident.name}
+                {formatResidentName(resident)}
               </option>
             ))}
           </select>
@@ -1524,7 +1711,7 @@ function ResidentScheduleTab({
                   {group.residents.map((resident) => (
                     <span key={resident.id} className="resident-legend-item">
                       <span className="resident-dot" style={{ backgroundColor: resident.color ?? "#2f78c4" }} />
-                      {resident.name}
+                      {formatResidentName(resident)}
                     </span>
                   ))}
                 </div>
@@ -1583,7 +1770,7 @@ function ResidentRotationEditor({
     <section className="editor-panel resident-lineup-panel">
       <div className="schedule-panel-heading">
         <p className="eyebrow">{resident.trainingLevel}</p>
-        <h2>{resident.name}</h2>
+        <h2>{formatResidentName(resident)}</h2>
       </div>
       <datalist id={optionListId}>
         {serviceOptions.map((service) => (
@@ -1600,7 +1787,7 @@ function ResidentRotationEditor({
                 <span>{rotation.startDate} to {rotation.endDate}</span>
               </div>
               <input
-                aria-label={`${resident.name} block ${rotation.blockNumber} rotation`}
+                aria-label={`${formatResidentName(resident)} block ${rotation.blockNumber} rotation`}
                 list={optionListId}
                 value={draftServices[rotation.blockNumber] ?? ""}
                 disabled={disabled}
@@ -1940,8 +2127,8 @@ function formatResidentOption(resident: Resident, selectedService: string, date?
     ? [selectedService, ...serviceTags.filter((serviceTag) => serviceTag !== selectedService)]
     : serviceTags;
   const serviceLabel = formatServiceTags(orderedTags);
-  if (!serviceLabel) return resident.name;
-  return `${resident.name} (${serviceLabel})`;
+  if (!serviceLabel) return formatResidentName(resident);
+  return `${formatResidentName(resident)} (${serviceLabel})`;
 }
 
 function formatServiceTags(serviceTags: string[]): string {
@@ -1949,7 +2136,32 @@ function formatServiceTags(serviceTags: string[]): string {
 }
 
 function residentLabel(state: PlannerState, residentId: string): string {
-  return state.residents.find((resident) => resident.id === residentId)?.name ?? "Assigned";
+  const resident = state.residents.find((candidate) => candidate.id === residentId);
+  return resident ? formatResidentName(resident) : "Assigned";
+}
+
+function formatResidentName(resident: Pick<Resident, "name" | "emoji">): string {
+  return resident.emoji ? `${resident.emoji} ${resident.name}` : resident.name;
+}
+
+function findResidentForSession(state: PlannerState, session: PlannerSession): Resident | undefined {
+  const username = normalizeUsernameInput(session.username);
+  return (
+    state.residents.find((resident) => normalizeUsernameInput(resident.username ?? "") === username) ??
+    state.residents.find((resident) => normalizePersonName(resident.name) === normalizePersonName(session.displayName))
+  );
+}
+
+function normalizeUsernameInput(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
+}
+
+function normalizePersonName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function firstInputCharacter(value: string): string {
+  return Array.from(value.trim())[0] ?? "";
 }
 
 function getAssignmentDate(state: PlannerState, kind: Assignment["kind"], targetId: string): string | undefined {
@@ -2028,6 +2240,8 @@ function getTabTitle(tab: Tab): string {
   switch (tab) {
     case "board":
       return "O.R.";
+    case "my":
+      return "My Schedule";
     case "calendar":
       return "Calendar";
     case "schedule":
@@ -2172,11 +2386,12 @@ function getStoredSession(): PlannerSession | undefined {
   const role = localStorage.getItem("plannerRole");
   const username = localStorage.getItem("plannerUsername");
   const displayName = localStorage.getItem("plannerDisplayName");
+  const passwordUpdatedAt = localStorage.getItem("plannerPasswordUpdatedAt");
   const servicePrivileges = parseStoredPrivileges(localStorage.getItem("plannerServicePrivileges"));
   const mustChangePassword = localStorage.getItem("plannerMustChangePassword") === "true";
   const temporaryPasswordExpiresAt = localStorage.getItem("plannerTemporaryPasswordExpiresAt") ?? undefined;
-  return token && username && displayName && isRole(role)
-    ? { token, role, username, displayName, servicePrivileges, mustChangePassword, temporaryPasswordExpiresAt }
+  return token && username && displayName && passwordUpdatedAt && isRole(role)
+    ? { token, role, username, displayName, passwordUpdatedAt, servicePrivileges, mustChangePassword, temporaryPasswordExpiresAt }
     : undefined;
 }
 
@@ -2185,6 +2400,7 @@ function storeSession(session: PlannerSession) {
   localStorage.setItem("plannerRole", session.role);
   localStorage.setItem("plannerUsername", session.username);
   localStorage.setItem("plannerDisplayName", session.displayName);
+  localStorage.setItem("plannerPasswordUpdatedAt", session.passwordUpdatedAt);
   localStorage.setItem("plannerServicePrivileges", JSON.stringify(session.servicePrivileges));
   localStorage.setItem("plannerMustChangePassword", String(session.mustChangePassword));
   if (session.temporaryPasswordExpiresAt) {
@@ -2206,7 +2422,7 @@ function resolveSessionServiceLine(state: PlannerState, session: PlannerSession,
 
 function getSessionResidentServiceLine(state: PlannerState, session: PlannerSession): string | undefined {
   const username = normalizeUsername(session.username);
-  const resident = state.residents.find((candidate) => buildResidentUsername(candidate.name) === username);
+  const resident = state.residents.find((candidate) => normalizeUsername(candidate.username ?? buildResidentUsername(candidate.name)) === username);
   if (!resident) return undefined;
   return getResidentServiceTagsForDate(resident, getTodayDate()).find(isKnownServiceLine);
 }
@@ -2268,6 +2484,7 @@ function clearStoredSession() {
   localStorage.removeItem("plannerRole");
   localStorage.removeItem("plannerUsername");
   localStorage.removeItem("plannerDisplayName");
+  localStorage.removeItem("plannerPasswordUpdatedAt");
   localStorage.removeItem("plannerServicePrivileges");
   localStorage.removeItem("plannerMustChangePassword");
   localStorage.removeItem("plannerTemporaryPasswordExpiresAt");

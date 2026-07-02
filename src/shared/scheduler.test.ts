@@ -13,7 +13,7 @@ describe("scheduler core", () => {
   it("computes downstream case times from the attending block start and prior durations", () => {
     const state = createInitialState();
     const originalCases = computeScheduledCases(state, "week_current");
-    expect(originalCases.find((surgeryCase) => surgeryCase.id === "case_chen_chole")?.startTime).toBe("13:30");
+    expect(originalCases.find((surgeryCase) => surgeryCase.id === "case_chen_chole")?.startTime).toBe("14:00");
 
     const shortened = {
       ...state,
@@ -22,7 +22,7 @@ describe("scheduler core", () => {
       )
     };
     const changedCases = computeScheduledCases(shortened, "week_current");
-    expect(changedCases.find((surgeryCase) => surgeryCase.id === "case_chen_chole")?.startTime).toBe("09:30");
+    expect(changedCases.find((surgeryCase) => surgeryCase.id === "case_chen_chole")?.startTime).toBe("10:00");
   });
 
   it("warns but permits unavailable assignments and tight cross-hospital splits", () => {
@@ -93,13 +93,13 @@ describe("scheduler core", () => {
 
   it("warns for date-range availability blocks", () => {
     const state = createInitialState();
-    const tCaoState = {
+    const rangeUnavailableState = {
       ...state,
       residents: [
         ...state.residents,
         {
           id: "res_t_cao",
-          name: "T-Cao",
+          name: "Resident Range",
           trainingLevel: "PGY2" as const,
           serviceTags: ["Davies"],
           tags: ["Davies"],
@@ -134,7 +134,7 @@ describe("scheduler core", () => {
       assignments: [makeAssignment("case", "case_range_test", "res_t_cao", "admin", false)]
     };
 
-    const warnings = collectWarnings(tCaoState, "week_test").map((warning) => warning.message);
+    const warnings = collectWarnings(rangeUnavailableState, "week_test").map((warning) => warning.message);
 
     expect(warnings.some((warning) => warning.includes("off after July 8"))).toBe(true);
   });

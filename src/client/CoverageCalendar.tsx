@@ -1,11 +1,13 @@
 import {
   AlertTriangle,
+  ArrowRightLeft,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock3,
   PencilLine,
   Plus,
+  Send,
   Trash2,
   XCircle
 } from "lucide-react";
@@ -96,6 +98,7 @@ export function CalendarTab({
     () => state.coverageEntries.filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices)),
     [state, visibleServices]
   );
+  const currentResident = useMemo(() => findResidentForUsername(state, username), [state, username]);
   const pendingCount = state.coverageRequests.filter(
     (request) => request.status === "pending" && coverageRequestMatchesServices(state, request, visibleServices)
   ).length;
@@ -172,7 +175,7 @@ export function CalendarTab({
           {visibleResidents.map((resident) => (
             <span key={resident.id} className="resident-legend-item">
               <span className="resident-dot" style={{ backgroundColor: getResidentColor(resident) }} />
-              {resident.name}
+              {formatResidentName(resident)}
             </span>
           ))}
         </div>
@@ -200,6 +203,7 @@ export function CalendarTab({
             visibleServices={visibleServices}
             visibleResidents={visibleResidents}
             coverageEntries={visibleCoverageEntries}
+            currentResident={currentResident}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
             month={month}
@@ -219,12 +223,19 @@ function CoverageDay({
   visibleServices,
   visibleResidents,
   coverageEntries,
+  currentResident,
   isAdmin,
   servicePrivileges,
   month,
   date,
   onMutate
-}: CalendarAccessProps & { visibleResidents: Resident[]; coverageEntries: CoverageEntry[]; month: string; date: string }) {
+}: CalendarAccessProps & {
+  visibleResidents: Resident[];
+  coverageEntries: CoverageEntry[];
+  currentResident?: Resident;
+  month: string;
+  date: string;
+}) {
   const inMonth = getMonthFromDate(date) === month;
   const dayVisibleResidents = visibleResidents.filter((resident) => residentMatchesServices(resident, visibleServices, date));
   const entries = coverageEntries.filter((entry) => entry.date === date);
@@ -317,9 +328,11 @@ function CoverageDay({
             selectedService={selectedService}
             visibleServices={visibleServices}
             visibleResidents={dayVisibleResidents}
+            currentResident={currentResident}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
             disabled={!inMonth || !canCreateForVisibleServices}
+            allowResidentTrade={inMonth}
             onMutate={onMutate}
           />
         )}
@@ -334,9 +347,11 @@ function CoverageDay({
             selectedService={selectedService}
             visibleServices={visibleServices}
             visibleResidents={dayVisibleResidents}
+            currentResident={currentResident}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
             disabled={!inMonth || !canCreateForVisibleServices}
+            allowResidentTrade={inMonth}
             onMutate={onMutate}
           />
         )}
@@ -376,7 +391,7 @@ function CoverageDay({
             <option value="">General</option>
             {dayVisibleResidents.map((resident) => (
               <option key={resident.id} value={resident.id}>
-                {resident.name}
+                {formatResidentName(resident)}
               </option>
             ))}
           </select>
@@ -413,9 +428,11 @@ function CoverageSlotSelect({
   selectedService,
   visibleServices,
   visibleResidents,
+  currentResident,
   isAdmin,
   servicePrivileges,
   disabled,
+  allowResidentTrade,
   onMutate
 }: {
   label: string;
@@ -427,9 +444,11 @@ function CoverageSlotSelect({
   selectedService: string;
   visibleServices: string[];
   visibleResidents: Resident[];
+  currentResident?: Resident;
   isAdmin: boolean;
   servicePrivileges: ServicePrivileges;
   disabled: boolean;
+  allowResidentTrade: boolean;
   onMutate: MutationRunner;
 }) {
   const resident = state.residents.find((candidate) => candidate.id === entry?.residentId);
@@ -438,6 +457,62 @@ function CoverageSlotSelect({
         "--resident-color": getResidentColor(resident)
       } as CSSProperties)
     : undefined;
+  const [showTradeForm, setShowTradeForm] = useState(false);
+  const [tradeDraft, setTradeDraft] = useState({
+    targetResidentId: "",
+    swapEntryId: "",
+    message: ""
+  });
+  const canTradeOwnEntry = Boolean(
+    allowResidentTrade &&
+      entry &&
+      currentResident &&
+      entry.residentId === currentResident.id &&
+      isTradeableCoverageKind(entry.kind)
+  );
+  const tradeResidentOptions = useMemo(
+    () =>
+      state.residents
+        .filter((residentOption) => residentOption.id !== currentResident?.id)
+        .sort((a, b) => {
+          const serviceDelta =
+            Number(isResidentOnService(b, selectedService, date)) -
+            Number(isResidentOnService(a, selectedService, date));
+          if (serviceDelta !== 0) return serviceDelta;
+          return a.name.localeCompare(b.name);
+        }),
+    [currentResident?.id, date, selectedService, state.residents]
+  );
+  const swapEntryOptions = useMemo(
+    () =>
+      tradeDraft.targetResidentId && entry
+        ? state.coverageEntries
+            .filter(
+              (candidate) =>
+                candidate.id !== entry.id &&
+                candidate.kind === entry.kind &&
+                candidate.residentId === tradeDraft.targetResidentId
+            )
+            .sort((a, b) => a.date.localeCompare(b.date))
+        : [],
+    [entry, state.coverageEntries, tradeDraft.targetResidentId]
+  );
+
+  useEffect(() => {
+    if (!showTradeForm) return;
+    if (tradeResidentOptions.some((residentOption) => residentOption.id === tradeDraft.targetResidentId)) return;
+    setTradeDraft((current) => ({
+      ...current,
+      targetResidentId: tradeResidentOptions[0]?.id ?? "",
+      swapEntryId: ""
+    }));
+  }, [showTradeForm, tradeDraft.targetResidentId, tradeResidentOptions]);
+
+  useEffect(() => {
+    if (!tradeDraft.swapEntryId) return;
+    if (swapEntryOptions.some((swapEntry) => swapEntry.id === tradeDraft.swapEntryId)) return;
+    setTradeDraft((current) => ({ ...current, swapEntryId: "" }));
+  }, [swapEntryOptions, tradeDraft.swapEntryId]);
 
   async function changeResident(residentId: string) {
     if (disabled) return;
@@ -497,23 +572,97 @@ function CoverageSlotSelect({
     }
   }
 
+  async function sendTradeRequest(event: FormEvent) {
+    event.preventDefault();
+    if (!entry || !currentResident || !tradeDraft.targetResidentId) return;
+    const serviceLine = resolveEntryMutationService(state, entry, visibleServices, selectedService);
+    await onMutate(
+      () =>
+        submitCoverageRequest(
+          token,
+          {
+            requestType: "resident-trade",
+            action: "update",
+            entryId: entry.id,
+            targetResidentId: tradeDraft.targetResidentId,
+            swapEntryId: tradeDraft.swapEntryId || undefined,
+            message: tradeDraft.message.trim()
+          },
+          serviceLine
+        ),
+      "Trade request sent"
+    );
+    setShowTradeForm(false);
+    setTradeDraft((current) => ({ ...current, swapEntryId: "", message: "" }));
+  }
+
   return (
-    <label className="coverage-slot-select" style={style}>
-      <span>{label}</span>
-      <select
-        data-coverage-kind={kind}
-        value={entry?.residentId ?? ""}
-        disabled={disabled}
-        onChange={(event) => changeResident(event.target.value)}
-      >
-        <option value="">Unassigned</option>
-        {visibleResidents.map((residentOption) => (
-          <option key={residentOption.id} value={residentOption.id}>
-            {residentOption.name}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className={`coverage-slot-wrapper${showTradeForm ? " expanded" : ""}`} style={style}>
+      <div className="coverage-slot-row">
+        <label className="coverage-slot-select">
+          <span>{label}</span>
+          <select
+            data-coverage-kind={kind}
+            value={entry?.residentId ?? ""}
+            disabled={disabled}
+            onChange={(event) => changeResident(event.target.value)}
+          >
+            <option value="">Unassigned</option>
+            {visibleResidents.map((residentOption) => (
+              <option key={residentOption.id} value={residentOption.id}>
+                {formatResidentName(residentOption)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {canTradeOwnEntry && (
+          <button
+            type="button"
+            title="Request trade"
+            className="icon-button"
+            onClick={() => setShowTradeForm((current) => !current)}
+          >
+            <ArrowRightLeft size={14} />
+          </button>
+        )}
+      </div>
+      {showTradeForm && canTradeOwnEntry && (
+        <form className="coverage-trade-form" onSubmit={sendTradeRequest}>
+          <select
+            aria-label="Trade resident"
+            value={tradeDraft.targetResidentId}
+            onChange={(event) => setTradeDraft({ ...tradeDraft, targetResidentId: event.target.value, swapEntryId: "" })}
+          >
+            {tradeResidentOptions.map((residentOption) => (
+              <option key={residentOption.id} value={residentOption.id}>
+                {formatResidentName(residentOption)}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Swap entry"
+            value={tradeDraft.swapEntryId}
+            onChange={(event) => setTradeDraft({ ...tradeDraft, swapEntryId: event.target.value })}
+          >
+            <option value="">Cover my {kind}</option>
+            {swapEntryOptions.map((swapEntry) => (
+              <option key={swapEntry.id} value={swapEntry.id}>
+                Swap for {formatMobileCoverageDate(swapEntry.date)}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label="Trade note"
+            value={tradeDraft.message}
+            placeholder="Note"
+            onChange={(event) => setTradeDraft({ ...tradeDraft, message: event.target.value })}
+          />
+          <button title="Send trade request" className="icon-button" type="submit" disabled={!tradeDraft.targetResidentId}>
+            <Send size={14} />
+          </button>
+        </form>
+      )}
+    </div>
   );
 }
 
@@ -544,7 +693,7 @@ function CoverageChip({
   const style = {
     "--resident-color": getResidentColor(resident)
   } as CSSProperties;
-  const residentName = resident?.name ?? "General";
+  const residentName = resident ? formatResidentName(resident) : "General";
   const [showActions, setShowActions] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editDraft, setEditDraft] = useState({
@@ -655,7 +804,7 @@ function CoverageChip({
             <option value="">General</option>
             {residents.map((residentOption) => (
               <option key={residentOption.id} value={residentOption.id}>
-                {residentOption.name}
+                {formatResidentName(residentOption)}
               </option>
             ))}
           </select>
@@ -690,12 +839,16 @@ function CoverageChip({
 export function RequestsTab({
   state,
   token,
-  canApprove,
+  username,
+  isAdmin,
+  servicePrivileges,
   onMutate
 }: {
   state: PlannerState;
   token: string;
-  canApprove: boolean;
+  username: string;
+  isAdmin: boolean;
+  servicePrivileges: ServicePrivileges;
   onMutate: MutationRunner;
 }) {
   const sortedRequests = [...state.coverageRequests].sort((a, b) => {
@@ -717,12 +870,13 @@ export function RequestsTab({
       {sortedRequests.map((coverageRequest) => (
         <article key={coverageRequest.id} className={`request-item ${coverageRequest.status}`}>
           <div className="request-main">
-            <span className={`request-status ${coverageRequest.status}`}>{coverageRequest.status}</span>
+            <span className={`request-status ${coverageRequest.status}`}>{formatRequestStatus(coverageRequest)}</span>
             <strong>{describeRequest(state, coverageRequest)}</strong>
             <p>{coverageRequest.message || "No extra note"}</p>
+            {coverageRequest.requesterName && <span>From {coverageRequest.requesterName}</span>}
             <span>{new Date(coverageRequest.createdAt).toLocaleString()}</span>
           </div>
-          {canApprove && coverageRequest.status === "pending" && (
+          {canResolveRequest(state, coverageRequest, username, isAdmin, servicePrivileges) && coverageRequest.status === "pending" && (
             <div className="request-actions">
               <button
                 className="secondary-button"
@@ -736,7 +890,7 @@ export function RequestsTab({
                 onClick={() => onMutate(() => approveCoverageRequest(token, coverageRequest.id), "Request approved")}
               >
                 <CheckCircle2 size={16} />
-                Approve
+                {isResidentTradeRequest(coverageRequest) ? "Accept" : "Approve"}
               </button>
             </div>
           )}
@@ -869,6 +1023,9 @@ function canRequestService(isAdmin: boolean, servicePrivileges: ServicePrivilege
 }
 
 function describeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  if (isResidentTradeRequest(coverageRequest)) {
+    return describeResidentTradeRequest(state, coverageRequest);
+  }
   if (coverageRequest.action === "delete") {
     const entry = state.coverageEntries.find((candidate) => candidate.id === coverageRequest.entryId);
     return entry ? `Delete ${describeEntry(state, entry)}` : "Delete calendar entry";
@@ -879,11 +1036,77 @@ function describeRequest(state: PlannerState, coverageRequest: CoverageChangeReq
   return "Calendar request";
 }
 
+function describeResidentTradeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  const requester = coverageRequest.requesterResidentId
+    ? state.residents.find((resident) => resident.id === coverageRequest.requesterResidentId)
+    : undefined;
+  const target = coverageRequest.targetResidentId
+    ? state.residents.find((resident) => resident.id === coverageRequest.targetResidentId)
+    : undefined;
+  const requesterName = requester ? formatResidentName(requester) : coverageRequest.requesterName ?? "Requester";
+  const targetName = target ? formatResidentName(target) : "requested resident";
+  const source = coverageRequest.requestedEntry;
+  const swap = coverageRequest.swapRequestedEntry;
+  if (!source) return "Resident trade request";
+  if (!swap) return `${requesterName} asks ${targetName} to cover ${source.kind} on ${source.date}`;
+  return `${requesterName} ${source.kind} on ${source.date} for ${targetName} ${swap.kind} on ${swap.date}`;
+}
+
 function describeEntry(state: PlannerState, entry: CoverageEntry): string {
   const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
-  const residentName = resident?.name ?? "General";
+  const residentName = resident ? formatResidentName(resident) : "General";
   const note = entry.note ? ` (${entry.note})` : "";
   return `${residentName} ${entry.kind} on ${entry.date}${note}`;
+}
+
+function formatRequestStatus(coverageRequest: CoverageChangeRequest): string {
+  if (isResidentTradeRequest(coverageRequest) && coverageRequest.status === "approved") return "accepted";
+  return coverageRequest.status;
+}
+
+function canResolveRequest(
+  state: PlannerState,
+  coverageRequest: CoverageChangeRequest,
+  username: string,
+  isAdmin: boolean,
+  servicePrivileges: ServicePrivileges
+): boolean {
+  if (isResidentTradeRequest(coverageRequest) && coverageRequestTargetsUsername(state, coverageRequest, username)) {
+    return true;
+  }
+  if (isAdmin) return true;
+  if (coverageRequest.serviceLine) return servicePrivileges[coverageRequest.serviceLine] === "edit";
+  return Object.values(servicePrivileges).some((privilege) => privilege === "edit");
+}
+
+function coverageRequestTargetsUsername(
+  state: PlannerState,
+  coverageRequest: CoverageChangeRequest,
+  username: string
+): boolean {
+  const resident = findResidentForUsername(state, username);
+  return Boolean(resident && coverageRequest.targetResidentId === resident.id);
+}
+
+function isResidentTradeRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "resident-trade";
+}
+
+function isTradeableCoverageKind(kind: CoverageKind): boolean {
+  return kind === "call" || kind === "rounding";
+}
+
+function findResidentForUsername(state: PlannerState, username: string): Resident | undefined {
+  const normalized = normalizeUsername(username);
+  return state.residents.find((resident) => normalizeUsername(resident.username ?? "") === normalized);
+}
+
+function normalizeUsername(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function formatResidentName(resident: Pick<Resident, "name" | "emoji">): string {
+  return resident.emoji ? `${resident.emoji} ${resident.name}` : resident.name;
 }
 
 function getDefaultCoverageMonth(state: PlannerState): string {

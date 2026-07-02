@@ -9,8 +9,6 @@ interface RotationRowSeed {
 
 interface ResidentRotationSeed {
   id: string;
-  username: string;
-  name: string;
   trainingLevel: TrainingLevel;
   color: string;
   trainingInterests: string[];
@@ -20,8 +18,6 @@ interface ResidentRotationSeed {
 export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   {
     id: "res_fellow",
-    username: "aadeleke",
-    name: "Adedayo Adeleke",
     trainingLevel: "PGY1",
     color: "#c89af7",
     trainingInterests: ["bariatrics", "fellow-priority", "foregut"],
@@ -43,8 +39,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_blue",
-    username: "cblue",
-    name: "Christian Blue",
     trainingLevel: "PGY2",
     color: "#d5ad37",
     trainingInterests: ["general surgery"],
@@ -64,8 +58,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_bradley",
-    username: "jbradley",
-    name: "Jessica Bradley",
     trainingLevel: "PGY3",
     color: "#7e63c9",
     trainingInterests: ["general surgery"],
@@ -87,8 +79,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_calderon_garcia",
-    username: "kcalderongarcia",
-    name: "Kristian Calderon Garcia",
     trainingLevel: "PGY3",
     color: "#2f8c89",
     trainingInterests: ["general surgery"],
@@ -110,8 +100,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_offservice",
-    username: "tcao",
-    name: "Thien Cao",
     trainingLevel: "PGY2",
     color: "#f37d6e",
     trainingInterests: ["general surgery", "clinic"],
@@ -130,8 +118,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_colwell",
-    username: "ccolwell",
-    name: "Carter Colwell",
     trainingLevel: "PGY4",
     color: "#4f7d46",
     trainingInterests: ["general surgery"],
@@ -150,8 +136,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_daniels",
-    username: "mdaniels",
-    name: "Megan Daniels",
     trainingLevel: "PGY1",
     color: "#b84a62",
     trainingInterests: ["general surgery"],
@@ -173,8 +157,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_dewyer",
-    username: "adewyer",
-    name: "Alyssa DeWyer",
     trainingLevel: "PGY4",
     color: "#8b5a3c",
     trainingInterests: ["general surgery"],
@@ -193,8 +175,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_doran",
-    username: "mdoran",
-    name: "Marisa Doran",
     trainingLevel: "PGY5",
     color: "#5f7fb8",
     trainingInterests: ["general surgery"],
@@ -210,8 +190,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_greenberg",
-    username: "sgreenberg",
-    name: "Sally Greenberg",
     trainingLevel: "PGY1",
     color: "#bf6d9e",
     trainingInterests: ["general surgery"],
@@ -233,8 +211,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_keys",
-    username: "tkeys",
-    name: "Taylor Keys",
     trainingLevel: "PGY1",
     color: "#3f8f62",
     trainingInterests: ["general surgery"],
@@ -255,8 +231,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_klosinski",
-    username: "pklosinski",
-    name: "Paul Klosinski",
     trainingLevel: "PGY5",
     color: "#9b6a44",
     trainingInterests: ["general surgery"],
@@ -274,8 +248,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_maghsoudi",
-    username: "tmaghsoudi",
-    name: "Taneen Maghsoudi",
     trainingLevel: "PGY5",
     color: "#d36b5c",
     trainingInterests: ["general surgery"],
@@ -291,8 +263,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_mawussi",
-    username: "ymawussi",
-    name: "Yao Mawussi",
     trainingLevel: "PGY1",
     color: "#d5ad37",
     trainingInterests: ["general surgery"],
@@ -314,8 +284,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_mohamed",
-    username: "amohamed",
-    name: "Aleem Mohamed",
     trainingLevel: "PGY3",
     color: "#7e63c9",
     trainingInterests: ["general surgery"],
@@ -337,8 +305,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_moore",
-    username: "jmoore",
-    name: "Jayden Moore",
     trainingLevel: "PGY1",
     color: "#2f8c89",
     trainingInterests: ["general surgery"],
@@ -360,8 +326,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_nde",
-    username: "mnde",
-    name: "Martin Nde",
     trainingLevel: "PGY5",
     color: "#2f78c4",
     trainingInterests: ["general surgery"],
@@ -377,8 +341,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_necessary",
-    username: "cnecessary",
-    name: "Christina Necessary",
     trainingLevel: "PGY1",
     color: "#4f7d46",
     trainingInterests: ["general surgery"],
@@ -400,8 +362,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_roberson",
-    username: "hroberson",
-    name: "Hannah Roberson",
     trainingLevel: "PGY4",
     color: "#b84a62",
     trainingInterests: ["general surgery"],
@@ -420,8 +380,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_rodgers",
-    username: "jrodgers",
-    name: "Jeffrey Rodgers",
     trainingLevel: "PGY2",
     color: "#8b5a3c",
     trainingInterests: ["general surgery"],
@@ -442,8 +400,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_scarbro",
-    username: "mscarbro",
-    name: "Molly Scarbro",
     trainingLevel: "PGY4",
     color: "#5f7fb8",
     trainingInterests: ["general surgery"],
@@ -462,8 +418,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_chief",
-    username: "aschroeder",
-    name: "Andrew Schroeder",
     trainingLevel: "PGY5",
     color: "#f4cf55",
     trainingInterests: ["HPB", "chief-level", "complex open"],
@@ -479,8 +433,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_shank",
-    username: "nshank",
-    name: "Nina Shank",
     trainingLevel: "PGY1",
     color: "#3f8f62",
     trainingInterests: ["general surgery"],
@@ -502,8 +454,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_shigley",
-    username: "nshigley",
-    name: "Nathan Shigley",
     trainingLevel: "PGY1",
     color: "#9b6a44",
     trainingInterests: ["general surgery"],
@@ -525,8 +475,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_somaiah",
-    username: "psomaiah",
-    name: "Prarthana Somaiah",
     trainingLevel: "PGY2",
     color: "#d36b5c",
     trainingInterests: ["general surgery"],
@@ -548,8 +496,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_swaak",
-    username: "aswaak",
-    name: "Amanda Swaak",
     trainingLevel: "PGY3",
     color: "#e65245",
     trainingInterests: ["general surgery", "abdominal wall", "clinic"],
@@ -571,8 +517,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_thorpe",
-    username: "cthorpe",
-    name: "Courtney Thorpe",
     trainingLevel: "PGY2",
     color: "#7e63c9",
     trainingInterests: ["general surgery"],
@@ -593,8 +537,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_williams",
-    username: "mwilliams",
-    name: "Maria Williams",
     trainingLevel: "PGY4",
     color: "#2f8c89",
     trainingInterests: ["general surgery"],
@@ -613,8 +555,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_zheng",
-    username: "azheng",
-    name: "Allison Zheng",
     trainingLevel: "PGY3",
     color: "#2f78c4",
     trainingInterests: ["general surgery"],
@@ -636,8 +576,6 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_den_besten",
-    username: "zdenbesten",
-    name: "Zachary den Besten",
     trainingLevel: "PGY5",
     color: "#4f7d46",
     trainingInterests: ["general surgery"],
@@ -653,15 +591,16 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   }
 ];
 
-export const RESIDENT_USER_SEEDS = RESIDENT_ROTATION_SEED.map((resident) => ({
-  username: resident.username,
-  displayName: resident.name
+export const RESIDENT_USER_SEEDS = RESIDENT_ROTATION_SEED.map((resident, index) => ({
+  username: getPlaceholderUsername(index),
+  displayName: getPlaceholderName(index)
 }));
 
 export function createRotationResidents(): Resident[] {
-  return RESIDENT_ROTATION_SEED.map((resident) => ({
+  return RESIDENT_ROTATION_SEED.map((resident, index) => ({
     id: resident.id,
-    name: resident.name,
+    username: getPlaceholderUsername(index),
+    name: getPlaceholderName(index),
     trainingLevel: resident.trainingLevel,
     serviceTags: [],
     color: resident.color,
@@ -684,4 +623,12 @@ export function buildRotationSchedule(residentId: string, rows: RotationRowSeed[
         service: row.service
       }))
   );
+}
+
+function getPlaceholderName(index: number): string {
+  return `Resident ${String(index + 1).padStart(2, "0")}`;
+}
+
+function getPlaceholderUsername(index: number): string {
+  return `resident${String(index + 1).padStart(2, "0")}`;
 }

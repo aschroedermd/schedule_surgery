@@ -27,6 +27,15 @@ export function getOpenApiDocument() {
           scheme: "bearer"
         }
       },
+      parameters: {
+        StateVersionHeader: {
+          name: "X-State-Version",
+          in: "header",
+          required: false,
+          schema: { type: "number" },
+          description: "PlannerState.version from the latest GET /api/state. Stale values return 409 with currentVersion."
+        }
+      },
       schemas: {
         LoginRequest: {
           type: "object",
@@ -47,6 +56,7 @@ export function getOpenApiDocument() {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
+            passwordUpdatedAt: { type: "string", format: "date-time" },
             mustChangePassword: { type: "boolean" },
             temporaryPasswordExpiresAt: { type: "string", format: "date-time" }
           }
@@ -98,6 +108,13 @@ export function getOpenApiDocument() {
             error: { type: "string" }
           }
         },
+        ConflictResponse: {
+          type: "object",
+          properties: {
+            error: { type: "string" },
+            currentVersion: { type: "number" }
+          }
+        },
         AssignmentInput: {
           type: "object",
           required: ["kind", "targetId", "residentId"],
@@ -132,9 +149,12 @@ export function getOpenApiDocument() {
           required: ["action"],
           properties: {
             serviceLine: { type: "string", enum: [...SERVICE_LINES] },
+            requestType: { type: "string", enum: ["calendar", "resident-trade"], default: "calendar" },
             action: { type: "string", enum: ["create", "update", "delete"] },
             entryId: { type: "string" },
             requestedEntry: { $ref: "#/components/schemas/CoverageEntryInput" },
+            targetResidentId: { type: "string", description: "For resident-trade requests, the resident being asked to accept the trade." },
+            swapEntryId: { type: "string", description: "Optional resident-trade entry owned by targetResidentId to swap back to the requester." },
             requesterName: { type: "string" },
             message: { type: "string" }
           }
@@ -194,6 +214,17 @@ export function getOpenApiDocument() {
           summary: "Show authenticated role",
           responses: {
             "200": { description: "Current role and auth type" },
+            "401": { description: "Unauthorized" }
+          }
+        }
+      },
+      "/api/events": {
+        get: {
+          summary: "Subscribe to planner state updates",
+          description: "Server-Sent Events stream. Browser EventSource clients pass a bearer token as ?token= because EventSource cannot set Authorization headers.",
+          parameters: [{ name: "token", in: "query", required: false, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "text/event-stream with state version events" },
             "401": { description: "Unauthorized" }
           }
         }
@@ -401,6 +432,21 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/residents/{residentId}/calendar.ics": {
+        get: {
+          summary: "Export a resident calendar feed",
+          description: "Returns text/calendar with OR, clinic, call, rounding, off, and note entries. Non-admin users can export only their linked resident profile.",
+          parameters: [
+            { name: "residentId", in: "path", required: true, schema: { type: "string" } },
+            { name: "token", in: "query", required: false, schema: { type: "string" } }
+          ],
+          responses: {
+            "200": { description: "ICS calendar feed" },
+            "403": { description: "Calendar export is not allowed for this user" },
+            "404": { description: "Resident not found" }
+          }
+        }
+      },
       "/api/weeks/{weekId}/suggest": {
         post: {
           summary: "Run schedule suggestion",
@@ -582,7 +628,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests": {
         post: {
           summary: "Submit a calendar edit request",
-          description: "Requires request or edit privilege for serviceLine. Creates a pending request for a service editor to approve or deny.",
+          description: "Default calendar requests require request or edit privilege for serviceLine and are resolved by a service editor. Resident-trade requests use requestType=resident-trade, must come from the linked resident who owns entryId, and are resolved by targetResidentId.",
           requestBody: {
             required: true,
             content: {
@@ -599,7 +645,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests/{id}/approve": {
         post: {
           summary: "Approve and apply a calendar request",
-          description: "Requires edit privilege for the request serviceLine, or admin/API admin access.",
+          description: "Requires edit privilege for the request serviceLine, admin/API admin access, or the target resident on a resident-trade request.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },
@@ -610,7 +656,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests/{id}/deny": {
         post: {
           summary: "Deny a calendar request",
-          description: "Requires edit privilege for the request serviceLine, or admin/API admin access.",
+          description: "Requires edit privilege for the request serviceLine, admin/API admin access, or the target resident on a resident-trade request.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },

@@ -15,11 +15,31 @@ export interface Session extends SessionUser {
   token: string;
 }
 
+export interface PasswordChangeResponse extends UserSummary {
+  token: string;
+}
+
 export class UnauthorizedError extends Error {
   constructor(message = "Unauthorized") {
     super(message);
     this.name = "UnauthorizedError";
   }
+}
+
+export class ConflictError extends Error {
+  constructor(
+    message = "Planner changed; refresh and retry",
+    readonly currentVersion?: number
+  ) {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
+let expectedStateVersion: number | undefined;
+
+export function setExpectedStateVersion(version: number | undefined) {
+  expectedStateVersion = version;
 }
 
 export interface UsersResponse {
@@ -248,12 +268,28 @@ export async function updateUsersPin(token: string, currentPin: string, nextPin:
   });
 }
 
-export async function changeMyPassword(token: string, currentPassword: string, nextPassword: string): Promise<UserSummary> {
-  return request<UserSummary>("/api/me/password", {
+export async function changeMyPassword(token: string, currentPassword: string, nextPassword: string): Promise<PasswordChangeResponse> {
+  return request<PasswordChangeResponse>("/api/me/password", {
     method: "PATCH",
     token,
     body: JSON.stringify({ currentPassword, nextPassword })
   });
+}
+
+export function subscribeToStateEvents(
+  token: string,
+  onState: (event: { version: number; updatedAt: string }) => void,
+  onUnauthorized: () => void
+): () => void {
+  const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+  events.addEventListener("state", (event) => {
+    const parsed = JSON.parse((event as MessageEvent).data) as { version: number; updatedAt: string };
+    onState(parsed);
+  });
+  events.onerror = () => {
+    if (events.readyState === EventSource.CLOSED) onUnauthorized();
+  };
+  return () => events.close();
 }
 
 function buildQuery(params: Record<string, string | undefined>): string {
@@ -271,6 +307,9 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
   if (init.token) {
     headers.set("authorization", `Bearer ${init.token}`);
   }
+  if (init.method && init.method !== "GET" && expectedStateVersion) {
+    headers.set("x-state-version", String(expectedStateVersion));
+  }
 
   const response = await fetch(url, {
     ...init,
@@ -278,9 +317,12 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
   });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
+    const payload = (await response.json().catch(() => undefined)) as { error?: string; currentVersion?: number } | undefined;
     if (response.status === 401) {
       throw new UnauthorizedError(payload?.error);
+    }
+    if (response.status === 409) {
+      throw new ConflictError(payload?.error, payload?.currentVersion);
     }
     throw new Error(payload?.error ?? `Request failed: ${response.status}`);
   }

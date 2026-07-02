@@ -22,10 +22,13 @@ export type CoverageRequestAction = "create" | "update" | "delete";
 
 export type CoverageRequestStatus = "pending" | "approved" | "denied";
 
+export type CoverageRequestType = "calendar" | "resident-trade";
+
 export type Priority = 1 | 2 | 3 | 4 | 5;
 
 export interface Settings {
   splitBufferMinutes: number;
+  turnoverMinutes: number;
   weekdayOnly: boolean;
 }
 
@@ -63,7 +66,9 @@ export interface ResidentRotationBlock {
 
 export interface Resident {
   id: string;
+  username?: string;
   name: string;
+  emoji?: string;
   trainingLevel: TrainingLevel;
   serviceTags: string[];
   serviceStatus?: ServiceStatus;
@@ -146,10 +151,15 @@ export interface CoverageEntry {
 
 export interface CoverageChangeRequest {
   id: string;
+  requestType?: CoverageRequestType;
   action: CoverageRequestAction;
   status: CoverageRequestStatus;
   entryId?: string;
   requestedEntry?: CoverageEntry;
+  requesterResidentId?: string;
+  targetResidentId?: string;
+  swapEntryId?: string;
+  swapRequestedEntry?: CoverageEntry;
   serviceLine?: string;
   requesterUsername?: string;
   requesterName?: string;
@@ -171,6 +181,8 @@ export interface ActivityEvent {
 }
 
 export interface PlannerState {
+  version: number;
+  updatedAt: string;
   settings: Settings;
   hospitals: Hospital[];
   attendings: Attending[];
@@ -252,6 +264,7 @@ export interface SessionUser {
   displayName: string;
   role: Role;
   servicePrivileges: ServicePrivileges;
+  passwordUpdatedAt: string;
   mustChangePassword: boolean;
   temporaryPasswordExpiresAt?: string;
 }

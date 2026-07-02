@@ -8,8 +8,11 @@ export function createInitialState(): PlannerState {
   const monday = getCurrentMonday();
 
   return {
+    version: 1,
+    updatedAt: seedCreatedAt,
     settings: {
       splitBufferMinutes: 90,
+      turnoverMinutes: 30,
       weekdayOnly: true
     },
     hospitals: [

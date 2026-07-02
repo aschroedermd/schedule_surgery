@@ -8,22 +8,26 @@ import { createInitialState } from "./sampleData";
 import { MemoryStateStore, normalizePlannerState } from "./store";
 import { ServicePrivilege } from "../shared/types";
 
+const TEST_USERS_PIN = "test-users-pin";
+const TEST_SEED_USER_PASSWORD = "resident-dev-password";
+
 async function loginAs(username: string) {
   const app = createApp(new MemoryStateStore(createInitialState()));
-  const password = username === "admin" ? "admin-dev-password" : "Schroeder1";
+  const password = username === "admin" ? "admin-dev-password" : TEST_SEED_USER_PASSWORD;
   const token = await loginOnApp(app, username, password);
   return { app, token };
 }
 
-async function loginOnApp(app: ReturnType<typeof createApp>, username: string, password = "Schroeder1") {
+async function loginOnApp(app: ReturnType<typeof createApp>, username: string, password = TEST_SEED_USER_PASSWORD) {
   const response = await request(app).post("/api/auth/login").send({ username, password }).expect(200);
-  const token = response.body.token as string;
+  let token = response.body.token as string;
   if (response.body.mustChangePassword) {
-    await request(app)
+    const changeResponse = await request(app)
       .patch("/api/me/password")
       .set("authorization", `Bearer ${token}`)
       .send({ currentPassword: password, nextPassword: `${password}-${username}` })
       .expect(200);
+    token = changeResponse.body.token as string;
   }
   return token;
 }
@@ -32,7 +36,7 @@ async function grantPrivilege(app: ReturnType<typeof createApp>, adminToken: str
   await request(app)
     .patch(`/api/users/${username}`)
     .set("authorization", `Bearer ${adminToken}`)
-    .send({ pin: "9480", servicePrivileges: { [service]: privilege } })
+    .send({ pin: TEST_USERS_PIN, servicePrivileges: { [service]: privilege } })
     .expect(200);
 }
 
@@ -43,6 +47,8 @@ describe("planner API", () => {
     process.env.APP_SECRET = "test-secret";
     process.env.ADMIN_API_KEY = "test-admin-api-key";
     process.env.VIEWER_API_KEY = "test-viewer-api-key";
+    process.env.USERS_PIN = TEST_USERS_PIN;
+    process.env.SEED_USER_PASSWORD = TEST_SEED_USER_PASSWORD;
   });
 
   it("allows admin writes and blocks view-only users", async () => {
@@ -53,10 +59,10 @@ describe("planner API", () => {
       .send({ id: "hosp_test", name: "Test Hospital", shortName: "TH", color: "#333333" })
       .expect(201);
 
-    const guest = await loginAs("guest");
-    await request(guest.app)
+    const viewer = await loginAs("resident01");
+    await request(viewer.app)
       .post("/api/entities/hospitals")
-      .set("authorization", `Bearer ${guest.token}`)
+      .set("authorization", `Bearer ${viewer.token}`)
       .send({ id: "hosp_denied", name: "Denied", shortName: "DN", color: "#333333" })
       .expect(403);
   });
@@ -81,27 +87,27 @@ describe("planner API", () => {
     const { app, token } = await loginAs("admin");
 
     await request(app).get("/api/users?pin=1111").set("authorization", `Bearer ${token}`).expect(403);
-    const usersResponse = await request(app).get("/api/users?pin=9480").set("authorization", `Bearer ${token}`).expect(200);
+    const usersResponse = await request(app).get(`/api/users?pin=${encodeURIComponent(TEST_USERS_PIN)}`).set("authorization", `Bearer ${token}`).expect(200);
 
     expect(usersResponse.body.users).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ username: "guest", role: "viewer" }),
-        expect.objectContaining({ username: "aswaak", role: "viewer" }),
-        expect.objectContaining({ username: "tcao", role: "viewer" }),
-        expect.objectContaining({ username: "cblue", role: "viewer" }),
+        expect.objectContaining({ username: "resident01", role: "viewer" }),
+        expect.objectContaining({ username: "resident02", role: "viewer" }),
+        expect.objectContaining({ username: "resident05", role: "viewer" }),
+        expect.objectContaining({ username: "resident26", role: "viewer" }),
         expect.objectContaining({ username: "admin", role: "admin" })
       ])
     );
     const residentLogin = await request(app)
       .post("/api/auth/login")
-      .send({ username: "cblue", password: "Schroeder1" })
+      .send({ username: "resident02", password: TEST_SEED_USER_PASSWORD })
       .expect(200);
     expect(residentLogin.body).toEqual(
       expect.objectContaining({
-        username: "cblue",
-        displayName: "Christian Blue",
+        username: "resident02",
+        displayName: "Resident 02",
         role: "viewer",
-        mustChangePassword: false,
+        mustChangePassword: true,
         servicePrivileges: expect.objectContaining({ Davies: "view", ICU: "view" })
       })
     );
@@ -109,7 +115,7 @@ describe("planner API", () => {
     const createResponse = await request(app)
       .post("/api/users")
       .set("authorization", `Bearer ${token}`)
-      .send({ pin: "9480", username: "jsmith", servicePrivileges: { Berry: "request" } })
+      .send({ pin: TEST_USERS_PIN, username: "jsmith", servicePrivileges: { Berry: "request" } })
       .expect(201);
     expect(createResponse.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
     expect(createResponse.body.user).toEqual(
@@ -124,7 +130,7 @@ describe("planner API", () => {
       .post("/api/users/bulk")
       .set("authorization", `Bearer ${token}`)
       .send({
-        pin: "9480",
+        pin: TEST_USERS_PIN,
         users: [
           { username: "bulkone", displayName: "Bulk One", servicePrivileges: { Davies: "request" } },
           { username: "bulktwo", displayName: "Bulk Two", servicePrivileges: { Fogel: "edit" } }
@@ -157,22 +163,22 @@ describe("planner API", () => {
     );
 
     await request(app)
-      .patch("/api/users/tcao")
+      .patch("/api/users/resident05")
       .set("authorization", `Bearer ${token}`)
-      .send({ pin: "9480", servicePrivileges: { Berry: "edit" } })
+      .send({ pin: TEST_USERS_PIN, servicePrivileges: { Berry: "edit" } })
       .expect(200);
     const resetResponse = await request(app)
-      .patch("/api/users/tcao/password?pin=9480")
+      .patch(`/api/users/resident05/password?pin=${encodeURIComponent(TEST_USERS_PIN)}`)
       .set("authorization", `Bearer ${token}`)
       .expect(200);
     expect(resetResponse.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
 
-    const tcaoLogin = await request(app)
+    const residentLoginAfterReset = await request(app)
       .post("/api/auth/login")
-      .send({ username: "tcao", password: resetResponse.body.temporaryPassword })
+      .send({ username: "resident05", password: resetResponse.body.temporaryPassword })
       .expect(200);
 
-    expect(tcaoLogin.body).toEqual(
+    expect(residentLoginAfterReset.body).toEqual(
       expect.objectContaining({
         mustChangePassword: true,
         servicePrivileges: expect.objectContaining({ Berry: "edit", Davies: "view" })
@@ -180,11 +186,11 @@ describe("planner API", () => {
     );
     await request(app)
       .get("/api/state")
-      .set("authorization", `Bearer ${tcaoLogin.body.token}`)
+      .set("authorization", `Bearer ${residentLoginAfterReset.body.token}`)
       .expect(403);
     const changeResponse = await request(app)
       .patch("/api/me/password")
-      .set("authorization", `Bearer ${tcaoLogin.body.token}`)
+      .set("authorization", `Bearer ${residentLoginAfterReset.body.token}`)
       .send({ currentPassword: resetResponse.body.temporaryPassword, nextPassword: "new-pass" })
       .expect(200);
     expect(changeResponse.body.mustChangePassword).toBe(false);
@@ -199,25 +205,29 @@ describe("planner API", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "res_chief",
-          name: "Andrew Schroeder",
+          name: "Resident 22",
+          username: "resident22",
           trainingLevel: "PGY5",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
         }),
         expect.objectContaining({
           id: "res_fellow",
-          name: "Adedayo Adeleke",
+          name: "Resident 01",
+          username: "resident01",
           trainingLevel: "PGY1",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
         }),
         expect.objectContaining({
           id: "res_swaak",
-          name: "Amanda Swaak",
+          name: "Resident 26",
+          username: "resident26",
           trainingLevel: "PGY3",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 8, service: "Keeley Vasc" })])
         }),
         expect.objectContaining({
           id: "res_blue",
-          name: "Christian Blue",
+          name: "Resident 02",
+          username: "resident02",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "SCC Night" })])
         })
       ])
@@ -340,10 +350,10 @@ describe("planner API", () => {
       .send({ username: "admin", password: "admin-dev-password" })
       .expect(200);
     const adminToken = adminLogin.body.token as string;
-    await grantPrivilege(app, adminToken, "aswaak", "Davies", "request");
-    await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");
-    const requesterToken = await loginOnApp(app, "aswaak");
-    const editorToken = await loginOnApp(app, "aschroeder");
+    await grantPrivilege(app, adminToken, "resident26", "Davies", "request");
+    await grantPrivilege(app, adminToken, "resident22", "Davies", "edit");
+    const requesterToken = await loginOnApp(app, "resident26");
+    const editorToken = await loginOnApp(app, "resident22");
 
     await request(app)
       .post("/api/coverage-entries")
@@ -363,7 +373,7 @@ describe("planner API", () => {
           residentId: "res_fellow",
           note: ""
         },
-        message: "Can Adeleke cover this call?"
+        message: "Can this resident cover this call?"
       })
       .expect(201);
 
@@ -372,7 +382,7 @@ describe("planner API", () => {
       expect.arrayContaining([expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_fellow" })])
     );
     expect(requestResponse.body.coverageRequests[0]).toEqual(
-      expect.objectContaining({ status: "pending", requesterUsername: "aswaak", serviceLine: "Davies" })
+      expect.objectContaining({ status: "pending", requesterUsername: "resident26", serviceLine: "Davies" })
     );
 
     const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
@@ -391,10 +401,73 @@ describe("planner API", () => {
     );
   });
 
+  it("lets linked residents request and accept call trades with each other", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const requesterToken = await loginOnApp(app, "resident22");
+    const targetToken = await loginOnApp(app, "resident01");
+    const unrelatedToken = await loginOnApp(app, "resident02");
+
+    const requestResponse = await request(app)
+      .post("/api/coverage-requests")
+      .set("authorization", `Bearer ${requesterToken}`)
+      .send({
+        serviceLine: "Davies",
+        requestType: "resident-trade",
+        action: "update",
+        entryId: "cover_2026_07_05_schroeder_call",
+        targetResidentId: "res_fellow",
+        swapEntryId: "cover_2026_07_11_adeleke_call",
+        message: "Can we swap?"
+      })
+      .expect(201);
+
+    const tradeRequest = requestResponse.body.coverageRequests[0];
+    expect(tradeRequest).toEqual(
+      expect.objectContaining({
+        requestType: "resident-trade",
+        status: "pending",
+        requesterUsername: "resident22",
+        requesterResidentId: "res_chief",
+        targetResidentId: "res_fellow",
+        swapEntryId: "cover_2026_07_11_adeleke_call"
+      })
+    );
+    expect(tradeRequest.requestedEntry).toEqual(expect.objectContaining({ residentId: "res_fellow" }));
+    expect(tradeRequest.swapRequestedEntry).toEqual(expect.objectContaining({ residentId: "res_chief" }));
+    expect(requestResponse.body.coverageEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "cover_2026_07_05_schroeder_call", residentId: "res_chief" }),
+        expect.objectContaining({ id: "cover_2026_07_11_adeleke_call", residentId: "res_fellow" })
+      ])
+    );
+
+    const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
+    const targetState = await request(app).get("/api/state").set("authorization", `Bearer ${targetToken}`).expect(200);
+    const unrelatedState = await request(app).get("/api/state").set("authorization", `Bearer ${unrelatedToken}`).expect(200);
+    expect(requesterState.body.coverageRequests.map((item: { id: string }) => item.id)).toContain(tradeRequest.id);
+    expect(targetState.body.coverageRequests.map((item: { id: string }) => item.id)).toContain(tradeRequest.id);
+    expect(unrelatedState.body.coverageRequests).toEqual([]);
+
+    const approvalResponse = await request(app)
+      .post(`/api/coverage-requests/${tradeRequest.id}/approve`)
+      .set("authorization", `Bearer ${targetToken}`)
+      .expect(200);
+
+    expect(approvalResponse.body.coverageEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "cover_2026_07_05_schroeder_call", residentId: "res_fellow" }),
+        expect.objectContaining({ id: "cover_2026_07_11_adeleke_call", residentId: "res_chief" })
+      ])
+    );
+    expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === tradeRequest.id)).toEqual(
+      expect.objectContaining({ status: "approved" })
+    );
+  });
+
   it("lets a service editor claim an uncovered case and records the claim", async () => {
     const admin = await loginAs("admin");
-    await grantPrivilege(admin.app, admin.token, "aswaak", "Davies", "edit");
-    const token = await loginOnApp(admin.app, "aswaak");
+    await grantPrivilege(admin.app, admin.token, "resident26", "Davies", "edit");
+    const token = await loginOnApp(admin.app, "resident26");
 
     const claimResponse = await request(admin.app)
       .post("/api/claims")
@@ -565,5 +638,83 @@ describe("planner API", () => {
     expect(deleteResponse.body.assignments.map((assignment: { targetId: string }) => assignment.targetId)).not.toEqual(
       expect.arrayContaining(["case_next", "clinic_next"])
     );
+  });
+
+  it("rejects stale optimistic concurrency versions", async () => {
+    const { app, token } = await loginAs("admin");
+    const stateResponse = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
+    const version = String(stateResponse.body.version);
+
+    await request(app)
+      .post("/api/entities/hospitals")
+      .set("authorization", `Bearer ${token}`)
+      .set("x-state-version", version)
+      .send({ id: "hosp_first", name: "First Hospital", shortName: "FH", color: "#333333" })
+      .expect(201);
+
+    const staleResponse = await request(app)
+      .post("/api/entities/hospitals")
+      .set("authorization", `Bearer ${token}`)
+      .set("x-state-version", version)
+      .send({ id: "hosp_stale", name: "Stale Hospital", shortName: "SH", color: "#333333" })
+      .expect(409);
+
+    expect(staleResponse.body.currentVersion).toBeGreaterThan(Number(version));
+  });
+
+  it("cascades resident deletes out of assignments and coverage entries", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: "res_fellow" })
+      .expect(201);
+    await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "", serviceLine: "Davies" })
+      .expect(201);
+
+    const deleteResponse = await request(app)
+      .delete("/api/entities/residents/res_fellow")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(deleteResponse.body.assignments).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ residentId: "res_fellow" })])
+    );
+    expect(deleteResponse.body.coverageEntries).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ residentId: "res_fellow" })])
+    );
+  });
+
+  it("rejects assignments for unknown residents", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: "res_missing" })
+      .expect(400);
+  });
+
+  it("blocks obvious PHI-like text in scheduler write fields", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app)
+      .post("/api/entities/cases")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        id: "case_phi",
+        blockId: "block_chen_mon",
+        procedureLabel: "Patient John Doe appendectomy",
+        durationMinutes: 90,
+        priority: 2,
+        tags: [],
+        notes: "",
+        order: 9
+      })
+      .expect(400);
   });
 });

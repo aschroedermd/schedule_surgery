@@ -10,6 +10,7 @@ import {
   updateUser,
   updateUsersPin
 } from "./api";
+import type { PasswordChangeResponse } from "./api";
 import { Role, ServicePrivilege, ServicePrivileges, UserSummary } from "../shared/types";
 
 type AddPrivilegePreset = "view" | "request" | "edit" | "custom" | "clone";
@@ -457,7 +458,7 @@ export function PasswordChangeRequiredScreen({
 }: {
   token: string;
   username: string;
-  onPasswordChanged: (user: UserSummary) => void;
+  onPasswordChanged: (user: PasswordChangeResponse) => void;
 }) {
   return (
     <main className="login-screen">
@@ -481,7 +482,7 @@ export function AccountTab({
   token: string;
   username: string;
   onToast: (message: string) => void;
-  onPasswordChanged?: (user: UserSummary) => void;
+  onPasswordChanged?: (user: PasswordChangeResponse) => void;
 }) {
   return (
     <section className="account-panel">
@@ -509,7 +510,7 @@ function PasswordChangeForm({
   username: string;
   heading: string;
   copy?: string;
-  onPasswordChanged: (user: UserSummary) => void;
+  onPasswordChanged: (user: PasswordChangeResponse) => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");

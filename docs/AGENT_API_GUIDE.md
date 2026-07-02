@@ -7,6 +7,7 @@ Use this guide when an AI agent, script, or MCP server needs to read or update t
 - Store no PHI. Never send patient names, MRNs, DOBs, room numbers tied to patients, or identifiers. Use procedure labels such as `EGD`, `Lap chole`, or `Open ventral hernia`.
 - Use exact ISO dates (`YYYY-MM-DD`) and 24-hour times (`HH:MM`). Validate weekday/date pairs before writing; for example, in 2026, `2026-07-29` is Wednesday, not Monday.
 - Always fetch `GET /api/state` before mutating. Resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state.
+- Include `X-State-Version: state.version` on every mutating request. On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate.
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
 - Use the admin API key only for intentional writes. Use the viewer API key for read-only tools.
 - After writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings.
@@ -29,16 +30,18 @@ Browser sessions use username/password login, not the API-key role names:
 ```bash
 curl -X POST "$BASE_URL/api/auth/login" \
   -H "content-type: application/json" \
-  -d '{"username":"guest","password":"Schroeder1"}'
+  -d '{"username":"admin","password":"..."}'
 ```
 
-Seeded browser users are `admin`, `guest`, and resident accounts from the 2026-2027 rotation roster. Resident usernames use `<first-initial><last-name>`, such as `aschroeder`, and start view-only with password `Schroeder1`. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
+Seeded browser users are `admin` plus anonymized resident placeholders such as `resident01` when `SEED_USER_PASSWORD` is configured privately. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
 
 The live OpenAPI document is at:
 
 ```text
 GET /api/openapi.json
 ```
+
+Browser clients can watch state changes with `GET /api/events?token=<browser-token>` using Server-Sent Events. External tools can also poll `/api/state` and compare `version`.
 
 ## Mental Model
 
@@ -47,14 +50,14 @@ The database stores one JSON planner state. Important collections:
 - `weeks`: scheduling week metadata; a week starts on Monday.
 - `hospitals`: reusable hospital list.
 - `attendings`: reusable attending surgeon list.
-- `residents`: reusable resident/fellow list and availability blocks.
+- `residents`: reusable resident/fellow list, login username link, one-character marker, and availability blocks.
 - `attendingBlocks`: one surgeon operating at one hospital on one date, with a first-case start time and `weekId`.
 - `cases`: ordered cases inside an attending block. Later case times are computed from prior estimated durations.
 - `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
 - `assignments`: resident coverage of a whole block, individual case, or clinic.
 - `activityEvents`: audit trail of changes.
 
-Cases do not have independent start times. To change timing, patch the block `firstCaseStartTime`, or patch case `durationMinutes` / `order`.
+Cases do not have independent start times. To change timing, patch the block `firstCaseStartTime`, or patch case `durationMinutes` / `order`. Sequential cases include `settings.turnoverMinutes` between cases.
 
 Service lines are selected client-side and persisted by each browser. The built-in service lines are `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`.
 
@@ -99,6 +102,8 @@ Week-scoped data:
 
 Deleting a week through `DELETE /api/entities/weeks/{weekId}` cascades in the API: it removes that week, its attending blocks, cases inside those blocks, clinic sessions, and assignments for those removed targets. The API rejects deleting the only remaining week. Destructive MCP/app tools should show a dry-run summary before deleting a real week.
 
+Deleting an attending, hospital, block, case, clinic, or resident also cleans dependent assignments and schedule references. Resident deletion removes that resident's assignments and coverage entries so stale assignments cannot make a case look covered.
+
 If a week-scoped endpoint receives an unknown `weekId`, the scheduler returns an error instead of falling back to another week. Always use an id from live `GET /api/state`.
 
 ## High-Value Endpoints
@@ -111,6 +116,7 @@ GET    /api/weeks/{weekId}/warnings
 GET    /api/weeks/{weekId}/uncovered-message
 GET    /api/weeks/{weekId}/uncovered-message?date=YYYY-MM-DD
 GET    /api/weeks/{weekId}/uncovered-message?service=Davies&date=YYYY-MM-DD
+GET    /api/residents/{residentId}/calendar.ics?token=<browser-token>
 POST   /api/entities/{collection}
 PATCH  /api/entities/{collection}/{id}
 DELETE /api/entities/{collection}/{id}
@@ -120,6 +126,9 @@ DELETE /api/assignments/{id}
 POST   /api/claims
 POST   /api/weeks/{weekId}/suggest
 POST   /api/weeks/{weekId}/suggest?service=Davies
+POST   /api/coverage-requests
+POST   /api/coverage-requests/{requestId}/approve
+POST   /api/coverage-requests/{requestId}/deny
 ```
 
 Allowed `collection` values:
@@ -148,6 +157,39 @@ hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cas
 Creating a block assignment clears individual case assignments inside that block, which prevents false overlap warnings.
 
 For clinic-only writes, create or patch a `clinicSessions` entity instead of creating an OR block. Match existing clinics by `weekId`, `date`, `attendingId`, `startTime`, `endTime`, and `location` before creating a duplicate. Use `isProcedure: false` for ordinary clinic and `isProcedure: true` when the user says procedure clinic.
+
+## Resident Call Trades
+
+Residents can request a call or rounding trade from another resident without service edit privilege. The requester must be logged in through a browser session linked to `residents[].username`, and `entryId` must be a call or rounding `coverageEntries[]` item currently assigned to that resident. The target resident sees the pending request in the Requests tab and can accept or deny; the requester can see the final status as accepted or denied.
+
+For a one-way coverage handoff, omit `swapEntryId`:
+
+```json
+{
+  "serviceLine": "Davies",
+  "requestType": "resident-trade",
+  "action": "update",
+  "entryId": "cover_2026_07_05_schroeder_call",
+  "targetResidentId": "res_fellow",
+  "message": "Can you cover this call?"
+}
+```
+
+For a true swap, include `swapEntryId`. The swap entry must belong to `targetResidentId` and have the same calendar kind as `entryId`.
+
+```json
+{
+  "serviceLine": "Davies",
+  "requestType": "resident-trade",
+  "action": "update",
+  "entryId": "cover_2026_07_05_schroeder_call",
+  "targetResidentId": "res_fellow",
+  "swapEntryId": "cover_2026_07_11_adeleke_call",
+  "message": "Can we swap?"
+}
+```
+
+Accepting a resident trade applies the handoff or swap immediately and marks the request `approved`; browser UI labels this as accepted for resident trades. Denying leaves the calendar unchanged and marks the request `denied`. After acceptance, verify by reading `GET /api/state` and checking both affected `coverageEntries[]`.
 
 ## Minimal JSON Shapes
 
