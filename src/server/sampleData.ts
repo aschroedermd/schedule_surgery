@@ -1,5 +1,6 @@
 import { addDays, getCurrentMonday } from "../shared/date";
 import { CoverageEntry, PlannerState } from "../shared/types";
+import { createRotationResidents } from "./residentRotationSeed";
 
 const seedCreatedAt = "2026-06-27T14:36:21.000Z";
 
@@ -21,66 +22,22 @@ export function createInitialState(): PlannerState {
       { id: "att_morris", name: "Dr. Morris", service: "Davies", priority: 3, defaultHospitalId: "hosp_main" },
       { id: "att_nussbaum", name: "Dr. Nussbaum", service: "Berry", priority: 3, defaultHospitalId: "hosp_main" }
     ],
-    residents: [
-      {
-        id: "res_chief",
-        name: "Andrew Schroeder",
-        trainingLevel: "PGY5",
-        serviceTags: ["Davies"],
-        color: "#f4cf55",
-        tags: ["home"],
-        trainingInterests: ["HPB", "chief-level", "complex open"],
-        unavailable: []
-      },
-      {
-        id: "res_fellow",
-        name: "Adedayo Adeleke",
-        trainingLevel: "Fellow",
-        serviceTags: ["Davies"],
-        color: "#c89af7",
-        tags: ["fellow"],
-        trainingInterests: ["bariatrics", "fellow-priority", "foregut"],
-        unavailable: []
-      },
-      {
-        id: "res_offservice",
-        name: "T-Cao",
-        trainingLevel: "PGY3",
-        serviceTags: ["Davies"],
-        color: "#f37d6e",
-        tags: ["available-for-requests"],
-        trainingInterests: ["general surgery", "clinic"],
-        unavailable: [
-          {
-            id: "off_conf",
-            date: addDays(monday, 2),
-            startTime: "12:00",
-            endTime: "17:00",
-            label: "conference"
+    residents: createRotationResidents().map((resident) =>
+      resident.id === "res_offservice"
+        ? {
+            ...resident,
+            unavailable: [
+              {
+                id: "off_conf",
+                date: addDays(monday, 2),
+                startTime: "12:00",
+                endTime: "17:00",
+                label: "conference"
+              }
+            ]
           }
-        ]
-      },
-      {
-        id: "res_swaak",
-        name: "Amanda Swaak",
-        trainingLevel: "PGY4",
-        serviceTags: ["Davies"],
-        color: "#e65245",
-        tags: ["home"],
-        trainingInterests: ["general surgery", "abdominal wall", "clinic"],
-        unavailable: []
-      },
-      {
-        id: "res_broden",
-        name: "Nicole Broden",
-        trainingLevel: "PGY2",
-        serviceTags: ["Davies"],
-        color: "#55a6d9",
-        tags: ["home"],
-        trainingInterests: ["general surgery", "endoscopy", "clinic"],
-        unavailable: []
-      }
-    ],
+        : resident
+    ),
     procedureDefaults: [
       { id: "proc_whipple", label: "Whipple", durationMinutes: 360, priority: 5, tags: ["HPB", "chief-level", "complex open"] },
       { id: "proc_bypass", label: "Gastric bypass", durationMinutes: 180, priority: 4, tags: ["bariatrics", "fellow-priority"] },

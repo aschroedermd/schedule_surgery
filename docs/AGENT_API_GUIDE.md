@@ -29,10 +29,10 @@ Browser sessions use username/password login, not the API-key role names:
 ```bash
 curl -X POST "$BASE_URL/api/auth/login" \
   -H "content-type: application/json" \
-  -d '{"username":"guest","password":"schroeder1"}'
+  -d '{"username":"guest","password":"Schroeder1"}'
 ```
 
-Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. Named seeded users must change the default password after first login. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
+Seeded browser users are `admin`, `guest`, and resident accounts from the 2026-2027 rotation roster. Resident usernames use `<first-initial><last-name>`, such as `aschroeder`, and start view-only with password `Schroeder1`. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
 
 The live OpenAPI document is at:
 
@@ -56,10 +56,10 @@ The database stores one JSON planner state. Important collections:
 
 Cases do not have independent start times. To change timing, patch the block `firstCaseStartTime`, or patch case `durationMinutes` / `order`.
 
-Service lines are selected client-side and persisted by each browser. The built-in service lines are `Davies`, `Berry`, `Fogel`, `Keeley`, and `NRV`.
+Service lines are selected client-side and persisted by each browser. The built-in service lines are `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`.
 
 - `attendings[].service` stores the attending's service line.
-- `residents[].serviceTags` stores the service lines where the resident is currently on service.
+- `residents[].rotationSchedule` stores dated resident block rotations; `residents[].serviceTags` remains a fallback for residents without a schedule.
 - `clinicSessions[].service` controls service-line filtering and edit permissions for clinics.
 - Legacy or non-service-specific planner data is normalized into `Davies`.
 - Pass `?service=Davies` or another service line to week schedule, warning, suggestion, and uncovered-message endpoints when you need the same filtered view the browser shows.

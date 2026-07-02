@@ -1,7 +1,8 @@
 import { Pool } from "pg";
-import { normalizeServiceLine } from "../shared/services";
+import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
 import { Attending, ClinicSession, PlannerState, Resident } from "../shared/types";
 import { createInitialState, createSeedCoverageEntries } from "./sampleData";
+import { createRotationResidents } from "./residentRotationSeed";
 
 export interface StateStore {
   load(): Promise<PlannerState>;
@@ -85,11 +86,12 @@ export function createDefaultStore(): StateStore {
 export function normalizePlannerState(state: PlannerState): PlannerState {
   const partial = state as Partial<PlannerState>;
   const hospitals = partial.hospitals ?? [];
+  const residents = normalizeResidents(partial.residents ?? []);
   return {
     ...state,
     hospitals,
-    attendings: normalizeAttendings(partial.attendings ?? [], hospitals[0]?.id),
-    residents: normalizeResidents(partial.residents ?? []),
+    attendings: normalizeAttendings(partial.attendings ?? []),
+    residents: mergeRotationSeedIfNeeded(residents),
     clinicSessions: normalizeClinicSessions(partial.clinicSessions ?? []),
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
     coverageRequests: partial.coverageRequests ?? []
@@ -104,35 +106,71 @@ function normalizeResident(resident: Resident): Resident {
   const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" };
   return {
     ...resident,
-    serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus),
+    serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),
     tags: resident.tags ?? [],
     trainingInterests: resident.trainingInterests ?? [],
-    unavailable: resident.unavailable ?? []
+    unavailable: resident.unavailable ?? [],
+    rotationSchedule: normalizeRotationSchedule(resident.rotationSchedule)
   };
 }
 
-function normalizeServiceTags(serviceTags: string[] | undefined, legacyStatus?: "on-service" | "off-service"): string[] {
-  if (serviceTags?.length) return uniqueTrimmed(serviceTags);
+function normalizeServiceTags(
+  serviceTags: string[] | undefined,
+  legacyStatus?: "on-service" | "off-service",
+  rotationSchedule?: Resident["rotationSchedule"]
+): string[] {
+  if (serviceTags?.length) return uniqueKnownServiceLines(serviceTags);
+  if (rotationSchedule?.length) return [];
   return legacyStatus === "off-service" ? [] : ["Davies"];
 }
 
-function normalizeAttendings(attendings: Attending[], defaultHospitalId?: string): Attending[] {
-  const migrated = attendings.map((attending) => {
+function normalizeRotationSchedule(rotationSchedule: Resident["rotationSchedule"]): Resident["rotationSchedule"] {
+  if (!Array.isArray(rotationSchedule)) return undefined;
+  return rotationSchedule
+    .filter((rotation) => rotation && Number.isFinite(rotation.blockNumber) && rotation.startDate && rotation.endDate)
+    .map((rotation) => ({
+      id: rotation.id || `rot_${rotation.blockNumber}`,
+      blockNumber: rotation.blockNumber,
+      startDate: rotation.startDate,
+      endDate: rotation.endDate,
+      service: rotation.service?.trim() || "Not listed in source grid"
+    }))
+    .sort((a, b) => a.blockNumber - b.blockNumber);
+}
+
+function mergeRotationSeedIfNeeded(residents: Resident[]): Resident[] {
+  if (residents.some((resident) => resident.rotationSchedule?.length)) return residents;
+
+  const seededResidents = createRotationResidents().map(normalizeResident);
+  const seedById = new Map(seededResidents.map((resident) => [resident.id, resident]));
+  const seedByName = new Map(seededResidents.map((resident) => [normalizeName(resident.name), resident]));
+  const mergedSeedIds = new Set<string>();
+
+  const mergedResidents = residents.map((resident) => {
+    const seeded = seedById.get(resident.id) ?? seedByName.get(normalizeName(resident.name));
+    if (!seeded) return resident;
+    mergedSeedIds.add(seeded.id);
+    return {
+      ...seeded,
+      id: resident.id,
+      color: resident.color ?? seeded.color,
+      tags: resident.tags.length ? resident.tags : seeded.tags,
+      trainingInterests: resident.trainingInterests.length ? resident.trainingInterests : seeded.trainingInterests,
+      unavailable: resident.unavailable.length ? resident.unavailable : seeded.unavailable
+    };
+  });
+
+  return [
+    ...mergedResidents,
+    ...seededResidents.filter((seeded) => !mergedSeedIds.has(seeded.id) && !mergedResidents.some((resident) => normalizeName(resident.name) === normalizeName(seeded.name)))
+  ];
+}
+
+function normalizeAttendings(attendings: Attending[]): Attending[] {
+  return attendings.map((attending) => {
     const service = normalizeLegacyService(attending.service);
     return { ...attending, service };
   });
-
-  if (!migrated.some((attending) => attending.id === "att_nussbaum" || attending.name.toLowerCase().includes("nussbaum"))) {
-    migrated.push({
-      id: "att_nussbaum",
-      name: "Dr. Nussbaum",
-      service: "Berry",
-      priority: 3,
-      defaultHospitalId
-    });
-  }
-
-  return migrated;
 }
 
 function normalizeClinicSessions(clinicSessions: ClinicSession[]): ClinicSession[] {
@@ -148,6 +186,15 @@ function normalizeLegacyService(service: string | undefined): string {
   return normalizeServiceLine(service);
 }
 
-function uniqueTrimmed(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+function uniqueKnownServiceLines(values: string[]): string[] {
+  const serviceLines: string[] = [];
+  for (const value of values) {
+    const serviceLine = toKnownServiceLine(value);
+    if (serviceLine && !serviceLines.includes(serviceLine)) serviceLines.push(serviceLine);
+  }
+  return serviceLines;
+}
+
+function normalizeName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }

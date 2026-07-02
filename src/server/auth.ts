@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { NextFunction, Request, Response } from "express";
-import { Role, SessionUser } from "../shared/types";
+import { Role, SERVICE_LINES, SessionUser } from "../shared/types";
 import { UserStore, hasServicePrivilege } from "./userStore";
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 18;
@@ -129,13 +129,7 @@ function makeApiKeyUser(username: string, displayName: string, role: Role, privi
     username,
     displayName,
     role,
-    servicePrivileges: {
-      Davies: privilege,
-      Berry: privilege,
-      Fogel: privilege,
-      Keeley: privilege,
-      NRV: privilege
-    },
+    servicePrivileges: Object.fromEntries(SERVICE_LINES.map((service) => [service, privilege])),
     mustChangePassword: false,
     temporaryPasswordExpiresAt: undefined
   };

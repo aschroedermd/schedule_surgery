@@ -2,10 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Role, SERVICE_LINES, ServicePrivileges, UserSummary } from "../shared/types";
+import { RESIDENT_USER_SEEDS } from "./residentRotationSeed";
 
-const DEFAULT_PASSWORD = "schroeder1";
+const DEFAULT_PASSWORD = "Schroeder1";
 const DEFAULT_PIN = "9480";
-const DEFAULT_USERS = ["guest", "aswaak", "tcao", "aadeleke", "aschroeder", "nbroden", "mdoran"];
+const DEFAULT_USERS = [{ username: "guest", displayName: "guest" }, ...RESIDENT_USER_SEEDS];
 const TEMPORARY_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface PasswordHash {
@@ -236,8 +237,17 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
   if (!users.has("admin")) {
     users.set("admin", makeSeedUser("admin", "admin", "admin", process.env.ADMIN_PASSWORD ?? DEFAULT_PASSWORD, now));
   }
-  for (const username of DEFAULT_USERS) {
-    if (!users.has(username)) users.set(username, makeSeedUser(username, username, "viewer", DEFAULT_PASSWORD, now));
+  for (const user of DEFAULT_USERS) {
+    const existing = users.get(user.username);
+    if (!existing) {
+      users.set(user.username, makeSeedUser(user.username, user.displayName, "viewer", DEFAULT_PASSWORD, now, false));
+    } else if (existing.mustChangePassword && !existing.temporaryPasswordExpiresAt) {
+      existing.displayName = user.displayName;
+      existing.passwordHash = hashSecret(DEFAULT_PASSWORD);
+      existing.passwordUpdatedAt = now;
+      existing.updatedAt = now;
+      existing.mustChangePassword = false;
+    }
   }
 
   return {
@@ -247,7 +257,14 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
   };
 }
 
-function makeSeedUser(username: string, displayName: string, role: Role, password: string, now: string): StoredUser {
+function makeSeedUser(
+  username: string,
+  displayName: string,
+  role: Role,
+  password: string,
+  now: string,
+  mustChangePassword = false
+): StoredUser {
   return {
     username,
     displayName,
@@ -257,7 +274,7 @@ function makeSeedUser(username: string, displayName: string, role: Role, passwor
     createdAt: now,
     updatedAt: now,
     passwordUpdatedAt: now,
-    mustChangePassword: username !== "admin" && username !== "guest",
+    mustChangePassword,
     temporaryPasswordExpiresAt: undefined
   };
 }

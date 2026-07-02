@@ -252,7 +252,7 @@ export function applySuggestion(
     assignments: preservedAssignments
   };
 
-  const casesToFill = computeScheduledCases(draft, weekId)
+  const casesToFill = computeScheduledCases(draft, weekId, serviceLine)
     .filter((surgeryCase) => !surgeryCase.assignment)
     .sort((a, b) => b.priority - a.priority || a.date.localeCompare(b.date) || a.startMinutes - b.startMinutes);
 
@@ -516,7 +516,8 @@ function chooseResidentForTarget(
 
 function scoreResidentForTarget(resident: Resident, target: AssignmentTarget): number {
   const targetService = getTargetService(target);
-  const serviceScore = targetService && isResidentOnService(resident, targetService) ? 10 : 0;
+  const targetDate = getTargetDate(target);
+  const serviceScore = targetService && isResidentOnService(resident, targetService, targetDate) ? 10 : 0;
 
   if (target.kind === "clinic") {
     return (serviceScore ? 10 : 4) + serviceScore;
@@ -593,6 +594,12 @@ function getTargetService(target: AssignmentTarget): string | undefined {
   if (target.kind === "clinic") return target.clinic.service;
   if (target.kind === "block") return target.block.attending.service;
   return target.case.attending.service;
+}
+
+function getTargetDate(target: AssignmentTarget): string {
+  if (target.kind === "clinic") return target.clinic.date;
+  if (target.kind === "block") return target.block.date;
+  return target.case.date;
 }
 
 function blockMatchesService(state: PlannerState, block: AttendingBlock, serviceLine?: string): boolean {

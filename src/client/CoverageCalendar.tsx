@@ -44,6 +44,12 @@ import {
   isResidentOnService,
   servicesMatch
 } from "../shared/services";
+import {
+  getCalendarNightResidentsForDate,
+  getResidentLastName,
+  getResidentServiceTagsForDate,
+  getTodayDate
+} from "../shared/rotations";
 
 type MutationRunner = (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 
@@ -52,6 +58,7 @@ interface CalendarTabProps {
   token: string;
   selectedService: string;
   serviceLines: string[];
+  username: string;
   isAdmin: boolean;
   servicePrivileges: ServicePrivileges;
   onMutate: MutationRunner;
@@ -72,17 +79,18 @@ export function CalendarTab({
   token,
   selectedService,
   serviceLines,
+  username,
   isAdmin,
   servicePrivileges,
   onMutate
 }: CalendarTabProps) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCoverageMonth(state));
-  const [visibleServices, setVisibleServices] = useState(() => getStoredCalendarServices(serviceLines));
+  const [visibleServices, setVisibleServices] = useState(() => getStoredCalendarServices(serviceLines, selectedService, username));
   const dates = useMemo(() => getMonthGridDates(month), [month]);
   const serviceLineKey = serviceLines.join("\u0000");
   const visibleResidents = useMemo(
-    () => state.residents.filter((resident) => residentMatchesServices(resident, visibleServices)),
-    [state.residents, visibleServices]
+    () => state.residents.filter((resident) => dates.some((date) => residentMatchesServices(resident, visibleServices, date))),
+    [dates, state.residents, visibleServices]
   );
   const visibleCoverageEntries = useMemo(
     () => state.coverageEntries.filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices)),
@@ -92,28 +100,26 @@ export function CalendarTab({
     (request) => request.status === "pending" && coverageRequestMatchesServices(state, request, visibleServices)
   ).length;
   const allServicesChecked = serviceLines.length > 0 && serviceLines.every((serviceLine) => serviceIsVisible(visibleServices, serviceLine));
+  const nightResidents = getCalendarNightResidentsForDate(state.residents, getTodayDate());
 
   useEffect(() => {
     localStorage.setItem("coverageCalendarMonth", month);
   }, [month]);
 
   useEffect(() => {
-    setVisibleServices((current) => {
-      const normalized = normalizeCalendarServices(current, serviceLines);
-      return serviceSelectionsEqual(current, normalized) ? current : normalized;
-    });
-  }, [serviceLineKey]);
+    setVisibleServices(getStoredCalendarServices(serviceLines, selectedService, username));
+  }, [selectedService, serviceLineKey, username]);
 
   useEffect(() => {
-    localStorage.setItem("coverageCalendarServices", JSON.stringify(visibleServices));
-  }, [visibleServices]);
+    storeCalendarServices(username, selectedService, visibleServices);
+  }, [selectedService, username, visibleServices]);
 
   function updateVisibleService(serviceLine: string, checked: boolean) {
     setVisibleServices((current) => {
       const next = checked
         ? [...current, serviceLine]
         : current.filter((candidate) => !servicesMatch(candidate, serviceLine));
-      return normalizeCalendarServices(next, serviceLines);
+      return normalizeCalendarServices(next, serviceLines, selectedService);
     });
   }
 
@@ -145,7 +151,7 @@ export function CalendarTab({
           <input
             type="checkbox"
             checked={allServicesChecked}
-            onChange={(event) => setVisibleServices(event.target.checked ? [...serviceLines] : getDefaultCalendarServices(serviceLines))}
+            onChange={(event) => setVisibleServices(event.target.checked ? [...serviceLines] : getDefaultCalendarServices(serviceLines, selectedService))}
           />
           <span>All services</span>
         </label>
@@ -170,6 +176,9 @@ export function CalendarTab({
             </span>
           ))}
         </div>
+        <span className="nights-summary">
+          🌙 NIGHTS: {nightResidents.length ? nightResidents.map((resident) => getResidentLastName(resident.name)).join(", ") : "None listed"}
+        </span>
         <span className={pendingCount ? "request-count active" : "request-count"}>
           {pendingCount} pending request{pendingCount === 1 ? "" : "s"}
         </span>
@@ -217,6 +226,7 @@ function CoverageDay({
   onMutate
 }: CalendarAccessProps & { visibleResidents: Resident[]; coverageEntries: CoverageEntry[]; month: string; date: string }) {
   const inMonth = getMonthFromDate(date) === month;
+  const dayVisibleResidents = visibleResidents.filter((resident) => residentMatchesServices(resident, visibleServices, date));
   const entries = coverageEntries.filter((entry) => entry.date === date);
   const callEntry = getCoverageSlot(coverageEntries, date, "call");
   const roundingEntry = getCoverageSlot(coverageEntries, date, "rounding");
@@ -236,7 +246,7 @@ function CoverageDay({
   );
   const dayNumber = parseLocalDate(date).getDate();
   const [noteDraft, setNoteDraft] = useState({
-    residentId: visibleResidents[0]?.id ?? "",
+    residentId: dayVisibleResidents[0]?.id ?? "",
     kind: "off" as Extract<CoverageKind, "off" | "note">,
     note: ""
   });
@@ -244,14 +254,14 @@ function CoverageDay({
 
   useEffect(() => {
     if (!noteDraft.residentId) {
-      if (visibleResidents[0]) {
-        setNoteDraft((current) => ({ ...current, residentId: visibleResidents[0]?.id ?? "" }));
+      if (dayVisibleResidents[0]) {
+        setNoteDraft((current) => ({ ...current, residentId: dayVisibleResidents[0]?.id ?? "" }));
       }
       return;
     }
-    if (visibleResidents.some((resident) => resident.id === noteDraft.residentId)) return;
-    setNoteDraft((current) => ({ ...current, residentId: visibleResidents[0]?.id ?? "" }));
-  }, [noteDraft.residentId, visibleResidents]);
+    if (dayVisibleResidents.some((resident) => resident.id === noteDraft.residentId)) return;
+    setNoteDraft((current) => ({ ...current, residentId: dayVisibleResidents[0]?.id ?? "" }));
+  }, [dayVisibleResidents, noteDraft.residentId]);
 
   async function addNote(event: FormEvent) {
     event.preventDefault();
@@ -306,7 +316,7 @@ function CoverageDay({
             token={token}
             selectedService={selectedService}
             visibleServices={visibleServices}
-            visibleResidents={visibleResidents}
+            visibleResidents={dayVisibleResidents}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
             disabled={!inMonth || !canCreateForVisibleServices}
@@ -323,7 +333,7 @@ function CoverageDay({
             token={token}
             selectedService={selectedService}
             visibleServices={visibleServices}
-            visibleResidents={visibleResidents}
+            visibleResidents={dayVisibleResidents}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
             disabled={!inMonth || !canCreateForVisibleServices}
@@ -364,7 +374,7 @@ function CoverageDay({
             onChange={(event) => setNoteDraft({ ...noteDraft, residentId: event.target.value })}
           >
             <option value="">General</option>
-            {visibleResidents.map((resident) => (
+            {dayVisibleResidents.map((resident) => (
               <option key={resident.id} value={resident.id}>
                 {resident.name}
               </option>
@@ -435,7 +445,7 @@ function CoverageSlotSelect({
 
     const serviceLine = entry && !residentId
       ? resolveEntryMutationService(state, entry, visibleServices, selectedService)
-      : resolveResidentMutationService(state, residentId, visibleServices, selectedService);
+      : resolveResidentMutationService(state, residentId, visibleServices, selectedService, date);
     const canEdit = canEditService(isAdmin, servicePrivileges, serviceLine);
     const canRequest = canRequestService(isAdmin, servicePrivileges, serviceLine);
     if (!canRequest) return;
@@ -581,7 +591,7 @@ function CoverageChip({
       note: editDraft.note.trim()
     };
     const serviceLine = editDraft.residentId
-      ? resolveResidentMutationService(state, editDraft.residentId, visibleServices, selectedService)
+      ? resolveResidentMutationService(state, editDraft.residentId, visibleServices, selectedService, entry.date)
       : entryServiceLine;
     const canEditTarget = canEditService(isAdmin, servicePrivileges, serviceLine);
     const canRequestTarget = canRequestService(isAdmin, servicePrivileges, serviceLine);
@@ -774,40 +784,52 @@ function coverageRequestMatchesServices(
 function coverageEntryMatchesServices(state: PlannerState, entry: CoverageEntry, visibleServices: string[]): boolean {
   if (!entry.residentId) return true;
   const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
-  return resident ? residentMatchesServices(resident, visibleServices) : true;
+  return resident ? residentMatchesServices(resident, visibleServices, entry.date) : true;
 }
 
-function residentMatchesServices(resident: Resident, visibleServices: string[]): boolean {
-  return visibleServices.some((serviceLine) => isResidentOnService(resident, serviceLine));
+function residentMatchesServices(resident: Resident, visibleServices: string[], date?: string): boolean {
+  return visibleServices.some((serviceLine) => isResidentOnService(resident, serviceLine, date));
 }
 
 function serviceIsVisible(visibleServices: string[], serviceLine: string): boolean {
   return visibleServices.some((candidate) => servicesMatch(candidate, serviceLine));
 }
 
-function getStoredCalendarServices(serviceLines: string[]): string[] {
-  const stored = localStorage.getItem("coverageCalendarServices");
-  if (!stored) return getDefaultCalendarServices(serviceLines);
+function getStoredCalendarServices(serviceLines: string[], selectedService: string, username: string): string[] {
+  const stored = localStorage.getItem(getCalendarServicesStorageKey(username, selectedService));
+  if (!stored) return getDefaultCalendarServices(serviceLines, selectedService);
   try {
     const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) ? normalizeCalendarServices(parsed.filter((item) => typeof item === "string"), serviceLines) : getDefaultCalendarServices(serviceLines);
+    return Array.isArray(parsed)
+      ? normalizeCalendarServices(parsed.filter((item) => typeof item === "string"), serviceLines, selectedService)
+      : getDefaultCalendarServices(serviceLines, selectedService);
   } catch {
-    return getDefaultCalendarServices(serviceLines);
+    return getDefaultCalendarServices(serviceLines, selectedService);
   }
 }
 
-function getDefaultCalendarServices(serviceLines: string[]): string[] {
-  const defaultService = serviceLines.find((serviceLine) => servicesMatch(serviceLine, DEFAULT_SERVICE_LINE));
+function storeCalendarServices(username: string, selectedService: string, visibleServices: string[]) {
+  localStorage.setItem(getCalendarServicesStorageKey(username, selectedService), JSON.stringify(visibleServices));
+}
+
+function getCalendarServicesStorageKey(username: string, selectedService: string): string {
+  return `coverageCalendarServices:${normalizeStorageSegment(username)}:${normalizeStorageSegment(selectedService)}`;
+}
+
+function normalizeStorageSegment(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function getDefaultCalendarServices(serviceLines: string[], selectedService: string): string[] {
+  const defaultService =
+    serviceLines.find((serviceLine) => servicesMatch(serviceLine, selectedService)) ??
+    serviceLines.find((serviceLine) => servicesMatch(serviceLine, DEFAULT_SERVICE_LINE));
   return defaultService ? [defaultService] : serviceLines.slice(0, 1);
 }
 
-function normalizeCalendarServices(selectedServices: string[], serviceLines: string[]): string[] {
+function normalizeCalendarServices(selectedServices: string[], serviceLines: string[], selectedService: string): string[] {
   const normalized = serviceLines.filter((serviceLine) => selectedServices.some((candidate) => servicesMatch(candidate, serviceLine)));
-  return normalized.length > 0 ? normalized : getDefaultCalendarServices(serviceLines);
-}
-
-function serviceSelectionsEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((serviceLine, index) => servicesMatch(serviceLine, b[index]));
+  return normalized.length > 0 ? normalized : getDefaultCalendarServices(serviceLines, selectedService);
 }
 
 function resolveEntryMutationService(
@@ -816,21 +838,23 @@ function resolveEntryMutationService(
   visibleServices: string[],
   selectedService: string
 ): string {
-  return resolveResidentMutationService(state, entry.residentId, visibleServices, selectedService);
+  return resolveResidentMutationService(state, entry.residentId, visibleServices, selectedService, entry.date);
 }
 
 function resolveResidentMutationService(
   state: PlannerState,
   residentId: string | undefined,
   visibleServices: string[],
-  selectedService: string
+  selectedService: string,
+  date?: string
 ): string {
   const resident = residentId ? state.residents.find((candidate) => candidate.id === residentId) : undefined;
   if (resident) {
-    const visibleMatch = visibleServices.find((serviceLine) => isResidentOnService(resident, serviceLine));
+    const visibleMatch = visibleServices.find((serviceLine) => isResidentOnService(resident, serviceLine, date));
     if (visibleMatch) return visibleMatch;
-    if (isResidentOnService(resident, selectedService)) return selectedService;
-    if (resident.serviceTags[0]) return resident.serviceTags[0];
+    if (isResidentOnService(resident, selectedService, date)) return selectedService;
+    const residentServiceTag = getResidentServiceTagsForDate(resident, date)[0];
+    if (residentServiceTag) return residentServiceTag;
   }
   return visibleServices.find((serviceLine) => servicesMatch(serviceLine, selectedService)) ?? visibleServices[0] ?? selectedService;
 }

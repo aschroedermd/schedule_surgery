@@ -5,17 +5,17 @@ import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { createInitialState } from "./sampleData";
-import { MemoryStateStore } from "./store";
+import { MemoryStateStore, normalizePlannerState } from "./store";
 import { ServicePrivilege } from "../shared/types";
 
 async function loginAs(username: string) {
   const app = createApp(new MemoryStateStore(createInitialState()));
-  const password = username === "admin" ? "admin-dev-password" : "schroeder1";
+  const password = username === "admin" ? "admin-dev-password" : "Schroeder1";
   const token = await loginOnApp(app, username, password);
   return { app, token };
 }
 
-async function loginOnApp(app: ReturnType<typeof createApp>, username: string, password = "schroeder1") {
+async function loginOnApp(app: ReturnType<typeof createApp>, username: string, password = "Schroeder1") {
   const response = await request(app).post("/api/auth/login").send({ username, password }).expect(200);
   const token = response.body.token as string;
   if (response.body.mustChangePassword) {
@@ -88,8 +88,22 @@ describe("planner API", () => {
         expect.objectContaining({ username: "guest", role: "viewer" }),
         expect.objectContaining({ username: "aswaak", role: "viewer" }),
         expect.objectContaining({ username: "tcao", role: "viewer" }),
+        expect.objectContaining({ username: "cblue", role: "viewer" }),
         expect.objectContaining({ username: "admin", role: "admin" })
       ])
+    );
+    const residentLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "cblue", password: "Schroeder1" })
+      .expect(200);
+    expect(residentLogin.body).toEqual(
+      expect.objectContaining({
+        username: "cblue",
+        displayName: "Christian Blue",
+        role: "viewer",
+        mustChangePassword: false,
+        servicePrivileges: expect.objectContaining({ Davies: "view", ICU: "view" })
+      })
     );
 
     const createResponse = await request(app)
@@ -183,12 +197,32 @@ describe("planner API", () => {
 
     expect(response.body.residents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "res_chief", name: "Andrew Schroeder", serviceTags: ["Davies"], color: "#f4cf55" }),
-        expect.objectContaining({ id: "res_fellow", name: "Adedayo Adeleke", serviceTags: ["Davies"], color: "#c89af7" }),
-        expect.objectContaining({ id: "res_swaak", name: "Amanda Swaak", serviceTags: ["Davies"], color: "#e65245" }),
-        expect.objectContaining({ id: "res_broden", name: "Nicole Broden", serviceTags: ["Davies"], color: "#55a6d9" })
+        expect.objectContaining({
+          id: "res_chief",
+          name: "Andrew Schroeder",
+          trainingLevel: "PGY5",
+          rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
+        }),
+        expect.objectContaining({
+          id: "res_fellow",
+          name: "Adedayo Adeleke",
+          trainingLevel: "PGY1",
+          rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
+        }),
+        expect.objectContaining({
+          id: "res_swaak",
+          name: "Amanda Swaak",
+          trainingLevel: "PGY3",
+          rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 8, service: "Keeley Vasc" })])
+        }),
+        expect.objectContaining({
+          id: "res_blue",
+          name: "Christian Blue",
+          rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "SCC Night" })])
+        })
       ])
     );
+    expect(response.body.residents).toHaveLength(30);
     expect(response.body.attendings).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "att_nussbaum", name: "Dr. Nussbaum", service: "Berry" })])
     );
@@ -202,6 +236,33 @@ describe("planner API", () => {
         expect.objectContaining({ date: "2026-08-01", kind: "off", residentId: "res_swaak", note: "conference" })
       ])
     );
+  });
+
+  it("keeps existing OR coverage data instead of injecting demo OR schedule data", () => {
+    const base = createInitialState();
+    const normalized = normalizePlannerState({
+      ...base,
+      attendings: [{ id: "att_real", name: "Dr. Real", service: "Davies", priority: 1, defaultHospitalId: "hosp_main" }],
+      attendingBlocks: [],
+      cases: [],
+      clinicSessions: [],
+      coverageEntries: []
+    });
+
+    expect(normalized.attendings).toEqual([
+      expect.objectContaining({ id: "att_real", name: "Dr. Real", service: "Davies" })
+    ]);
+    expect(normalized.attendings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "att_chen" }),
+        expect.objectContaining({ id: "att_patel" }),
+        expect.objectContaining({ id: "att_morris" }),
+        expect.objectContaining({ id: "att_nussbaum" })
+      ])
+    );
+    expect(normalized.attendingBlocks).toEqual([]);
+    expect(normalized.cases).toEqual([]);
+    expect(normalized.clinicSessions).toEqual([]);
   });
 
   it("does not resurrect or canonicalize seeded residents after roster edits", async () => {
@@ -229,6 +290,33 @@ describe("planner API", () => {
           name: "Edited Resident",
           trainingLevel: "PGY4",
           serviceTags: ["Berry"]
+        })
+      ])
+    );
+  });
+
+  it("lets admins update a resident rotation name while keeping block dates", async () => {
+    const { app, token } = await loginAs("admin");
+    const stateResponse = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
+    const adeleke = stateResponse.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
+    const nextSchedule = adeleke.rotationSchedule.map((rotation: { blockNumber: number }) =>
+      rotation.blockNumber === 3 ? { ...rotation, service: "Davies" } : rotation
+    );
+
+    const updateResponse = await request(app)
+      .patch("/api/entities/residents/res_fellow")
+      .set("authorization", `Bearer ${token}`)
+      .send({ rotationSchedule: nextSchedule })
+      .expect(200);
+    const updated = updateResponse.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
+
+    expect(updated.rotationSchedule).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          blockNumber: 3,
+          startDate: "2026-08-31",
+          endDate: "2026-09-27",
+          service: "Davies"
         })
       ])
     );

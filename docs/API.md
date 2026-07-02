@@ -25,7 +25,7 @@ curl -X POST https://your-domain.example/api/auth/login \
 
 The response token can be passed as `Authorization: Bearer <token>`, but MCP/tools should prefer `X-API-Key`.
 
-Seeded browser users are `admin`, `guest`, `aswaak`, `tcao`, `aadeleke`, `aschroeder`, `nbroden`, and `mdoran`. `guest` and named users start with `schroeder1`; named users are forced to change it after first login. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
+Seeded browser users are `admin`, `guest`, and resident accounts from the 2026-2027 rotation roster. Resident usernames use `<first-initial><last-name>`, such as `aschroeder`, and start view-only with password `Schroeder1`. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
 
 The admin Users tab is protected by a separate pin, initially `9480`. It can change that pin, add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
 
@@ -90,7 +90,7 @@ GET /api/weeks/:weekId/uncovered-message?service=Davies&date=2026-07-02
 
 `/api/weeks/:weekId/schedule` returns computed case times, assignments, uncovered cases, and warnings.
 
-The app supports service lines `Davies`, `Berry`, `Fogel`, `Keeley`, and `NRV`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags`.
+The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`.
 
 ## Entity Collections
 

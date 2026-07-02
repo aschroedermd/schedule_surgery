@@ -6,7 +6,7 @@ export type ServicePrivileges = Record<string, ServicePrivilege>;
 
 export type ServiceStatus = "on-service" | "off-service";
 
-export const SERVICE_LINES = ["Davies", "Berry", "Fogel", "Keeley", "NRV"] as const;
+export const SERVICE_LINES = ["ICU", "Gilbert", "Vascular", "Davies", "Berry", "Ferrara", "Fogel", "NRV", "Peds"] as const;
 
 export type ServiceLine = (typeof SERVICE_LINES)[number];
 
@@ -53,6 +53,14 @@ export interface AvailabilityBlock {
   label: string;
 }
 
+export interface ResidentRotationBlock {
+  id: string;
+  blockNumber: number;
+  startDate: string;
+  endDate: string;
+  service: string;
+}
+
 export interface Resident {
   id: string;
   name: string;
@@ -63,6 +71,7 @@ export interface Resident {
   tags: string[];
   trainingInterests: string[];
   unavailable: AvailabilityBlock[];
+  rotationSchedule?: ResidentRotationBlock[];
 }
 
 export interface ProcedureDefault {

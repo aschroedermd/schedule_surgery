@@ -1,3 +1,5 @@
+import { SERVICE_LINES } from "../shared/types";
+
 export function getOpenApiDocument() {
   return {
     openapi: "3.1.0",
@@ -129,7 +131,7 @@ export function getOpenApiDocument() {
           type: "object",
           required: ["action"],
           properties: {
-            serviceLine: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] },
+            serviceLine: { type: "string", enum: [...SERVICE_LINES] },
             action: { type: "string", enum: ["create", "update", "delete"] },
             entryId: { type: "string" },
             requestedEntry: { $ref: "#/components/schemas/CoverageEntryInput" },
@@ -367,7 +369,7 @@ export function getOpenApiDocument() {
           summary: "Get computed weekly schedule",
           parameters: [
             { name: "weekId", in: "path", required: true, schema: { type: "string" } },
-            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: [...SERVICE_LINES] } }
           ],
           responses: {
             "200": { description: "WeekSchedule JSON with computed case times and warnings" }
@@ -379,7 +381,7 @@ export function getOpenApiDocument() {
           summary: "Get assignment warnings",
           parameters: [
             { name: "weekId", in: "path", required: true, schema: { type: "string" } },
-            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: [...SERVICE_LINES] } }
           ],
           responses: {
             "200": { description: "Warning array" }
@@ -392,7 +394,7 @@ export function getOpenApiDocument() {
           parameters: [
             { name: "weekId", in: "path", required: true, schema: { type: "string" } },
             { name: "date", in: "query", required: false, schema: { type: "string", format: "date" } },
-            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: [...SERVICE_LINES] } }
           ],
           responses: {
             "200": { description: "Copyable uncovered message" }
@@ -405,7 +407,7 @@ export function getOpenApiDocument() {
           description: "Admin only. Preserves locked/manual assignments and fills uncovered cases/clinics.",
           parameters: [
             { name: "weekId", in: "path", required: true, schema: { type: "string" } },
-            { name: "service", in: "query", required: false, schema: { type: "string", enum: ["Davies", "Berry", "Fogel", "Keeley", "NRV"] } }
+            { name: "service", in: "query", required: false, schema: { type: "string", enum: [...SERVICE_LINES] } }
           ],
           responses: {
             "200": { description: "Updated PlannerState" },

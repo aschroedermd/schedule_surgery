@@ -8,6 +8,7 @@ import {
   LogOut,
   Plus,
   RefreshCw,
+  Save,
   Scissors,
   Trash2,
   Unlock,
@@ -53,6 +54,7 @@ import {
   ScheduledCase,
   ScheduledClinicSession,
   SurgeryCase,
+  ResidentRotationBlock,
   TrainingLevel,
   UserSummary,
   Week,
@@ -67,8 +69,16 @@ import {
   isResidentOnService,
   sortResidentsForService
 } from "../shared/services";
+import {
+  ROTATION_BLOCK_DATES,
+  getResidentServiceTagsForDate,
+  getRotationBlockForDate,
+  getRotationForBlock,
+  getTodayDate,
+  normalizeRotationServiceToServiceLine
+} from "../shared/rotations";
 
-type Tab = "board" | "calendar" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
+type Tab = "board" | "calendar" | "schedule" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
 type PlannerSession = Session;
 type LayoutMode = "desktop" | "mobile";
 type InputMode = "pointer" | "touch";
@@ -93,7 +103,7 @@ export function App() {
   const [state, setState] = useState<PlannerState | undefined>();
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
   const [selectedWeekId, setSelectedWeekId] = useState(() => localStorage.getItem("plannerSelectedWeekId") ?? "");
-  const [selectedService, setSelectedService] = useState(() => getStoredServiceLine());
+  const [selectedService, setSelectedService] = useState(() => getStoredServiceLine() ?? DEFAULT_SERVICE_LINE);
   const [activeTab, setActiveTab] = useState<Tab>("board");
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
@@ -130,6 +140,8 @@ export function App() {
   function handleLogin(nextSession: PlannerSession) {
     setShowLoggedOut(false);
     storeSession(nextSession);
+    const storedServiceLine = getStoredServiceLine(nextSession.username);
+    if (storedServiceLine) setSelectedService(storedServiceLine);
     setSession(nextSession);
   }
 
@@ -150,15 +162,20 @@ export function App() {
     setToast("Password changed");
   }
 
-  async function refresh(nextState?: PlannerState, preferredWeekId = selectedWeekId, serviceLine = selectedService) {
-    if (!session) return;
-    const loadedState = nextState ?? (await fetchState(session.token));
+  async function refresh(
+    nextState?: PlannerState,
+    preferredWeekId = selectedWeekId,
+    serviceLine = selectedService,
+    tokenOverride = session?.token
+  ) {
+    if (!tokenOverride) return;
+    const loadedState = nextState ?? (await fetchState(tokenOverride));
     const weekId = chooseWeekId(loadedState.weeks, preferredWeekId);
     setState(loadedState);
     if (weekId) {
       setSelectedWeekId(weekId);
       localStorage.setItem("plannerSelectedWeekId", weekId);
-      setSchedule(await fetchSchedule(session.token, weekId, serviceLine));
+      setSchedule(await fetchSchedule(tokenOverride, weekId, serviceLine));
     } else {
       setSelectedWeekId("");
       localStorage.removeItem("plannerSelectedWeekId");
@@ -216,7 +233,7 @@ export function App() {
   async function selectServiceLine(serviceLine: string) {
     if (serviceLine === selectedService) return;
     setSelectedService(serviceLine);
-    localStorage.setItem("plannerSelectedServiceLine", serviceLine);
+    storeSelectedServiceLine(session?.username, serviceLine);
     if (!session || !selectedWeekId) return;
     try {
       setError(undefined);
@@ -239,7 +256,11 @@ export function App() {
         storeSession(nextSession);
         setSession(nextSession);
         if (nextSession.mustChangePassword) return;
-        await refresh();
+        const loadedState = await fetchState(token);
+        if (cancelled) return;
+        const serviceLine = resolveSessionServiceLine(loadedState, nextSession, selectedService);
+        setSelectedService(serviceLine);
+        await refresh(loadedState, selectedWeekId, serviceLine, token);
       } catch (loadError) {
         if (cancelled || handleExpiredSession(loadError)) return;
         setError(loadError instanceof Error ? loadError.message : "Unable to load planner");
@@ -348,6 +369,7 @@ export function App() {
         {([
           ["board", "O.R."],
           ["calendar", "Calendar"],
+          ["schedule", "Resident Schedule"],
           ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"]] as const : []),
           ...(isAdmin ? [["entry", "Cases & Clinic"], ["roster", "Residents"], ["defaults", "Setup"], ["users", "Users"]] as const : []),
           ["activity", "Activity"],
@@ -376,10 +398,14 @@ export function App() {
           token={session.token}
           selectedService={selectedService}
           serviceLines={serviceLines}
+          username={session.username}
           isAdmin={isAdmin}
           servicePrivileges={session.servicePrivileges}
           onMutate={runMutation}
         />
+      )}
+      {activeTab === "schedule" && (
+        <ResidentScheduleTab state={state} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "requests" && (
         <RequestsTab
@@ -873,7 +899,8 @@ function AssignmentControl({
 }) {
   const displayedAssignment = assignment ?? inheritedAssignment;
   const isCovered = Boolean(displayedAssignment || coveredWithoutDirectAssignment);
-  const residents = sortResidentsForService(state.residents, selectedService);
+  const assignmentDate = getAssignmentDate(state, kind, targetId);
+  const residents = sortResidentsForService(state.residents, selectedService, assignmentDate);
   const [claimResidentId, setClaimResidentId] = useState(residents[0]?.id ?? "");
 
   useEffect(() => {
@@ -887,7 +914,7 @@ function AssignmentControl({
         <select value={claimResidentId} onChange={(event) => setClaimResidentId(event.target.value)}>
           {residents.map((resident) => (
             <option key={resident.id} value={resident.id}>
-              {formatResidentOption(resident, selectedService)}
+              {formatResidentOption(resident, selectedService, assignmentDate)}
             </option>
           ))}
         </select>
@@ -933,7 +960,7 @@ function AssignmentControl({
         <option value="">{emptyLabel ?? (inheritedAssignment ? residentLabel(state, inheritedAssignment.residentId) : "Unassigned")}</option>
         {residents.map((resident) => (
           <option key={resident.id} value={resident.id}>
-            {formatResidentOption(resident, selectedService)}
+            {formatResidentOption(resident, selectedService, assignmentDate)}
           </option>
         ))}
       </select>
@@ -1415,11 +1442,11 @@ function RosterTab({
       <section className="editor-panel">
         <h2>Current Residents</h2>
         <div className="entity-list">
-          {sortResidentsForService(state.residents, selectedService).map((resident) => (
+          {sortResidentsForService(state.residents, selectedService, week.startDate).map((resident) => (
             <CompactEntity
               key={resident.id}
               title={`${resident.name} · ${resident.trainingLevel}`}
-              subtitle={`${formatServiceTags(resident.serviceTags)} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
+              subtitle={`${formatServiceTags(getResidentServiceTagsForDate(resident, week.startDate))} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
               disabled={disabled}
               onEdit={() => setEditing(resident)}
               onDelete={() => onMutate(() => deleteEntity(token, "residents", resident.id), "Resident deleted")}
@@ -1427,6 +1454,177 @@ function RosterTab({
           ))}
         </div>
       </section>
+    </section>
+  );
+}
+
+function ResidentScheduleTab({
+  state,
+  token,
+  disabled,
+  onMutate
+}: {
+  state: PlannerState;
+  token: string;
+  disabled: boolean;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const todayBlock = getRotationBlockForDate(getTodayDate())?.blockNumber ?? 1;
+  const residents = [...state.residents].sort((a, b) => a.name.localeCompare(b.name));
+  const [selectedBlock, setSelectedBlock] = useState<number>(todayBlock);
+  const [selectedResidentId, setSelectedResidentId] = useState(residents[0]?.id ?? "");
+  const selectedResident = residents.find((resident) => resident.id === selectedResidentId) ?? residents[0];
+  const block = ROTATION_BLOCK_DATES.find((candidate) => candidate.blockNumber === selectedBlock) ?? ROTATION_BLOCK_DATES[0];
+  const serviceOptions = getRotationServiceOptions(state);
+
+  useEffect(() => {
+    if (selectedResidentId && residents.some((resident) => resident.id === selectedResidentId)) return;
+    setSelectedResidentId(residents[0]?.id ?? "");
+  }, [residents, selectedResidentId]);
+
+  return (
+    <section className="resident-schedule-page">
+      <div className="schedule-toolbar">
+        <label>
+          Block
+          <select value={selectedBlock} onChange={(event) => setSelectedBlock(Number(event.target.value))}>
+            {ROTATION_BLOCK_DATES.map((rotationBlock) => (
+              <option key={rotationBlock.blockNumber} value={rotationBlock.blockNumber}>
+                Block {rotationBlock.blockNumber} · {rotationBlock.startDate} to {rotationBlock.endDate}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Resident
+          <select value={selectedResident?.id ?? ""} onChange={(event) => setSelectedResidentId(event.target.value)}>
+            {residents.map((resident) => (
+              <option key={resident.id} value={resident.id}>
+                {resident.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="resident-schedule-layout">
+        <section className="editor-panel block-schedule-panel">
+          <div className="schedule-panel-heading">
+            <p className="eyebrow">Block {selectedBlock}</p>
+            <h2>{block.startDate} to {block.endDate}</h2>
+          </div>
+          <div className="block-service-groups">
+            {getBlockServiceGroups(state.residents, selectedBlock).map((group) => (
+              <article key={group.service} className="block-service-group">
+                <div className="block-service-title">
+                  <strong>{group.service}</strong>
+                  <span>{group.residents.length}</span>
+                </div>
+                <div className="block-resident-list">
+                  {group.residents.map((resident) => (
+                    <span key={resident.id} className="resident-legend-item">
+                      <span className="resident-dot" style={{ backgroundColor: resident.color ?? "#2f78c4" }} />
+                      {resident.name}
+                    </span>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {selectedResident && (
+          <ResidentRotationEditor
+            resident={selectedResident}
+            token={token}
+            disabled={disabled}
+            serviceOptions={serviceOptions}
+            onMutate={onMutate}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ResidentRotationEditor({
+  resident,
+  token,
+  disabled,
+  serviceOptions,
+  onMutate
+}: {
+  resident: Resident;
+  token: string;
+  disabled: boolean;
+  serviceOptions: string[];
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const [draftServices, setDraftServices] = useState<Record<number, string>>(() => makeRotationDraft(resident));
+  const optionListId = `rotation-services-${resident.id}`;
+
+  useEffect(() => {
+    setDraftServices(makeRotationDraft(resident));
+  }, [resident]);
+
+  function saveBlock(blockNumber: number) {
+    const nextSchedule = ensureRotationSchedule(resident).map((rotation) =>
+      rotation.blockNumber === blockNumber
+        ? { ...rotation, service: draftServices[blockNumber]?.trim() || "Not listed in source grid" }
+        : rotation
+    );
+    void onMutate(
+      () => updateEntity<Resident>(token, "residents", resident.id, { rotationSchedule: nextSchedule }),
+      "Resident schedule updated"
+    );
+  }
+
+  return (
+    <section className="editor-panel resident-lineup-panel">
+      <div className="schedule-panel-heading">
+        <p className="eyebrow">{resident.trainingLevel}</p>
+        <h2>{resident.name}</h2>
+      </div>
+      <datalist id={optionListId}>
+        {serviceOptions.map((service) => (
+          <option key={service} value={service} />
+        ))}
+      </datalist>
+      <div className="resident-lineup-grid">
+        {ensureRotationSchedule(resident).map((rotation) => {
+          const serviceLine = normalizeRotationServiceToServiceLine(draftServices[rotation.blockNumber]);
+          return (
+            <div key={rotation.blockNumber} className="resident-lineup-row">
+              <div>
+                <strong>Block {rotation.blockNumber}</strong>
+                <span>{rotation.startDate} to {rotation.endDate}</span>
+              </div>
+              <input
+                aria-label={`${resident.name} block ${rotation.blockNumber} rotation`}
+                list={optionListId}
+                value={draftServices[rotation.blockNumber] ?? ""}
+                disabled={disabled}
+                onChange={(event) =>
+                  setDraftServices((current) => ({
+                    ...current,
+                    [rotation.blockNumber]: event.target.value
+                  }))
+                }
+              />
+              <span className={serviceLine ? "service-line-chip" : "service-line-chip muted"}>{serviceLine ?? "Off list"}</span>
+              <button
+                title="Save rotation"
+                type="button"
+                className="icon-button"
+                disabled={disabled || draftServices[rotation.blockNumber] === rotation.service}
+                onClick={() => saveBlock(rotation.blockNumber)}
+              >
+                <Save size={15} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -1736,10 +1934,11 @@ function serviceLineOptions(state: PlannerState): { id: string; name: string }[]
   return getStateServiceLines(state).map((serviceLine) => ({ id: serviceLine, name: serviceLine }));
 }
 
-function formatResidentOption(resident: Resident, selectedService: string): string {
-  const orderedTags = isResidentOnService(resident, selectedService)
-    ? [selectedService, ...resident.serviceTags.filter((serviceTag) => serviceTag !== selectedService)]
-    : resident.serviceTags;
+function formatResidentOption(resident: Resident, selectedService: string, date?: string): string {
+  const serviceTags = getResidentServiceTagsForDate(resident, date);
+  const orderedTags = isResidentOnService(resident, selectedService, date)
+    ? [selectedService, ...serviceTags.filter((serviceTag) => serviceTag !== selectedService)]
+    : serviceTags;
   const serviceLabel = formatServiceTags(orderedTags);
   if (!serviceLabel) return resident.name;
   return `${resident.name} (${serviceLabel})`;
@@ -1753,6 +1952,74 @@ function residentLabel(state: PlannerState, residentId: string): string {
   return state.residents.find((resident) => resident.id === residentId)?.name ?? "Assigned";
 }
 
+function getAssignmentDate(state: PlannerState, kind: Assignment["kind"], targetId: string): string | undefined {
+  if (kind === "case") {
+    const surgeryCase = state.cases.find((candidate) => candidate.id === targetId);
+    const block = state.attendingBlocks.find((candidate) => candidate.id === surgeryCase?.blockId);
+    return block?.date;
+  }
+  if (kind === "block") {
+    return state.attendingBlocks.find((candidate) => candidate.id === targetId)?.date;
+  }
+  return state.clinicSessions.find((candidate) => candidate.id === targetId)?.date;
+}
+
+function ensureRotationSchedule(resident: Resident): ResidentRotationBlock[] {
+  return ROTATION_BLOCK_DATES.map((block) => {
+    const existing = getRotationForBlock(resident, block.blockNumber);
+    return {
+      id: existing?.id ?? `rot_${resident.id.replace(/^res_/, "")}_${block.blockNumber}`,
+      blockNumber: block.blockNumber,
+      startDate: block.startDate,
+      endDate: block.endDate,
+      service: existing?.service ?? "Not listed in source grid"
+    };
+  });
+}
+
+function makeRotationDraft(resident: Resident): Record<number, string> {
+  return Object.fromEntries(ensureRotationSchedule(resident).map((rotation) => [rotation.blockNumber, rotation.service]));
+}
+
+function getRotationServiceOptions(state: PlannerState): string[] {
+  const options = new Set([
+    ...SERVICE_LINES,
+    "NFloat",
+    "SCC Night",
+    "SCC-days",
+    "Anesthesia",
+    "Endoscopy",
+    "Breast",
+    "Head & Neck",
+    "Thoracic",
+    "Transplant",
+    "Research",
+    "VCU Burn",
+    "Plastic Surgery",
+    "Not listed in source grid"
+  ]);
+  for (const resident of state.residents) {
+    for (const rotation of resident.rotationSchedule ?? []) {
+      if (rotation.service.trim()) options.add(rotation.service.trim());
+    }
+  }
+  return [...options].sort((a, b) => a.localeCompare(b));
+}
+
+function getBlockServiceGroups(residents: Resident[], blockNumber: number): { service: string; residents: Resident[] }[] {
+  const groups = new Map<string, Resident[]>();
+  for (const resident of residents) {
+    const service = getRotationForBlock(resident, blockNumber)?.service || "Not listed in source grid";
+    groups.set(service, [...(groups.get(service) ?? []), resident]);
+  }
+  return [...groups.entries()]
+    .map(([service, groupResidents]) => ({
+      service,
+      residents: [...groupResidents].sort((a, b) => a.name.localeCompare(b.name))
+    }))
+    .sort((a, b) => a.service.localeCompare(b.service));
+}
+
 function sortWeeks(weeks: Week[]): Week[] {
   return [...weeks].sort((a, b) => a.startDate.localeCompare(b.startDate));
 }
@@ -1763,6 +2030,8 @@ function getTabTitle(tab: Tab): string {
       return "O.R.";
     case "calendar":
       return "Calendar";
+    case "schedule":
+      return "Resident Schedule";
     case "requests":
       return "Requests";
     case "entry":
@@ -1925,9 +2194,50 @@ function storeSession(session: PlannerSession) {
   }
 }
 
-function getStoredServiceLine(): string {
-  const serviceLine = localStorage.getItem("plannerSelectedServiceLine");
-  return serviceLine && SERVICE_LINES.includes(serviceLine as (typeof SERVICE_LINES)[number]) ? serviceLine : DEFAULT_SERVICE_LINE;
+function resolveSessionServiceLine(state: PlannerState, session: PlannerSession, fallback: string): string {
+  return (
+    getSessionResidentServiceLine(state, session) ??
+    getStoredServiceLine(session.username) ??
+    getStoredServiceLine() ??
+    fallback ??
+    DEFAULT_SERVICE_LINE
+  );
+}
+
+function getSessionResidentServiceLine(state: PlannerState, session: PlannerSession): string | undefined {
+  const username = normalizeUsername(session.username);
+  const resident = state.residents.find((candidate) => buildResidentUsername(candidate.name) === username);
+  if (!resident) return undefined;
+  return getResidentServiceTagsForDate(resident, getTodayDate()).find(isKnownServiceLine);
+}
+
+function buildResidentUsername(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return "";
+  return normalizeUsername(`${parts[0][0] ?? ""}${parts.slice(1).join("")}`);
+}
+
+function normalizeUsername(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function getStoredServiceLine(username?: string): string | undefined {
+  const serviceLine = localStorage.getItem(getSelectedServiceStorageKey(username));
+  return isKnownServiceLine(serviceLine) ? serviceLine : undefined;
+}
+
+function storeSelectedServiceLine(username: string | undefined, serviceLine: string) {
+  if (!isKnownServiceLine(serviceLine)) return;
+  if (username) localStorage.setItem(getSelectedServiceStorageKey(username), serviceLine);
+  localStorage.setItem(getSelectedServiceStorageKey(), serviceLine);
+}
+
+function getSelectedServiceStorageKey(username?: string): string {
+  return username ? `plannerSelectedServiceLine:${normalizeUsername(username)}` : "plannerSelectedServiceLine";
+}
+
+function isKnownServiceLine(serviceLine: string | null | undefined): serviceLine is (typeof SERVICE_LINES)[number] {
+  return Boolean(serviceLine && SERVICE_LINES.includes(serviceLine as (typeof SERVICE_LINES)[number]));
 }
 
 function isRole(role: string | null): role is Role {
