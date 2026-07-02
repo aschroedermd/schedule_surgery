@@ -990,9 +990,20 @@ function CaseRow({
   const inheritedAssignment = surgeryCase.assignments.find((assignment) => assignment.kind === "block");
   const [isAddingResident, setIsAddingResident] = useState(false);
   const assignedResidentIds = surgeryCase.assignments.map((assignment) => assignment.residentId);
-  const assignmentControls = [
-    ...(inheritedAssignment ? [undefined] : []),
-    ...(directAssignments.length > 0 ? directAssignments : inheritedAssignment ? [] : [undefined])
+  const assignmentControls: Array<{
+    assignment?: Assignment;
+    kind: Assignment["kind"];
+    targetId: string;
+    showLock: boolean;
+  }> = [
+    ...(inheritedAssignment
+      ? [{ assignment: inheritedAssignment, kind: "block" as const, targetId: inheritedAssignment.targetId, showLock: false }]
+      : []),
+    ...(directAssignments.length > 0
+      ? directAssignments.map((assignment) => ({ assignment, kind: "case" as const, targetId: surgeryCase.id, showLock: true }))
+      : inheritedAssignment
+        ? []
+        : [{ kind: "case" as const, targetId: surgeryCase.id, showLock: true }])
   ];
   const canAddResident = canEdit && assignedResidentIds.length === 1 && !isAddingResident;
   const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
@@ -1008,20 +1019,20 @@ function CaseRow({
         <span>{surgeryCase.durationMinutes} min</span>
       </div>
       <div className="case-assignment-stack">
-        {assignmentControls.map((assignment, index) => (
+        {assignmentControls.map((control, index) => (
           <AssignmentControl
-            key={assignment?.id ?? (inheritedAssignment && index === 0 ? `${surgeryCase.id}-inherited` : `${surgeryCase.id}-unassigned`)}
+            key={control.assignment?.id ?? `${surgeryCase.id}-unassigned`}
             state={state}
             token={token}
-            kind="case"
-            targetId={surgeryCase.id}
-            assignment={assignment}
-            inheritedAssignment={!assignment && inheritedAssignment && index === 0 ? inheritedAssignment : undefined}
+            kind={control.kind}
+            targetId={control.targetId}
+            assignment={control.assignment}
             disabled={!canEdit}
             claimable={false}
             arrangementWarnings={index === 0 ? arrangementWarnings : []}
             selectedService={selectedService}
             excludedResidentIds={assignedResidentIds}
+            showLock={control.showLock}
             onMutate={onMutate}
           />
         ))}
@@ -1105,6 +1116,7 @@ function AssignmentControl({
   arrangementWarnings = [],
   selectedService,
   excludedResidentIds = [],
+  showLock = true,
   onMutate
 }: {
   state: PlannerState;
@@ -1120,6 +1132,7 @@ function AssignmentControl({
   arrangementWarnings?: string[];
   selectedService: string;
   excludedResidentIds?: string[];
+  showLock?: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const displayedAssignment = assignment ?? inheritedAssignment;
@@ -1191,7 +1204,7 @@ function AssignmentControl({
           </option>
         ))}
       </select>
-      {assignment && !disabled && (
+      {assignment && !disabled && showLock && (
         <button
           title={assignment.locked ? "Unlock" : "Lock"}
           className="icon-button"
