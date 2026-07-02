@@ -129,8 +129,10 @@ export function computeScheduledCases(state: PlannerState, weekId: string, servi
         const endMinutes = startMinutes + surgeryCase.durationMinutes;
         currentStart = endMinutes + (index < blockCases.length - 1 ? state.settings.turnoverMinutes : 0);
         const directAssignments = caseAssignments.filter((candidate) => candidate.targetId === surgeryCase.id);
-        const assignments = directAssignments.length > 0 ? directAssignments : blockAssignment ? [blockAssignment] : [];
-        const assignment = assignments[0];
+        const assignments = blockAssignment
+          ? [blockAssignment, ...directAssignments.filter((candidate) => candidate.residentId !== blockAssignment.residentId)]
+          : directAssignments;
+        const assignment = directAssignments[0] ?? blockAssignment;
         return {
           ...surgeryCase,
           date: block.date,

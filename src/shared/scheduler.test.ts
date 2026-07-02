@@ -112,6 +112,21 @@ describe("scheduler core", () => {
     expect(caseIntervals.map((interval) => interval.resident.id)).toEqual(["res_chief", "res_fellow"]);
   });
 
+  it("keeps a block resident on the case when a second case resident is added", () => {
+    const state = {
+      ...createInitialState(),
+      assignments: [
+        makeAssignment("block", "block_chen_mon", "res_chief", "admin", false),
+        makeAssignment("case", "case_chen_whipple", "res_fellow", "admin", false)
+      ]
+    };
+
+    const scheduledCase = computeScheduledCases(state, "week_current").find((surgeryCase) => surgeryCase.id === "case_chen_whipple");
+
+    expect(scheduledCase?.assignments.map((assignment) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
+    expect(scheduledCase?.assignment?.residentId).toBe("res_fellow");
+  });
+
   it("warns for date-range availability blocks", () => {
     const state = createInitialState();
     const rangeUnavailableState = {

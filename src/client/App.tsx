@@ -987,12 +987,14 @@ function CaseRow({
   const arrangementWarnings = surgeryCase.warningMessages.filter((warning) => warning === "check arrangement");
   const caseWarnings = surgeryCase.warningMessages.filter((warning) => warning !== "check arrangement");
   const directAssignments = surgeryCase.assignments.filter((assignment) => assignment.kind === "case");
-  const inheritedAssignment =
-    directAssignments.length === 0 ? surgeryCase.assignments.find((assignment) => assignment.kind === "block") : undefined;
+  const inheritedAssignment = surgeryCase.assignments.find((assignment) => assignment.kind === "block");
   const [isAddingResident, setIsAddingResident] = useState(false);
-  const assignedResidentIds = directAssignments.map((assignment) => assignment.residentId);
-  const assignmentControls = directAssignments.length > 0 ? directAssignments : [undefined];
-  const canAddResident = canEdit && directAssignments.length === 1 && !isAddingResident;
+  const assignedResidentIds = surgeryCase.assignments.map((assignment) => assignment.residentId);
+  const assignmentControls = [
+    ...(inheritedAssignment ? [undefined] : []),
+    ...(directAssignments.length > 0 ? directAssignments : inheritedAssignment ? [] : [undefined])
+  ];
+  const canAddResident = canEdit && assignedResidentIds.length === 1 && !isAddingResident;
   const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
     await onMutate(action, message);
     setIsAddingResident(false);
@@ -1008,13 +1010,13 @@ function CaseRow({
       <div className="case-assignment-stack">
         {assignmentControls.map((assignment, index) => (
           <AssignmentControl
-            key={assignment?.id ?? `${surgeryCase.id}-unassigned`}
+            key={assignment?.id ?? (inheritedAssignment && index === 0 ? `${surgeryCase.id}-inherited` : `${surgeryCase.id}-unassigned`)}
             state={state}
             token={token}
             kind="case"
             targetId={surgeryCase.id}
             assignment={assignment}
-            inheritedAssignment={index === 0 ? inheritedAssignment : undefined}
+            inheritedAssignment={!assignment && inheritedAssignment && index === 0 ? inheritedAssignment : undefined}
             disabled={!canEdit}
             claimable={false}
             arrangementWarnings={index === 0 ? arrangementWarnings : []}
