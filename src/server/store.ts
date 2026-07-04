@@ -2,7 +2,7 @@ import { Pool } from "pg";
 import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
 import { Attending, ClinicSession, PlannerState, Resident } from "../shared/types";
 import { createInitialState, createSeedCoverageEntries } from "./sampleData";
-import { createRotationResidents } from "./residentRotationSeed";
+import { createRotationResidents, getRotationResidentMatchNames, getSeedMigrationBlockNumbers } from "./residentRotationSeed";
 
 export class StateConflictError extends Error {
   constructor(
@@ -186,6 +186,7 @@ function normalizeResident(resident: Resident): Resident {
   return {
     ...resident,
     username: normalizeOptionalUsername(resident.username),
+    aliases: normalizeResidentAliases(resident.aliases),
     emoji: normalizeResidentEmoji(resident.emoji),
     serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),
     tags: resident.tags ?? [],
@@ -193,6 +194,10 @@ function normalizeResident(resident: Resident): Resident {
     unavailable: resident.unavailable ?? [],
     rotationSchedule: normalizeRotationSchedule(resident.rotationSchedule)
   };
+}
+
+function normalizeResidentAliases(aliases: string[] | undefined): string[] {
+  return [...new Set((aliases ?? []).map((alias) => alias.trim()).filter(Boolean))];
 }
 
 function normalizeServiceTags(
@@ -220,33 +225,72 @@ function normalizeRotationSchedule(rotationSchedule: Resident["rotationSchedule"
 }
 
 function mergeRotationSeedIfNeeded(residents: Resident[]): Resident[] {
-  if (residents.some((resident) => resident.rotationSchedule?.length)) return residents;
-
   const seededResidents = createRotationResidents().map(normalizeResident);
   const seedById = new Map(seededResidents.map((resident) => [resident.id, resident]));
-  const seedByName = new Map(seededResidents.map((resident) => [normalizeName(resident.name), resident]));
+  const seedByName = new Map<string, Resident>();
+  for (const seeded of seededResidents) {
+    for (const name of getRotationResidentMatchNames(seeded.id)) {
+      seedByName.set(normalizeName(name), seeded);
+    }
+  }
+  const hasExistingRotationSchedules = residents.some((resident) => resident.rotationSchedule?.length);
   const mergedSeedIds = new Set<string>();
 
   const mergedResidents = residents.map((resident) => {
     const seeded = seedById.get(resident.id) ?? seedByName.get(normalizeName(resident.name));
     if (!seeded) return resident;
     mergedSeedIds.add(seeded.id);
-    return {
-      ...seeded,
-      id: resident.id,
-      username: resident.username ?? seeded.username,
-      emoji: resident.emoji ?? seeded.emoji,
-      color: resident.color ?? seeded.color,
-      tags: resident.tags.length ? resident.tags : seeded.tags,
-      trainingInterests: resident.trainingInterests.length ? resident.trainingInterests : seeded.trainingInterests,
-      unavailable: resident.unavailable.length ? resident.unavailable : seeded.unavailable
-    };
+    return mergeSeededResident(resident, seeded, hasExistingRotationSchedules);
   });
+
+  if (hasExistingRotationSchedules) return mergedResidents;
 
   return [
     ...mergedResidents,
     ...seededResidents.filter((seeded) => !mergedSeedIds.has(seeded.id) && !mergedResidents.some((resident) => normalizeName(resident.name) === normalizeName(seeded.name)))
   ];
+}
+
+function mergeSeededResident(resident: Resident, seeded: Resident, hasExistingRotationSchedules: boolean): Resident {
+  const seedMatchNames = new Set(getRotationResidentMatchNames(seeded.id).map(normalizeName));
+  const shouldUseSeedIdentity = seedMatchNames.has(normalizeName(resident.name));
+  const hasResidentSchedule = Boolean(resident.rotationSchedule?.length);
+  return {
+    ...seeded,
+    id: resident.id,
+    username: resident.username ?? seeded.username,
+    name: shouldUseSeedIdentity ? seeded.name : resident.name,
+    aliases: resident.aliases?.length ? resident.aliases : seeded.aliases ?? [],
+    trainingLevel: shouldUseSeedIdentity ? seeded.trainingLevel : resident.trainingLevel,
+    serviceTags: resident.serviceTags.length ? resident.serviceTags : seeded.serviceTags,
+    emoji: resident.emoji ?? seeded.emoji,
+    color: resident.color ?? seeded.color,
+    tags: resident.tags.length ? resident.tags : seeded.tags,
+    trainingInterests: resident.trainingInterests.length ? resident.trainingInterests : seeded.trainingInterests,
+    unavailable: resident.unavailable.length ? resident.unavailable : seeded.unavailable,
+    rotationSchedule:
+      hasExistingRotationSchedules && hasResidentSchedule
+        ? mergeSeedMigrationBlocks(resident.rotationSchedule, seeded)
+        : seeded.rotationSchedule
+  };
+}
+
+function mergeSeedMigrationBlocks(rotationSchedule: Resident["rotationSchedule"], seeded: Resident): Resident["rotationSchedule"] {
+  const blockNumbers = getSeedMigrationBlockNumbers(seeded.id);
+  if (!blockNumbers.length) return rotationSchedule;
+  const blockNumberSet = new Set(blockNumbers);
+  const seededByBlock = new Map((seeded.rotationSchedule ?? []).map((rotation) => [rotation.blockNumber, rotation]));
+  const existingBlockNumbers = new Set((rotationSchedule ?? []).map((rotation) => rotation.blockNumber));
+  return [
+    ...(rotationSchedule ?? []).map((rotation) => {
+      const seededRotation = blockNumberSet.has(rotation.blockNumber) ? seededByBlock.get(rotation.blockNumber) : undefined;
+      return seededRotation ? { ...rotation, service: seededRotation.service } : rotation;
+    }),
+    ...blockNumbers
+      .filter((blockNumber) => !existingBlockNumbers.has(blockNumber))
+      .map((blockNumber) => seededByBlock.get(blockNumber))
+      .filter((rotation): rotation is NonNullable<Resident["rotationSchedule"]>[number] => Boolean(rotation))
+  ].sort((a, b) => a.blockNumber - b.blockNumber);
 }
 
 function normalizeAttendings(attendings: Attending[]): Attending[] {
@@ -341,6 +385,9 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
     coverageRequests: state.coverageRequests.filter((request) => {
       const requestedResidentId = request.requestedEntry?.residentId;
       if (requestedResidentId && !residentIds.has(requestedResidentId)) return false;
+      if (request.requesterResidentId && !residentIds.has(request.requesterResidentId)) return false;
+      if (request.targetResidentId && !residentIds.has(request.targetResidentId)) return false;
+      if (request.requestedResidentProfile?.residentId && !residentIds.has(request.requestedResidentProfile.residentId)) return false;
       if (request.entryId && !state.coverageEntries.some((entry) => entry.id === request.entryId)) return false;
       return true;
     })

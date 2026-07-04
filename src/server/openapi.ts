@@ -149,11 +149,19 @@ export function getOpenApiDocument() {
           required: ["action"],
           properties: {
             serviceLine: { type: "string", enum: [...SERVICE_LINES] },
-            requestType: { type: "string", enum: ["calendar", "resident-trade"], default: "calendar" },
+            requestType: { type: "string", enum: ["calendar", "resident-trade", "resident-profile"], default: "calendar" },
             action: { type: "string", enum: ["create", "update", "delete"] },
             entryId: { type: "string" },
             requestedEntry: { $ref: "#/components/schemas/CoverageEntryInput" },
-            targetResidentId: { type: "string", description: "For resident-trade requests, the resident being asked to accept the trade." },
+            requestedResidentProfile: {
+              type: "object",
+              properties: {
+                residentId: { type: "string" },
+                name: { type: "string" },
+                aliases: { type: "array", items: { type: "string" } }
+              }
+            },
+            targetResidentId: { type: "string", description: "For resident-trade and resident-profile requests, the target resident." },
             swapEntryId: { type: "string", description: "Optional resident-trade entry owned by targetResidentId to swap back to the requester." },
             requesterName: { type: "string" },
             message: { type: "string" }
@@ -629,7 +637,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests": {
         post: {
           summary: "Submit a calendar edit request",
-          description: "Default calendar requests require request or edit privilege for serviceLine and are resolved by a service editor. Resident-trade requests use requestType=resident-trade, must come from the linked resident who owns entryId, and are resolved by targetResidentId.",
+          description: "Default calendar requests require request or edit privilege for serviceLine and are resolved by a service editor. Resident-trade requests use requestType=resident-trade, must come from the linked resident who owns entryId, and are resolved by targetResidentId. Resident-profile requests use requestType=resident-profile, must come from the linked resident profile, and require admin approval.",
           requestBody: {
             required: true,
             content: {
@@ -646,7 +654,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests/{id}/approve": {
         post: {
           summary: "Approve and apply a calendar request",
-          description: "Requires edit privilege for the request serviceLine, admin/API admin access, or the target resident on a resident-trade request.",
+          description: "Requires edit privilege for the request serviceLine, admin/API admin access, the target resident on a resident-trade request, or admin access for resident-profile requests.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },
@@ -657,7 +665,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests/{id}/deny": {
         post: {
           summary: "Deny a calendar request",
-          description: "Requires edit privilege for the request serviceLine, admin/API admin access, or the target resident on a resident-trade request.",
+          description: "Requires edit privilege for the request serviceLine, admin/API admin access, the target resident on a resident-trade request, or admin access for resident-profile requests.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },

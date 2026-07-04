@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  callCreatesPostCallDay,
   hasWeekendCoverage,
   isCoverageKindAllowedOnDate,
   isWeekendCoverageRequired
@@ -36,5 +37,11 @@ describe("coverage calendar rules", () => {
     expect(isCoverageKindAllowedOnDate("rounding", "2026-07-04")).toBe(true);
     expect(isCoverageKindAllowedOnDate("rounding", "2026-07-05")).toBe(true);
     expect(isCoverageKindAllowedOnDate("rounding", "2026-07-03")).toBe(false);
+  });
+
+  it("only treats Friday and Saturday call as creating a post-call next day", () => {
+    expect(callCreatesPostCallDay("2026-07-03")).toBe(true);
+    expect(callCreatesPostCallDay("2026-07-04")).toBe(true);
+    expect(callCreatesPostCallDay("2026-07-05")).toBe(false);
   });
 });

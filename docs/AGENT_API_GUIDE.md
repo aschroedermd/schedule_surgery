@@ -2,6 +2,8 @@
 
 Use this guide when an AI agent, script, or MCP server needs to read or update the schedule.
 
+Live app/API base URL: `http://159.89.226.139`. Set `BASE_URL=http://159.89.226.139` when using the curl examples below. If a domain name or HTTPS endpoint is added later, prefer the current configured `PUBLIC_BASE_URL`.
+
 ## Ground Rules
 
 - Store no PHI. Never send patient names, MRNs, DOBs, room numbers tied to patients, or identifiers. Use procedure labels such as `EGD`, `Lap chole`, or `Open ventral hernia`.
@@ -50,7 +52,7 @@ The database stores one JSON planner state. Important collections:
 - `weeks`: scheduling week metadata; a week starts on Monday.
 - `hospitals`: reusable hospital list.
 - `attendings`: reusable attending surgeon list.
-- `residents`: reusable resident/fellow list, login username link, one-character marker, and availability blocks.
+- `residents`: reusable resident/fellow list, login username link, display-name aliases, one-character marker, and availability blocks.
 - `attendingBlocks`: one surgeon operating at one hospital on one date, with a first-case start time and `weekId`.
 - `cases`: ordered cases inside an attending block. Later case times are computed from prior estimated durations.
 - `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
@@ -63,6 +65,7 @@ Service lines are selected client-side and persisted by each browser. The built-
 
 - `attendings[].service` stores the attending's service line.
 - `residents[].rotationSchedule` stores dated resident block rotations; `residents[].serviceTags` remains a fallback for residents without a schedule.
+- `residents[].aliases` stores alternate resident display names for matching and lookup.
 - `clinicSessions[].service` controls service-line filtering and edit permissions for clinics.
 - Legacy or non-service-specific planner data is normalized into `Davies`.
 - Pass `?service=Davies` or another service line to week schedule, warning, suggestion, and uncovered-message endpoints when you need the same filtered view the browser shows.
@@ -156,6 +159,10 @@ hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cas
 
 Posting a case assignment for a different resident on the same `targetId` adds that resident as a co-assignee. The API rejects duplicate resident/case pairs.
 
+When reading `GET /api/weeks/{weekId}/schedule`, use each scheduled case's `assignments[]` array for the full effective resident list. A case can include an inherited `kind: "block"` assignment plus one or more direct `kind: "case"` assignments. The singular `assignment` field is only the primary/compatibility assignment and may omit co-assignees.
+
+To change an existing displayed resident, patch that assignment by id with `PATCH /api/assignments/{id}`. If the assignment has `kind: "block"`, changing it updates the whole attending block. To add a second resident to only one case, create a new `kind: "case"` assignment for that case. To remove that second resident, delete the direct case assignment id.
+
 Creating a block assignment clears individual case assignments inside that block, which prevents false overlap warnings.
 
 For clinic-only writes, create or patch a `clinicSessions` entity instead of creating an OR block. Match existing clinics by `weekId`, `date`, `attendingId`, `startTime`, `endTime`, and `location` before creating a duplicate. Use `isProcedure: false` for ordinary clinic and `isProcedure: true` when the user says procedure clinic.
@@ -192,6 +199,24 @@ For a true swap, include `swapEntryId`. The swap entry must belong to `targetRes
 ```
 
 Accepting a resident trade applies the handoff or swap immediately and marks the request `approved`; browser UI labels this as accepted for resident trades. Denying leaves the calendar unchanged and marks the request `denied`. After acceptance, verify by reading `GET /api/state` and checking both affected `coverageEntries[]`.
+
+## Resident Profile Requests
+
+Admins can directly edit `residents[].name` and `residents[].aliases`. Linked resident users submit profile changes through the request queue; only admins can approve or deny `requestType: "resident-profile"` requests.
+
+```json
+{
+  "requestType": "resident-profile",
+  "action": "update",
+  "targetResidentId": "res_fellow",
+  "requestedResidentProfile": {
+    "residentId": "res_fellow",
+    "name": "Nikki Broden",
+    "aliases": ["Nicole Broden", "N Broden"]
+  },
+  "message": "Preferred display name"
+}
+```
 
 ## Minimal JSON Shapes
 

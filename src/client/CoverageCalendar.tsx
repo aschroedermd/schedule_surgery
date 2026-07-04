@@ -860,7 +860,7 @@ export function RequestsTab({
     return (
       <section className="requests-empty">
         <Clock3 size={20} />
-        <strong>No calendar requests</strong>
+        <strong>No requests</strong>
       </section>
     );
   }
@@ -1023,6 +1023,9 @@ function canRequestService(isAdmin: boolean, servicePrivileges: ServicePrivilege
 }
 
 function describeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  if (isResidentProfileRequest(coverageRequest)) {
+    return describeResidentProfileRequest(state, coverageRequest);
+  }
   if (isResidentTradeRequest(coverageRequest)) {
     return describeResidentTradeRequest(state, coverageRequest);
   }
@@ -1034,6 +1037,16 @@ function describeRequest(state: PlannerState, coverageRequest: CoverageChangeReq
     return `${capitalize(coverageRequest.action)} ${describeEntry(state, coverageRequest.requestedEntry)}`;
   }
   return "Calendar request";
+}
+
+function describeResidentProfileRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  const resident = coverageRequest.targetResidentId
+    ? state.residents.find((candidate) => candidate.id === coverageRequest.targetResidentId)
+    : undefined;
+  const requestedName = coverageRequest.requestedResidentProfile?.name;
+  const requestedAliases = coverageRequest.requestedResidentProfile?.aliases ?? [];
+  const aliasText = requestedAliases.length ? ` · aliases: ${requestedAliases.join(", ")}` : "";
+  return `Update ${resident ? formatResidentName(resident) : "resident"}${requestedName ? ` to ${requestedName}` : ""}${aliasText}`;
 }
 
 function describeResidentTradeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
@@ -1071,6 +1084,7 @@ function canResolveRequest(
   isAdmin: boolean,
   servicePrivileges: ServicePrivileges
 ): boolean {
+  if (isResidentProfileRequest(coverageRequest)) return isAdmin;
   if (isResidentTradeRequest(coverageRequest) && coverageRequestTargetsUsername(state, coverageRequest, username)) {
     return true;
   }
@@ -1090,6 +1104,10 @@ function coverageRequestTargetsUsername(
 
 function isResidentTradeRequest(coverageRequest: CoverageChangeRequest): boolean {
   return coverageRequest.requestType === "resident-trade";
+}
+
+function isResidentProfileRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "resident-profile";
 }
 
 function isTradeableCoverageKind(kind: CoverageKind): boolean {

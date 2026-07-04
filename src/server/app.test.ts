@@ -212,9 +212,19 @@ describe("planner API", () => {
         }),
         expect.objectContaining({
           id: "res_fellow",
-          name: "Resident 01",
+          name: "Nicole Broden",
           username: "resident01",
-          trainingLevel: "PGY1",
+          trainingLevel: "Fellow",
+          rotationSchedule: expect.arrayContaining([
+            expect.objectContaining({ blockNumber: 1, service: "Davies" }),
+            expect.objectContaining({ blockNumber: 2, service: "Davies" })
+          ])
+        }),
+        expect.objectContaining({
+          id: "res_offservice",
+          name: "Thein Cao",
+          username: "resident05",
+          trainingLevel: "PGY2",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
         }),
         expect.objectContaining({
@@ -273,6 +283,79 @@ describe("planner API", () => {
     expect(normalized.attendingBlocks).toEqual([]);
     expect(normalized.cases).toEqual([]);
     expect(normalized.clinicSessions).toEqual([]);
+  });
+
+  it("matches T-Cao to Thein Cao when adding rotation schedule data", () => {
+    const base = createInitialState();
+    const normalized = normalizePlannerState({
+      ...base,
+      residents: [
+        {
+          id: "res_legacy_tcao",
+          username: "tcao",
+          name: "T-Cao",
+          trainingLevel: "PGY2",
+          serviceTags: [],
+          tags: [],
+          trainingInterests: [],
+          unavailable: []
+        }
+      ],
+      coverageEntries: []
+    });
+
+    const cao = normalized.residents.find((resident) => resident.id === "res_legacy_tcao");
+
+    expect(cao).toEqual(
+      expect.objectContaining({
+        name: "Thein Cao",
+        trainingLevel: "PGY2",
+        rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
+      })
+    );
+    expect(normalized.residents.filter((resident) => resident.name === "Thein Cao")).toHaveLength(1);
+  });
+
+  it("repairs current seeded resident schedule rows without resurrecting deleted residents", () => {
+    const base = createInitialState();
+    const legacyResidents = base.residents
+      .filter((resident) => resident.id !== "res_swaak")
+      .map((resident) => {
+        if (resident.id === "res_offservice") return { ...resident, name: "T-Cao" };
+        if (resident.id === "res_fellow") {
+          return {
+            ...resident,
+            name: "Resident 01",
+            trainingLevel: "PGY1" as const,
+            rotationSchedule: resident.rotationSchedule?.map((rotation) =>
+              rotation.blockNumber === 2 ? { ...rotation, service: "Ferrara" } : rotation
+            )
+          };
+        }
+        return resident;
+      });
+    const normalized = normalizePlannerState({ ...base, residents: legacyResidents });
+
+    const cao = normalized.residents.find((resident) => resident.id === "res_offservice");
+    const broden = normalized.residents.find((resident) => resident.id === "res_fellow");
+
+    expect(normalized.residents).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "res_swaak" })]));
+    expect(cao).toEqual(
+      expect.objectContaining({
+        name: "Thein Cao",
+        rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
+      })
+    );
+    expect(broden).toEqual(
+      expect.objectContaining({
+        name: "Nicole Broden",
+        trainingLevel: "Fellow",
+        rotationSchedule: expect.arrayContaining([
+          expect.objectContaining({ blockNumber: 1, service: "Davies" }),
+          expect.objectContaining({ blockNumber: 2, service: "Davies" })
+        ])
+      })
+    );
   });
 
   it("does not resurrect or canonicalize seeded residents after roster edits", async () => {
@@ -460,6 +543,97 @@ describe("planner API", () => {
       ])
     );
     expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === tradeRequest.id)).toEqual(
+      expect.objectContaining({ status: "approved" })
+    );
+  });
+
+  it("lets admins edit resident aliases directly", async () => {
+    const { app, token } = await loginAs("admin");
+
+    const response = await request(app)
+      .patch("/api/entities/residents/res_fellow")
+      .set("authorization", `Bearer ${token}`)
+      .send({ aliases: ["Nikki", " N Broden ", "Nikki"] })
+      .expect(200);
+    const broden = response.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
+
+    expect(broden).toEqual(expect.objectContaining({ aliases: ["Nikki", "N Broden"] }));
+  });
+
+  it("routes linked resident profile changes through admin approval", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const requesterToken = await loginOnApp(app, "resident01");
+    const otherResidentToken = await loginOnApp(app, "resident02");
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+
+    await request(app)
+      .post("/api/coverage-requests")
+      .set("authorization", `Bearer ${otherResidentToken}`)
+      .send({
+        requestType: "resident-profile",
+        action: "update",
+        targetResidentId: "res_fellow",
+        requestedResidentProfile: {
+          residentId: "res_fellow",
+          name: "Other Person",
+          aliases: ["Other"]
+        }
+      })
+      .expect(403);
+
+    const requestResponse = await request(app)
+      .post("/api/coverage-requests")
+      .set("authorization", `Bearer ${requesterToken}`)
+      .send({
+        requestType: "resident-profile",
+        action: "update",
+        targetResidentId: "res_fellow",
+        requestedResidentProfile: {
+          residentId: "res_fellow",
+          name: "Nikki Broden",
+          aliases: ["Nicole Broden", "N Broden"]
+        },
+        message: "Preferred display name"
+      })
+      .expect(201);
+
+    const profileRequest = requestResponse.body.coverageRequests[0];
+    expect(profileRequest).toEqual(
+      expect.objectContaining({
+        requestType: "resident-profile",
+        status: "pending",
+        requesterUsername: "resident01",
+        requesterResidentId: "res_fellow",
+        targetResidentId: "res_fellow",
+        requestedResidentProfile: expect.objectContaining({
+          residentId: "res_fellow",
+          name: "Nikki Broden",
+          aliases: ["Nicole Broden", "N Broden"]
+        })
+      })
+    );
+
+    const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
+    expect(requesterState.body.coverageRequests.map((item: { id: string }) => item.id)).toContain(profileRequest.id);
+
+    await request(app)
+      .post(`/api/coverage-requests/${profileRequest.id}/approve`)
+      .set("authorization", `Bearer ${requesterToken}`)
+      .expect(403);
+
+    const approvalResponse = await request(app)
+      .post(`/api/coverage-requests/${profileRequest.id}/approve`)
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    const updatedResident = approvalResponse.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
+
+    expect(updatedResident).toEqual(
+      expect.objectContaining({
+        name: "Nikki Broden",
+        aliases: ["Nicole Broden", "N Broden"]
+      })
+    );
+    expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === profileRequest.id)).toEqual(
       expect.objectContaining({ status: "approved" })
     );
   });

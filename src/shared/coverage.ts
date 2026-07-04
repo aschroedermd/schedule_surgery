@@ -6,6 +6,11 @@ export function isCallDate(date: string): boolean {
   return day === 5 || day === 6 || day === 0;
 }
 
+export function callCreatesPostCallDay(date: string): boolean {
+  const day = parseLocalDate(date).getDay();
+  return day === 5 || day === 6;
+}
+
 export function isRoundingDate(date: string): boolean {
   const day = parseLocalDate(date).getDay();
   return day === 6 || day === 0;

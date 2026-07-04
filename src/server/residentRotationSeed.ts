@@ -9,21 +9,24 @@ interface RotationRowSeed {
 
 interface ResidentRotationSeed {
   id: string;
+  name?: string;
+  aliases?: string[];
   trainingLevel: TrainingLevel;
   color: string;
   trainingInterests: string[];
   rows: RotationRowSeed[];
+  seedMigrationBlockNumbers?: number[];
 }
 
 export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   {
     id: "res_fellow",
-    trainingLevel: "PGY1",
+    name: "Nicole Broden",
+    trainingLevel: "Fellow",
     color: "#c89af7",
     trainingInterests: ["bariatrics", "fellow-priority", "foregut"],
     rows: [
-      { startBlock: 1, endBlock: 1, service: "Davies" },
-      { startBlock: 2, endBlock: 2, service: "Ferrara" },
+      { startBlock: 1, endBlock: 2, service: "Davies" },
       { startBlock: 3, endBlock: 3, service: "Anesthesia" },
       { startBlock: 4, endBlock: 4, service: "Ped Surg" },
       { startBlock: 5, endBlock: 5, service: "Berry" },
@@ -35,7 +38,8 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
       { startBlock: 11, endBlock: 11, service: "Ferrara" },
       { startBlock: 12, endBlock: 12, service: "NFloat" },
       { startBlock: 13, endBlock: 13, service: "Keeley Vasc" }
-    ]
+    ],
+    seedMigrationBlockNumbers: [1, 2]
   },
   {
     id: "res_blue",
@@ -100,6 +104,8 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
   },
   {
     id: "res_offservice",
+    name: "Thein Cao",
+    aliases: ["T-Cao", "T Cao"],
     trainingLevel: "PGY2",
     color: "#f37d6e",
     trainingInterests: ["general surgery", "clinic"],
@@ -114,7 +120,8 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
       { startBlock: 9, endBlock: 10, service: "NRV" },
       { startBlock: 11, endBlock: 12, service: "SCC Night" },
       { startBlock: 13, endBlock: 13, service: "Ferrara" }
-    ]
+    ],
+    seedMigrationBlockNumbers: [1]
   },
   {
     id: "res_colwell",
@@ -600,7 +607,8 @@ export function createRotationResidents(): Resident[] {
   return RESIDENT_ROTATION_SEED.map((resident, index) => ({
     id: resident.id,
     username: getPlaceholderUsername(index),
-    name: getPlaceholderName(index),
+    name: resident.name ?? getPlaceholderName(index),
+    aliases: resident.aliases ?? [],
     trainingLevel: resident.trainingLevel,
     serviceTags: [],
     color: resident.color,
@@ -609,6 +617,17 @@ export function createRotationResidents(): Resident[] {
     unavailable: [],
     rotationSchedule: buildRotationSchedule(resident.id, resident.rows)
   }));
+}
+
+export function getRotationResidentMatchNames(residentId: string): string[] {
+  const seedIndex = RESIDENT_ROTATION_SEED.findIndex((resident) => resident.id === residentId);
+  if (seedIndex === -1) return [];
+  const seed = RESIDENT_ROTATION_SEED[seedIndex];
+  return [getPlaceholderName(seedIndex), seed.name, ...(seed.aliases ?? [])].filter((value): value is string => Boolean(value));
+}
+
+export function getSeedMigrationBlockNumbers(residentId: string): number[] {
+  return RESIDENT_ROTATION_SEED.find((resident) => resident.id === residentId)?.seedMigrationBlockNumbers ?? [];
 }
 
 export function buildRotationSchedule(residentId: string, rows: RotationRowSeed[]): Resident["rotationSchedule"] {

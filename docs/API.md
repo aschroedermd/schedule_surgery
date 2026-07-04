@@ -99,11 +99,11 @@ GET /api/events?token=<browser bearer token>
 
 `/api/weeks/:weekId/schedule` returns computed case times, assignments, uncovered cases, and warnings.
 
-`/api/residents/:residentId/calendar.ics` returns a resident-specific ICS feed containing OR, clinic, call, rounding, off, and note entries. Admins can export any resident; non-admin browser users can export only the resident linked by `residents[].username`.
+`/api/residents/:residentId/calendar.ics` returns a resident-specific ICS feed containing OR, clinic, call, rounding, off, and note entries. Admins can export any resident; non-admin browser users can export only the resident linked by `residents[].username`. Residents also support editable `aliases` for alternate display names.
 
 The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`.
 
-## Calendar Requests and Resident Trades
+## Calendar Requests, Trades, and Profile Requests
 
 ```text
 POST /api/coverage-requests
@@ -112,6 +112,22 @@ POST /api/coverage-requests/:id/deny
 ```
 
 Default calendar requests require `request` or `edit` privilege for `serviceLine` and are approved or denied by a service editor. Resident call trades use `requestType: "resident-trade"` and must come from the logged-in resident who owns `entryId`; `targetResidentId` can accept or deny. Include `swapEntryId` to swap two call or rounding entries, or omit it for a one-way handoff.
+
+Resident profile requests use `requestType: "resident-profile"` and let a linked resident request a display-name or alias change. Only admins can approve or deny these requests; approved requests update `residents[].name` and `residents[].aliases`.
+
+```json
+{
+  "requestType": "resident-profile",
+  "action": "update",
+  "targetResidentId": "res_fellow",
+  "requestedResidentProfile": {
+    "residentId": "res_fellow",
+    "name": "Nikki Broden",
+    "aliases": ["Nicole Broden", "N Broden"]
+  },
+  "message": "Preferred display name"
+}
+```
 
 ## Entity Collections
 

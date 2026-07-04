@@ -18,6 +18,7 @@ import {
 import { addDays, getWeekDates, minutesToTime, timeToMinutes } from "./date";
 import { createId } from "./id";
 import { isResidentOnService, servicesMatch } from "./services";
+import { callCreatesPostCallDay } from "./coverage";
 
 interface Interval {
   assignment: Assignment;
@@ -173,7 +174,11 @@ export function collectWarnings(state: PlannerState, weekId: string, serviceLine
 
     const previousDay = addDays(interval.date, -1);
     const postCallEntry = state.coverageEntries.find(
-      (entry) => entry.kind === "call" && entry.residentId === interval.resident.id && entry.date === previousDay
+      (entry) =>
+        entry.kind === "call" &&
+        entry.residentId === interval.resident.id &&
+        entry.date === previousDay &&
+        callCreatesPostCallDay(entry.date)
     );
     if (postCallEntry) {
       warnings.push({

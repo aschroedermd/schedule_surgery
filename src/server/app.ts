@@ -24,6 +24,7 @@ import {
   CoverageRequestAction,
   PlannerState,
   Resident,
+  ResidentProfileChange,
   SessionUser
 } from "../shared/types";
 import {
@@ -542,10 +543,13 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const state = await store.load();
       const serviceLine = readServiceLine(req);
       const isResidentTrade = req.body?.requestType === "resident-trade";
-      if (!isResidentTrade && !requireServiceRequest(req, res, serviceLine)) return;
+      const isResidentProfile = req.body?.requestType === "resident-profile";
+      if (!isResidentTrade && !isResidentProfile && !requireServiceRequest(req, res, serviceLine)) return;
       const coverageRequest = isResidentTrade
         ? buildResidentTradeRequest(state, req.body, req.user, serviceLine)
-        : buildCoverageRequest(state, req.body, req.user, serviceLine);
+        : isResidentProfile
+          ? buildResidentProfileRequest(state, req.body, req.user)
+          : buildCoverageRequest(state, req.body, req.user, serviceLine);
       const nextState: PlannerState = {
         ...state,
         coverageRequests: [coverageRequest, ...state.coverageRequests]
@@ -553,7 +557,11 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const withActivity = addActivity(
         nextState,
         req.user?.role ?? "viewer",
-        isResidentTrade ? "submitted resident call trade" : "submitted call calendar request",
+        isResidentTrade
+          ? "submitted resident call trade"
+          : isResidentProfile
+            ? "submitted resident profile request"
+            : "submitted call calendar request",
         describeCoverageRequest(nextState, coverageRequest),
         "coverageRequest",
         coverageRequest.id
@@ -591,7 +599,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const withActivity = addActivity(
         nextState,
         req.user?.role ?? "admin",
-        isResidentTradeRequest(coverageRequest) ? "accepted resident call trade" : "approved call calendar request",
+        getApprovedCoverageRequestActivity(coverageRequest),
         describeCoverageRequest(nextState, coverageRequest),
         "coverageRequest",
         id
@@ -628,7 +636,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const withActivity = addActivity(
         nextState,
         req.user?.role ?? "admin",
-        isResidentTradeRequest(coverageRequest) ? "denied resident call trade" : "denied call calendar request",
+        getDeniedCoverageRequestActivity(coverageRequest),
         describeCoverageRequest(nextState, coverageRequest),
         "coverageRequest",
         id
@@ -918,7 +926,12 @@ function escapeIcsText(value: string): string {
 function residentMatchesUser(resident: Resident, user: SessionUser | undefined): boolean {
   if (!user) return false;
   const username = normalizeUsername(user.username);
-  return normalizeUsername(resident.username ?? "") === username || normalizeUsername(resident.name) === normalizeUsername(user.displayName);
+  const displayName = normalizeUsername(user.displayName);
+  return (
+    normalizeUsername(resident.username ?? "") === username ||
+    normalizeUsername(resident.name) === displayName ||
+    (resident.aliases ?? []).some((alias) => normalizeUsername(alias) === displayName)
+  );
 }
 
 function findResidentForUser(state: PlannerState, user: SessionUser | undefined): Resident | undefined {
@@ -1176,7 +1189,68 @@ function buildResidentTradeRequest(
   };
 }
 
+function buildResidentProfileRequest(
+  state: PlannerState,
+  input: Partial<CoverageChangeRequest>,
+  requester: SessionUser | undefined
+): CoverageChangeRequest {
+  const now = new Date().toISOString();
+  const action = input.action ? assertCoverageRequestAction(input.action) : "update";
+  if (action !== "update") {
+    throw new Error("Resident profile requests must update an existing resident");
+  }
+  const requesterResident = findResidentForUser(state, requester);
+  if (!requesterResident) {
+    throw new HttpError(403, "Linked resident profile required to request profile changes");
+  }
+  const targetResidentId = readOptionalString(input.targetResidentId) ?? readOptionalString(input.requestedResidentProfile?.residentId);
+  if (!targetResidentId) throw new Error("Resident profile requests require a targetResidentId");
+  const targetResident = state.residents.find((resident) => resident.id === targetResidentId);
+  if (!targetResident) throw new Error(`Resident not found: ${targetResidentId}`);
+  if (requester?.role !== "admin" && targetResident.id !== requesterResident.id) {
+    throw new HttpError(403, "You can only request changes for your linked resident profile");
+  }
+  assertNoPhiText(readOptionalString(input.message) ?? "", "request message");
+  const requestedResidentProfile = buildResidentProfileChange(input.requestedResidentProfile, targetResident);
+
+  return {
+    id: readOptionalString(input.id) ?? createId("resident_profile_req"),
+    requestType: "resident-profile",
+    action,
+    status: "pending",
+    requesterResidentId: requesterResident.id,
+    targetResidentId: targetResident.id,
+    requestedResidentProfile,
+    requesterUsername: requester?.username,
+    requesterName: readOptionalString(input.requesterName) ?? requester?.displayName,
+    message: readOptionalString(input.message) ?? "",
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function buildResidentProfileChange(input: ResidentProfileChange | undefined, resident: Resident): ResidentProfileChange {
+  const name = readOptionalString(input?.name);
+  const aliases = input && "aliases" in input ? normalizeAliasList(input.aliases) : undefined;
+  if (!name && aliases === undefined) {
+    throw new Error("Resident profile requests require a display name or aliases");
+  }
+  if (name) assertNoPhiText(name, "resident display name");
+  for (const alias of aliases ?? []) {
+    assertNoPhiText(alias, "resident alias");
+  }
+  return {
+    residentId: resident.id,
+    name,
+    aliases
+  };
+}
+
 function applyCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): PlannerState {
+  if (isResidentProfileRequest(coverageRequest)) {
+    return applyResidentProfileRequest(state, coverageRequest);
+  }
+
   if (isResidentTradeRequest(coverageRequest)) {
     return applyResidentTradeRequest(state, coverageRequest);
   }
@@ -1207,6 +1281,29 @@ function applyCoverageRequest(state: PlannerState, coverageRequest: CoverageChan
     existing
   );
   return upsertCoverageEntry(state, entry);
+}
+
+function applyResidentProfileRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): PlannerState {
+  const requestedProfile = coverageRequest.requestedResidentProfile;
+  const residentId = coverageRequest.targetResidentId ?? requestedProfile?.residentId;
+  if (!residentId || !requestedProfile) {
+    throw new Error("Resident profile request is missing requested profile");
+  }
+  if (!state.residents.some((resident) => resident.id === residentId)) {
+    throw new Error(`Resident not found: ${residentId}`);
+  }
+  return {
+    ...state,
+    residents: state.residents.map((resident) =>
+      resident.id === residentId
+        ? {
+            ...resident,
+            name: requestedProfile.name ?? resident.name,
+            aliases: requestedProfile.aliases ?? resident.aliases ?? []
+          }
+        : resident
+    )
+  };
 }
 
 function applyResidentTradeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): PlannerState {
@@ -1345,12 +1442,25 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function normalizeAliasList(value: unknown): string[] {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return [...new Set(values.map((alias) => readOptionalString(alias)).filter((alias): alias is string => Boolean(alias)))];
+}
+
 function compareCoverageEntries(a: CoverageEntry, b: CoverageEntry): number {
   const kindOrder = { call: 0, rounding: 1, off: 2, note: 3 };
   return a.date.localeCompare(b.date) || kindOrder[a.kind] - kindOrder[b.kind] || a.id.localeCompare(b.id);
 }
 
 function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  if (isResidentProfileRequest(coverageRequest)) {
+    return describeResidentProfileRequest(state, coverageRequest);
+  }
+
   if (isResidentTradeRequest(coverageRequest)) {
     return describeResidentTradeRequest(state, coverageRequest);
   }
@@ -1367,6 +1477,25 @@ function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageC
   }
 
   return "Coverage calendar request";
+}
+
+function getApprovedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
+  if (isResidentProfileRequest(coverageRequest)) return "approved resident profile request";
+  if (isResidentTradeRequest(coverageRequest)) return "accepted resident call trade";
+  return "approved call calendar request";
+}
+
+function getDeniedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
+  if (isResidentProfileRequest(coverageRequest)) return "denied resident profile request";
+  if (isResidentTradeRequest(coverageRequest)) return "denied resident call trade";
+  return "denied call calendar request";
+}
+
+function describeResidentProfileRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  const resident = coverageRequest.targetResidentId
+    ? state.residents.find((candidate) => candidate.id === coverageRequest.targetResidentId)
+    : undefined;
+  return `Update profile for ${resident?.name ?? coverageRequest.requesterName ?? "resident"}`;
 }
 
 function describeResidentTradeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
@@ -1417,6 +1546,9 @@ function canResolveCoverageRequest(
   user: SessionUser | undefined,
   coverageRequest: CoverageChangeRequest
 ): boolean {
+  if (isResidentProfileRequest(coverageRequest)) {
+    return user?.role === "admin";
+  }
   if (isResidentTradeRequest(coverageRequest) && coverageRequestTargetsUserResident(state, user, coverageRequest)) {
     return true;
   }
@@ -1424,9 +1556,14 @@ function canResolveCoverageRequest(
 }
 
 function getCoverageRequestResolveError(coverageRequest: CoverageChangeRequest): string {
+  if (isResidentProfileRequest(coverageRequest)) return "Admin approval required for resident profile requests";
   return isResidentTradeRequest(coverageRequest)
     ? "Only the requested resident or a service editor can resolve this trade request"
     : "Edit privilege required for this service";
+}
+
+function isResidentProfileRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "resident-profile";
 }
 
 function isResidentTradeRequest(coverageRequest: CoverageChangeRequest): boolean {
@@ -1452,6 +1589,7 @@ function coverageRequestInvolvesUserResident(
     resident &&
       (coverageRequest.requesterResidentId === resident.id ||
         coverageRequest.targetResidentId === resident.id ||
+        coverageRequest.requestedResidentProfile?.residentId === resident.id ||
         coverageRequest.requestedEntry?.residentId === resident.id ||
         coverageRequest.swapRequestedEntry?.residentId === resident.id)
   );
@@ -1461,6 +1599,7 @@ function coverageRequestReferencesResident(coverageRequest: CoverageChangeReques
   return (
     coverageRequest.requesterResidentId === residentId ||
     coverageRequest.targetResidentId === residentId ||
+    coverageRequest.requestedResidentProfile?.residentId === residentId ||
     coverageRequest.requestedEntry?.residentId === residentId ||
     coverageRequest.swapRequestedEntry?.residentId === residentId
   );

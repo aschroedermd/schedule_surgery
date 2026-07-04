@@ -8,8 +8,9 @@ import {
   formatClinicLabel,
   makeAssignment
 } from "./scheduler";
+import { addDays } from "./date";
 import { createInitialState } from "../server/sampleData";
-import { AttendingBlock, SurgeryCase } from "./types";
+import { AttendingBlock, CoverageEntry, SurgeryCase } from "./types";
 
 describe("scheduler core", () => {
   it("computes downstream case times from the attending block start and prior durations", () => {
@@ -91,6 +92,81 @@ describe("scheduler core", () => {
     const warnings = collectWarnings(state, "week_current").map((warning) => warning.message);
 
     expect(warnings.some((warning) => warning.includes("overlapping assignments"))).toBe(false);
+  });
+
+  it("only treats overnight weekend call as post-call for next-day OR assignments", () => {
+    const state = createInitialState();
+    const monday = state.weeks.find((week) => week.id === "week_current")!.startDate;
+    const sunday = addDays(monday, -1);
+    const friday = addDays(monday, 4);
+    const saturday = addDays(monday, 5);
+    const nextSunday = addDays(monday, 6);
+    const residentName = state.residents.find((resident) => resident.id === "res_chief")!.name;
+
+    const callEntry = (date: string): CoverageEntry => ({
+      id: `cover_${date}`,
+      date,
+      kind: "call",
+      residentId: "res_chief",
+      note: "",
+      createdAt: "2026-06-27T14:36:21.000Z",
+      updatedAt: "2026-06-27T14:36:21.000Z"
+    });
+    const weekendBlock = (id: string, date: string): AttendingBlock => ({
+      id,
+      weekId: "week_current",
+      date,
+      attendingId: "att_chen",
+      hospitalId: "hosp_main",
+      firstCaseStartTime: "07:30",
+      notes: ""
+    });
+    const weekendCase = (id: string, blockId: string): SurgeryCase => ({
+      id,
+      blockId,
+      procedureLabel: "Weekend case",
+      durationMinutes: 90,
+      priority: 1,
+      tags: ["general surgery"],
+      notes: "",
+      order: 0
+    });
+
+    const sundayDayCallState = {
+      ...state,
+      coverageEntries: [callEntry(sunday)],
+      assignments: [makeAssignment("case", "case_chen_whipple", "res_chief", "admin", false)]
+    };
+
+    expect(collectWarnings(sundayDayCallState, "week_current").map((warning) => warning.message)).not.toContain(
+      `${residentName} is post-call after ${sunday}`
+    );
+
+    const fridayOvernightState = {
+      ...state,
+      settings: { ...state.settings, weekdayOnly: false },
+      attendingBlocks: [...state.attendingBlocks, weekendBlock("block_weekend_sat", saturday)],
+      cases: [...state.cases, weekendCase("case_weekend_sat", "block_weekend_sat")],
+      coverageEntries: [callEntry(friday)],
+      assignments: [makeAssignment("case", "case_weekend_sat", "res_chief", "admin", false)]
+    };
+
+    expect(collectWarnings(fridayOvernightState, "week_current").map((warning) => warning.message)).toContain(
+      `${residentName} is post-call after ${friday}`
+    );
+
+    const saturdayOvernightState = {
+      ...state,
+      settings: { ...state.settings, weekdayOnly: false },
+      attendingBlocks: [...state.attendingBlocks, weekendBlock("block_weekend_sun", nextSunday)],
+      cases: [...state.cases, weekendCase("case_weekend_sun", "block_weekend_sun")],
+      coverageEntries: [callEntry(saturday)],
+      assignments: [makeAssignment("case", "case_weekend_sun", "res_chief", "admin", false)]
+    };
+
+    expect(collectWarnings(saturdayOvernightState, "week_current").map((warning) => warning.message)).toContain(
+      `${residentName} is post-call after ${saturday}`
+    );
   });
 
   it("supports multiple residents assigned directly to the same case", () => {

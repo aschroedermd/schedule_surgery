@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Save,
   Scissors,
+  Send,
   Trash2,
   Unlock,
   UserPlus,
@@ -34,6 +35,7 @@ import {
   runSuggestion,
   Session,
   setExpectedStateVersion,
+  submitCoverageRequest,
   subscribeToStateEvents,
   UnauthorizedError,
   updateAssignment,
@@ -95,6 +97,7 @@ const emptyResident: Resident = {
   id: "",
   username: "",
   name: "",
+  aliases: [],
   emoji: "",
   trainingLevel: "PGY3",
   serviceTags: [DEFAULT_SERVICE_LINE],
@@ -454,7 +457,9 @@ export function App() {
           state={state}
           schedule={schedule}
           session={session}
+          token={session.token}
           selectedService={selectedService}
+          onMutate={runMutation}
         />
       )}
       {activeTab === "calendar" && (
@@ -788,12 +793,16 @@ function MyScheduleTab({
   state,
   schedule,
   session,
-  selectedService
+  token,
+  selectedService,
+  onMutate
 }: {
   state: PlannerState;
   schedule: WeekSchedule;
   session: PlannerSession;
+  token: string;
   selectedService: string;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const resident = findResidentForSession(state, session);
   if (!resident) {
@@ -880,6 +889,14 @@ function MyScheduleTab({
           )}
         </section>
 
+        <ResidentProfileRequestPanel
+          state={state}
+          resident={resident}
+          session={session}
+          token={token}
+          onMutate={onMutate}
+        />
+
         <section className="editor-panel">
           <h2>Calendar</h2>
           {coverageEntries.length === 0 ? (
@@ -899,6 +916,87 @@ function MyScheduleTab({
         </section>
       </div>
     </section>
+  );
+}
+
+function ResidentProfileRequestPanel({
+  state,
+  resident,
+  session,
+  token,
+  onMutate
+}: {
+  state: PlannerState;
+  resident: Resident;
+  session: PlannerSession;
+  token: string;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(() => ({
+    name: resident.name,
+    aliases: (resident.aliases ?? []).join(", "),
+    message: ""
+  }));
+  const pendingProfileRequest = state.coverageRequests.find(
+    (request) =>
+      request.requestType === "resident-profile" &&
+      request.status === "pending" &&
+      request.requesterUsername === session.username &&
+      (request.targetResidentId === resident.id || request.requestedResidentProfile?.residentId === resident.id)
+  );
+  const nextName = draft.name.trim();
+  const nextAliases = splitTags(draft.aliases);
+  const currentAliases = resident.aliases ?? [];
+  const hasChanges = nextName !== resident.name || nextAliases.join("|") !== currentAliases.join("|");
+
+  useEffect(() => {
+    setDraft({
+      name: resident.name,
+      aliases: (resident.aliases ?? []).join(", "),
+      message: ""
+    });
+  }, [resident.id, resident.name, resident.aliases?.join("|")]);
+
+  function submitProfileRequest(event: FormEvent) {
+    event.preventDefault();
+    void onMutate(
+      () =>
+        submitCoverageRequest(token, {
+          requestType: "resident-profile",
+          action: "update",
+          targetResidentId: resident.id,
+          requestedResidentProfile: {
+            residentId: resident.id,
+            name: nextName,
+            aliases: nextAliases
+          },
+          message: draft.message.trim()
+        }),
+      "Profile request submitted"
+    );
+  }
+
+  return (
+    <form className="editor-panel" onSubmit={submitProfileRequest}>
+      <h2>Profile</h2>
+      <label>
+        Display name
+        <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+      </label>
+      <label>
+        Aliases
+        <input value={draft.aliases} onChange={(event) => setDraft({ ...draft, aliases: event.target.value })} />
+      </label>
+      <label>
+        Note
+        <input value={draft.message} onChange={(event) => setDraft({ ...draft, message: event.target.value })} />
+      </label>
+      {pendingProfileRequest && <span className="pending-flag">pending</span>}
+      <button className="secondary-button" type="submit" disabled={!hasChanges || !nextName || Boolean(pendingProfileRequest)}>
+        <Send size={16} />
+        Request update
+      </button>
+    </form>
   );
 }
 
@@ -1046,6 +1144,8 @@ function CaseRow({
             claimable={false}
             selectedService={selectedService}
             excludedResidentIds={assignedResidentIds}
+            emptyLabel="Select resident"
+            quietEmpty
             onMutate={onAdditionalResidentMutate}
           />
         )}
@@ -1075,6 +1175,14 @@ function ClinicView({
   selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
+  const [isAddingResident, setIsAddingResident] = useState(false);
+  const assignedResidentIds = clinic.assignments.map((assignment) => assignment.residentId);
+  const canAddResident = canEdit && !isAddingResident && clinic.assignments.length < Math.max(1, clinic.capacity);
+  const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
+    await onMutate(action, message);
+    setIsAddingResident(false);
+  };
+
   return (
     <section className="clinic-section">
       <div>
@@ -1082,20 +1190,41 @@ function ClinicView({
         <span>{clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
       </div>
       <div className="clinic-assignments">
-        {Array.from({ length: Math.max(clinic.capacity, clinic.assignments.length || 1) }).map((_, index) => (
+        {clinic.assignments.map((assignment) => (
           <AssignmentControl
-            key={`${clinic.id}-${index}`}
+            key={assignment.id}
             state={state}
             token={token}
             kind="clinic"
             targetId={clinic.id}
-            assignment={clinic.assignments[index]}
+            assignment={assignment}
             disabled={!canEdit}
             claimable={false}
             selectedService={selectedService}
+            excludedResidentIds={assignedResidentIds}
             onMutate={onMutate}
           />
         ))}
+        {isAddingResident && (
+          <AssignmentControl
+            state={state}
+            token={token}
+            kind="clinic"
+            targetId={clinic.id}
+            disabled={!canEdit}
+            claimable={false}
+            selectedService={selectedService}
+            excludedResidentIds={assignedResidentIds}
+            emptyLabel="Select resident"
+            quietEmpty
+            onMutate={onAdditionalResidentMutate}
+          />
+        )}
+        {canAddResident && (
+          <button type="button" className="secondary-button add-resident-button" onClick={() => setIsAddingResident(true)}>
+            +resident
+          </button>
+        )}
       </div>
       <Warnings warnings={clinic.warningMessages} />
     </section>
@@ -1117,6 +1246,7 @@ function AssignmentControl({
   selectedService,
   excludedResidentIds = [],
   showLock = true,
+  quietEmpty = false,
   onMutate
 }: {
   state: PlannerState;
@@ -1133,6 +1263,7 @@ function AssignmentControl({
   selectedService: string;
   excludedResidentIds?: string[];
   showLock?: boolean;
+  quietEmpty?: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const displayedAssignment = assignment ?? inheritedAssignment;
@@ -1177,7 +1308,7 @@ function AssignmentControl({
   return (
     <div className="assign-control">
       <select
-        className={isCovered ? "assignment-select assigned" : "assignment-select unassigned"}
+        className={isCovered ? "assignment-select assigned" : quietEmpty ? "assignment-select" : "assignment-select unassigned"}
         disabled={disabled}
         value={assignment?.residentId ?? ""}
         onChange={(event) => {
@@ -1634,7 +1765,8 @@ function RosterTab({
         <h2>Resident Roster</h2>
         <fieldset disabled={disabled}>
           <label>Username<input value={editing.username ?? ""} onChange={(event) => setEditing({ ...editing, username: normalizeUsernameInput(event.target.value) })} /></label>
-          <label>Name<input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label>
+          <label>Display name<input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label>
+          <label>Aliases<input value={(editing.aliases ?? []).join(", ")} onChange={(event) => setEditing({ ...editing, aliases: splitTags(event.target.value) })} /></label>
           <label>Emoji<input value={editing.emoji ?? ""} onChange={(event) => setEditing({ ...editing, emoji: firstInputCharacter(event.target.value) })} /></label>
           <label>Level<select value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
             {["PGY1", "PGY2", "PGY3", "PGY4", "PGY5", "Fellow"].map((level) => <option key={level}>{level}</option>)}
@@ -1688,7 +1820,7 @@ function RosterTab({
             <CompactEntity
               key={resident.id}
               title={`${formatResidentName(resident)} · ${resident.trainingLevel}`}
-              subtitle={`${resident.username ?? "no login"} · ${formatServiceTags(getResidentServiceTagsForDate(resident, week.startDate))} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
+              subtitle={`${resident.username ?? "no login"} · ${formatServiceTags(getResidentServiceTagsForDate(resident, week.startDate))} · ${formatResidentAliases(resident)} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
               disabled={disabled}
               onEdit={() => setEditing(resident)}
               onDelete={() => onMutate(() => deleteEntity(token, "residents", resident.id), "Resident deleted")}
@@ -2199,11 +2331,20 @@ function formatResidentName(resident: Pick<Resident, "name" | "emoji">): string 
   return resident.emoji ? `${resident.emoji} ${resident.name}` : resident.name;
 }
 
+function formatResidentAliases(resident: Pick<Resident, "aliases">): string {
+  return resident.aliases?.length ? `aliases: ${resident.aliases.join(", ")}` : "no aliases";
+}
+
 function findResidentForSession(state: PlannerState, session: PlannerSession): Resident | undefined {
   const username = normalizeUsernameInput(session.username);
+  const displayName = normalizePersonName(session.displayName);
   return (
     state.residents.find((resident) => normalizeUsernameInput(resident.username ?? "") === username) ??
-    state.residents.find((resident) => normalizePersonName(resident.name) === normalizePersonName(session.displayName))
+    state.residents.find(
+      (resident) =>
+        normalizePersonName(resident.name) === displayName ||
+        (resident.aliases ?? []).some((alias) => normalizePersonName(alias) === displayName)
+    )
   );
 }
 
@@ -2476,8 +2617,9 @@ function resolveSessionServiceLine(state: PlannerState, session: PlannerSession,
 }
 
 function getSessionResidentServiceLine(state: PlannerState, session: PlannerSession): string | undefined {
-  const username = normalizeUsername(session.username);
-  const resident = state.residents.find((candidate) => normalizeUsername(candidate.username ?? buildResidentUsername(candidate.name)) === username);
+  const resident =
+    findResidentForSession(state, session) ??
+    state.residents.find((candidate) => normalizeUsername(candidate.username ?? buildResidentUsername(candidate.name)) === normalizeUsername(session.username));
   if (!resident) return undefined;
   return getResidentServiceTagsForDate(resident, getTodayDate()).find(isKnownServiceLine);
 }
