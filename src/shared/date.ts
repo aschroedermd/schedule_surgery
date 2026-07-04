@@ -54,6 +54,12 @@ export function getCurrentMonday(): string {
   return getMondayForDate(formatDate(today));
 }
 
+export function getDefaultPlannerMonday(today = new Date()): string {
+  const currentMonday = getMondayForDate(formatDate(today));
+  const day = today.getDay();
+  return day === 0 || day === 6 ? addDays(currentMonday, 7) : currentMonday;
+}
+
 export function getMondayForDate(date: string): string {
   const today = parseLocalDate(date);
   const day = today.getDay();

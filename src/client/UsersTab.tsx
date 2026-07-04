@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Copy, Eye, KeyRound, Pencil, Plus, Save, Send, Trash2, Users } from "lucide-react";
 import {
   changeMyPassword,
@@ -463,15 +464,18 @@ export function AccountTab({
   token,
   username,
   onToast,
-  onPasswordChanged
+  onPasswordChanged,
+  children
 }: {
   token: string;
   username: string;
   onToast: (message: string) => void;
   onPasswordChanged?: (user: PasswordChangeResponse) => void;
+  children?: ReactNode;
 }) {
   return (
     <section className="account-panel">
+      {children}
       <PasswordChangeForm
         token={token}
         username={username}

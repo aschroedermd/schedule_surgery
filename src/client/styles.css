@@ -2142,9 +2142,20 @@ h2 {
   }
 }
 
+.print-board {
+  display: none;
+}
+
+@page {
+  size: letter landscape;
+  margin: 0.25in;
+}
+
 @media print {
   body {
     background: #fff;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   .top-strip,
@@ -2174,5 +2185,207 @@ h2 {
   .editor-panel {
     break-inside: avoid;
     box-shadow: none;
+  }
+
+  .app-shell.is-printing-board {
+    width: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  .app-shell.is-printing-board > :not(.print-board) {
+    display: none !important;
+  }
+
+  .app-shell.is-printing-board .print-board {
+    display: block !important;
+  }
+
+  .print-board {
+    color: #111820;
+    font-size: 7pt;
+    line-height: 1.12;
+  }
+
+  .print-board-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: end;
+    gap: 12px;
+    border-bottom: 1px solid #1d2733;
+    margin-bottom: 5px;
+    padding-bottom: 4px;
+  }
+
+  .print-board-header p {
+    color: #445263;
+    font-size: 7pt;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .print-board-header h1 {
+    color: #111820;
+    font-size: 13pt;
+    line-height: 1.05;
+  }
+
+  .print-board-meta {
+    display: grid;
+    justify-items: end;
+    gap: 1px;
+    color: #3d4855;
+    font-size: 7pt;
+    line-height: 1.1;
+    text-align: right;
+  }
+
+  .print-board-meta strong {
+    color: #111820;
+    font-size: 9pt;
+  }
+
+  .print-board-days {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    align-items: start;
+  }
+
+  .print-day {
+    min-width: 0;
+    display: grid;
+    align-content: start;
+    gap: 3px;
+    border: 1px solid #8f98a3;
+    padding: 3px;
+    break-inside: avoid;
+  }
+
+  .print-day-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px;
+    border-bottom: 1px solid #d4d9df;
+    padding-bottom: 2px;
+  }
+
+  .print-day-header h2 {
+    color: #111820;
+    font-size: 8.5pt;
+    line-height: 1;
+  }
+
+  .print-day-header span {
+    color: #4f5b68;
+    font-size: 6.5pt;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .print-day-body,
+  .print-case-list {
+    display: grid;
+    gap: 2px;
+  }
+
+  .print-block,
+  .print-clinic {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+    border: 1px solid #c6ccd3;
+    background: #fff;
+    padding: 3px;
+    break-inside: avoid;
+  }
+
+  .print-clinic {
+    background: #fbfcf7;
+  }
+
+  .print-block-heading,
+  .print-clinic-heading,
+  .print-clinic-meta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 3px;
+  }
+
+  .print-block-heading strong,
+  .print-clinic-heading strong,
+  .print-case-row strong,
+  .print-clinic-meta span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .print-block-heading strong,
+  .print-clinic-heading strong {
+    color: #111820;
+    font-size: 7.2pt;
+    line-height: 1.05;
+  }
+
+  .print-block-heading span,
+  .print-clinic-heading span,
+  .print-clinic-meta {
+    color: #4f5b68;
+    font-size: 6.5pt;
+  }
+
+  .print-block-heading span,
+  .print-clinic-heading span {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .print-clinic-meta strong {
+    color: #111820;
+    font-size: 6.6pt;
+    text-align: right;
+  }
+
+  .print-case-row {
+    display: grid;
+    grid-template-columns: 27px minmax(0, 1fr) minmax(34px, max-content);
+    align-items: baseline;
+    gap: 3px;
+    border-top: 1px solid #e8ebef;
+    padding-top: 1px;
+    font-size: 6.5pt;
+    line-height: 1.08;
+  }
+
+  .print-case-row:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .print-case-row span:first-child {
+    color: #56616f;
+    white-space: nowrap;
+  }
+
+  .print-case-row span:last-child {
+    color: #111820;
+    font-weight: 800;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .print-case-row .print-open {
+    color: #8b1e26;
+    text-transform: uppercase;
+  }
+
+  .print-empty {
+    color: #747f8c;
+    font-size: 6.5pt;
+    font-weight: 800;
   }
 }

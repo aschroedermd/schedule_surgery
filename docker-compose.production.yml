@@ -26,7 +26,8 @@ services:
       DATABASE_URL: postgres://planner:${POSTGRES_PASSWORD}@db:5432/surgery_schedule
       APP_SECRET: ${APP_SECRET}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      USER_STORE_PATH: /data/users.json
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD:-}
+      USER_STORE_PATH: ${USER_STORE_PATH:-/data/users.json}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
       VIEWER_API_KEY: ${VIEWER_API_KEY:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
@@ -45,7 +46,7 @@ services:
     restart: unless-stopped
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
     environment:
       APP_DOMAIN: ${APP_DOMAIN}
     ports:

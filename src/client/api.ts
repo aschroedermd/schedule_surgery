@@ -313,7 +313,7 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
   });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => undefined)) as { error?: string; currentVersion?: number } | undefined;
+    const payload = await readOptionalJson<{ error?: string; currentVersion?: number }>(response);
     if (response.status === 401) {
       throw new UnauthorizedError(payload?.error);
     }
@@ -323,5 +323,27 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
     throw new Error(payload?.error ?? `Request failed: ${response.status}`);
   }
 
-  return (await response.json()) as T;
+  return readJson<T>(response, url);
+}
+
+async function readOptionalJson<T>(response: Response): Promise<T | undefined> {
+  const text = await response.text().catch(() => "");
+  if (!text.trim()) return undefined;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readJson<T>(response: Response, url: string): Promise<T> {
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(`Empty response from ${url}`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Invalid JSON response from ${url}`);
+  }
 }

@@ -44,7 +44,7 @@ import {
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import { formatMonthLabel, getMonthFromDate, isCallDate } from "../shared/coverage";
-import { addDays, displayDate, getCurrentMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
+import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
 import {
   Assignment,
@@ -54,6 +54,7 @@ import {
   CallPosition,
   ClinicSession,
   CollectionName,
+  CoverageEntry,
   Hospital,
   PlannerState,
   ProcedureDefault,
@@ -96,6 +97,12 @@ type Tab = "board" | "my" | "calendar" | "call" | "schedule" | "requests" | "ent
 type PlannerSession = Session;
 type LayoutMode = "desktop" | "mobile";
 type InputMode = "pointer" | "touch";
+type BoardPrintSnapshot = {
+  state: PlannerState;
+  schedule: WeekSchedule;
+  serviceLine: string;
+  weekRange: string;
+};
 
 const MOBILE_LAYOUT_QUERY = "(max-width: 760px), (hover: none) and (pointer: coarse) and (orientation: portrait) and (max-width: 900px)";
 const TOUCH_INPUT_QUERY = "(hover: none) and (pointer: coarse)";
@@ -119,11 +126,12 @@ export function App() {
   const [showLoggedOut, setShowLoggedOut] = useState(false);
   const [state, setState] = useState<PlannerState | undefined>();
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
-  const [selectedWeekId, setSelectedWeekId] = useState(() => localStorage.getItem("plannerSelectedWeekId") ?? "");
+  const [selectedWeekId, setSelectedWeekId] = useState("");
   const [selectedService, setSelectedService] = useState(() => getStoredServiceLine() ?? DEFAULT_SERVICE_LINE);
   const [activeTab, setActiveTab] = useState<Tab>("board");
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
+  const [printSnapshot, setPrintSnapshot] = useState<BoardPrintSnapshot | undefined>();
   const stateVersionRef = useRef<number | undefined>();
 
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
@@ -141,6 +149,7 @@ export function App() {
     setSession(undefined);
     setState(undefined);
     setSchedule(undefined);
+    setSelectedWeekId("");
     setError(undefined);
     setToast(undefined);
     setShowLoggedOut(true);
@@ -161,6 +170,7 @@ export function App() {
     storeSession(nextSession);
     const storedServiceLine = getStoredServiceLine(nextSession.username);
     if (storedServiceLine) setSelectedService(storedServiceLine);
+    setSelectedWeekId("");
     setSession(nextSession);
   }
 
@@ -195,11 +205,9 @@ export function App() {
     setState(loadedState);
     if (weekId) {
       setSelectedWeekId(weekId);
-      localStorage.setItem("plannerSelectedWeekId", weekId);
       setSchedule(await fetchSchedule(tokenOverride, weekId, serviceLine));
     } else {
       setSelectedWeekId("");
-      localStorage.removeItem("plannerSelectedWeekId");
       setSchedule(undefined);
     }
   }
@@ -244,7 +252,6 @@ export function App() {
     try {
       setError(undefined);
       setSelectedWeekId(weekId);
-      localStorage.setItem("plannerSelectedWeekId", weekId);
       setSchedule(await fetchSchedule(session.token, weekId, selectedService));
     } catch (loadError) {
       if (handleExpiredSession(loadError)) return;
@@ -285,6 +292,16 @@ export function App() {
       if (handleExpiredSession(loadError)) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load service");
     }
+  }
+
+  function handlePrintBoard() {
+    if (!state || !schedule) return;
+    setPrintSnapshot({
+      state,
+      schedule,
+      serviceLine: selectedService,
+      weekRange: formatWeekRange(schedule.week, state.settings.weekdayOnly)
+    });
   }
 
   useEffect(() => {
@@ -336,6 +353,18 @@ export function App() {
   }, [session?.token, session?.mustChangePassword, selectedWeekId, selectedService]);
 
   useEffect(() => {
+    if (!printSnapshot) return;
+    const frame = window.requestAnimationFrame(() => window.print());
+    const clearPrintSnapshot = () => setPrintSnapshot(undefined);
+    window.addEventListener("afterprint", clearPrintSnapshot, { once: true });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("afterprint", clearPrintSnapshot);
+    };
+  }, [printSnapshot]);
+
+  useEffect(() => {
     if (!session) return;
     if ((activeTab === "users" || activeTab === "entry" || activeTab === "roster" || activeTab === "defaults") && !isAdmin) {
       setActiveTab("board");
@@ -368,7 +397,7 @@ export function App() {
   }
 
   return (
-    <Shell role={session.role} onLogout={handleLogout} error={error} toast={toast}>
+    <Shell role={session.role} onLogout={handleLogout} error={error} toast={toast} printMode={Boolean(printSnapshot)}>
       <header className="planner-header">
         <div>
           <ServiceLinePicker
@@ -423,7 +452,7 @@ export function App() {
               <ClipboardCopy size={18} />
               Copy Week
             </button>
-            <button title="Print board" className="secondary-button" onClick={() => window.print()}>
+            <button title="Print board" className="secondary-button" onClick={handlePrintBoard}>
               <Printer size={18} />
               Print
             </button>
@@ -433,14 +462,14 @@ export function App() {
 
       <nav className="tabs" aria-label="Planner sections">
         {([
-          ["board", "OR / Clinic"],
-          ["my", "My Schedule"],
-          ["calendar", "Calendar"],
+          ["board", "OR / Clinic 🔪"],
+          ["my", "My Schedule ☁️"],
+          ["calendar", "Calendar 🗓️"],
           ["call", "CALL 📟"],
-          ["schedule", "Resident Schedule"],
-          ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"]] as const : []),
-          ["activity", "Activity"],
-          ["account", "Account"]
+          ["schedule", "Blocks ⏹️"],
+          ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests 📤 (${pendingCoverageRequestCount})` : "Requests 📤"]] as const : []),
+          ["activity", "Activity 🛒"],
+          ["account", "Account 🛠️"]
         ] as const).map(([tab, label]) => (
           <button key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
             {label}
@@ -464,9 +493,7 @@ export function App() {
           state={state}
           schedule={schedule}
           session={session}
-          token={session.token}
           selectedService={selectedService}
-          onMutate={runMutation}
         />
       )}
       {activeTab === "calendar" && (
@@ -514,8 +541,19 @@ export function App() {
           username={session.username}
           onToast={(message) => setToast(message)}
           onPasswordChanged={handlePasswordChanged}
-        />
+        >
+          {linkedResident && (
+            <ResidentProfileRequestPanel
+              state={state}
+              resident={linkedResident}
+              session={session}
+              token={session.token}
+              onMutate={runMutation}
+            />
+          )}
+        </AccountTab>
       )}
+      {printSnapshot && <BoardPrintout snapshot={printSnapshot} />}
     </Shell>
   );
 }
@@ -579,19 +617,21 @@ function Shell({
   children,
   onLogout,
   error,
-  toast
+  toast,
+  printMode = false
 }: {
   role: Role;
   children: React.ReactNode;
   onLogout: () => void;
   error?: string;
   toast?: string;
+  printMode?: boolean;
 }) {
   const responsiveMode = useResponsiveMode();
 
   return (
     <main
-      className="app-shell"
+      className={`app-shell${printMode ? " is-printing-board" : ""}`}
       data-layout-mode={responsiveMode.layoutMode}
       data-input-mode={responsiveMode.inputMode}
     >
@@ -797,20 +837,104 @@ function BoardTab({
   );
 }
 
+function BoardPrintout({ snapshot }: { snapshot: BoardPrintSnapshot }) {
+  const totalUncovered = snapshot.schedule.days.reduce((count, day) => count + day.uncoveredCases.length, 0);
+  const blockCount = snapshot.schedule.days.reduce((count, day) => count + day.blocks.length, 0);
+  const clinicCount = snapshot.schedule.days.reduce((count, day) => count + day.clinics.length, 0);
+
+  return (
+    <section className="print-board" aria-label="Printable OR and clinic schedule">
+      <header className="print-board-header">
+        <div>
+          <p>OR / Clinic</p>
+          <h1>{snapshot.schedule.week.label}</h1>
+        </div>
+        <div className="print-board-meta">
+          <strong>{snapshot.serviceLine}</strong>
+          <span>{snapshot.weekRange}</span>
+          <span>{blockCount} OR blocks · {clinicCount} clinics · {totalUncovered} open cases</span>
+        </div>
+      </header>
+
+      <div className="print-board-days">
+        {snapshot.schedule.days.map((day) => (
+          <article key={day.date} className="print-day">
+            <header className="print-day-header">
+              <h2>{formatPrintDayLabel(day.date)}</h2>
+              <span>{day.uncoveredCases.length ? `${day.uncoveredCases.length} open` : "covered"}</span>
+            </header>
+            <div className="print-day-body">
+              {day.blocks.map((block) => (
+                <PrintBlock key={block.id} state={snapshot.state} block={block} />
+              ))}
+              {day.clinics.map((clinic) => (
+                <PrintClinic key={clinic.id} state={snapshot.state} clinic={clinic} />
+              ))}
+              {day.blocks.length === 0 && day.clinics.length === 0 && <p className="print-empty">No OR / clinic</p>}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PrintBlock({ state, block }: { state: PlannerState; block: ScheduledBlock }) {
+  const blockAssignmentLabel = formatPrintAssignmentList(state, block.assignment ? [block.assignment] : []);
+
+  return (
+    <section className="print-block">
+      <div className="print-block-heading">
+        <strong>{block.attending.name}</strong>
+        <span>
+          {block.hospital.shortName} · {block.firstCaseStartTime}
+          {blockAssignmentLabel ? ` · block ${blockAssignmentLabel}` : ""}
+        </span>
+      </div>
+      <div className="print-case-list">
+        {block.cases.map((surgeryCase) => {
+          const assignmentLabel = formatPrintAssignmentList(state, surgeryCase.assignments);
+          return (
+            <div key={surgeryCase.id} className="print-case-row">
+              <span>{surgeryCase.startTime}</span>
+              <strong>{surgeryCase.procedureLabel}</strong>
+              <span className={assignmentLabel ? "" : "print-open"}>{assignmentLabel || "open"}</span>
+            </div>
+          );
+        })}
+        {block.cases.length === 0 && <p className="print-empty">No cases</p>}
+      </div>
+    </section>
+  );
+}
+
+function PrintClinic({ state, clinic }: { state: PlannerState; clinic: ScheduledClinicSession }) {
+  const assignmentLabel = formatPrintAssignmentList(state, clinic.assignments);
+
+  return (
+    <section className="print-clinic">
+      <div className="print-clinic-heading">
+        <strong>{formatClinicLabel(clinic)}</strong>
+        <span>{clinic.startTime}-{clinic.endTime}</span>
+      </div>
+      <div className="print-clinic-meta">
+        <span>{clinic.location}</span>
+        {assignmentLabel && <strong>{assignmentLabel}</strong>}
+      </div>
+    </section>
+  );
+}
+
 function MyScheduleTab({
   state,
   schedule,
   session,
-  token,
-  selectedService,
-  onMutate
+  selectedService
 }: {
   state: PlannerState;
   schedule: WeekSchedule;
   session: PlannerSession;
-  token: string;
   selectedService: string;
-  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const resident = findResidentForSession(state, session);
   if (!resident) {
@@ -838,8 +962,9 @@ function MyScheduleTab({
       }))
   );
   const coverageEntries = state.coverageEntries
-    .filter((entry) => entry.residentId === resident.id && weekDates.has(entry.date))
+    .filter((entry) => entry.residentId === resident.id && entry.kind !== "call" && weekDates.has(entry.date))
     .sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
+  const callEntries = getPersonalCallEntries(state, resident.id);
 
   return (
     <section className="my-schedule-page">
@@ -897,18 +1022,28 @@ function MyScheduleTab({
           )}
         </section>
 
-        <ResidentProfileRequestPanel
-          state={state}
-          resident={resident}
-          session={session}
-          token={token}
-          onMutate={onMutate}
-        />
+        <section className="editor-panel">
+          <h2>Call Shifts</h2>
+          {callEntries.length === 0 ? (
+            <p className="muted-copy">No call shifts listed.</p>
+          ) : (
+            <div className="entity-list">
+              {callEntries.map((entry) => (
+                <div key={entry.id} className="compact-entity">
+                  <div>
+                    <strong>{displayDate(entry.date)}</strong>
+                    <span>{formatPersonalCallEntryLabel(state, entry)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="editor-panel">
           <h2>Calendar</h2>
           {coverageEntries.length === 0 ? (
-            <p className="muted-copy">No call, rounding, off, or note entries this week.</p>
+            <p className="muted-copy">No rounding, off, or note entries this week.</p>
           ) : (
             <div className="entity-list">
               {coverageEntries.map((entry) => (
@@ -2444,6 +2579,21 @@ function residentLabel(state: PlannerState, residentId: string): string {
   return resident ? formatResidentName(resident) : "Assigned";
 }
 
+function formatPrintAssignmentList(state: PlannerState, assignments: Assignment[]): string {
+  const residentIds = [...new Set(assignments.map((assignment) => assignment.residentId))];
+  return residentIds.map((residentId) => formatPrintResidentName(state, residentId)).join(", ");
+}
+
+function formatPrintResidentName(state: PlannerState, residentId: string): string {
+  const resident = state.residents.find((candidate) => candidate.id === residentId);
+  if (!resident) return "Assigned";
+  const lastName = getResidentLastName(resident.name);
+  const duplicateLastName = state.residents.some((candidate) => candidate.id !== resident.id && getResidentLastName(candidate.name) === lastName);
+  if (!duplicateLastName) return lastName;
+  const firstName = resident.name.trim().split(/\s+/)[0] ?? "";
+  return firstName ? `${firstName.charAt(0)}. ${lastName}` : lastName;
+}
+
 function formatResidentName(resident: Pick<Resident, "name" | "emoji">): string {
   return resident.emoji ? `${resident.emoji} ${resident.name}` : resident.name;
 }
@@ -2575,6 +2725,36 @@ function getDefaultCallMonth(state: PlannerState): string {
     .filter((entry) => entry.kind === "call")
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   return firstCallEntry ? getMonthFromDate(firstCallEntry.date) : getTodayDate().slice(0, 7);
+}
+
+function getPersonalCallEntries(state: PlannerState, residentId: string): CoverageEntry[] {
+  return getOrderedSurgeryCallEntries(
+    state.coverageEntries.filter((entry) => entry.kind === "call" && entry.residentId === residentId)
+  ).sort((a, b) => a.date.localeCompare(b.date) || getCallPositionSortValue(a) - getCallPositionSortValue(b));
+}
+
+function getCallPositionSortValue(entry: Pick<CoverageEntry, "callPosition">): number {
+  return entry.callPosition ? CALL_POSITIONS.indexOf(entry.callPosition) : CALL_POSITIONS.length;
+}
+
+function formatPersonalCallEntryLabel(state: PlannerState, entry: CoverageEntry): string {
+  const label = isSccCallEntry(state, entry)
+    ? "SCC/ICU"
+    : entry.callPosition
+      ? formatCallPositionLabel(entry.callPosition)
+      : "Surgery call";
+  return entry.note ? `${label} · ${entry.note}` : label;
+}
+
+function formatCallPositionLabel(position: CallPosition): string {
+  switch (position) {
+    case "senior":
+      return "Senior call";
+    case "mid-level":
+      return "Mid-level call";
+    case "intern":
+      return "Intern call";
+  }
 }
 
 function getNightTeamSegments(state: PlannerState, month: string): CallNightSegment[] {
@@ -2715,6 +2895,10 @@ function formatShortDate(date: string): string {
   return parseLocalDate(date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function formatPrintDayLabel(date: string): string {
+  return parseLocalDate(date).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+}
+
 function shiftMonthValue(month: string, delta: number): string {
   const [year, monthNumber] = month.split("-").map(Number);
   const shifted = new Date(year, monthNumber - 1 + delta, 1);
@@ -2728,17 +2912,17 @@ function sortWeeks(weeks: Week[]): Week[] {
 function getTabTitle(tab: Tab): string {
   switch (tab) {
     case "board":
-      return "OR / Clinic";
+      return "OR / Clinic 🔪";
     case "my":
-      return "My Schedule";
+      return "My Schedule ☁️";
     case "calendar":
-      return "Calendar";
+      return "Calendar 🗓️";
     case "call":
       return "CALL 📟";
     case "schedule":
-      return "Resident Schedule";
+      return "Blocks ⏹️";
     case "requests":
-      return "Requests";
+      return "Requests 📤";
     case "entry":
       return "Cases & Clinic";
     case "roster":
@@ -2746,11 +2930,11 @@ function getTabTitle(tab: Tab): string {
     case "defaults":
       return "Setup";
     case "activity":
-      return "Activity";
+      return "Activity 🛒";
     case "users":
       return "Users";
     case "account":
-      return "Account";
+      return "Account 🛠️";
   }
 }
 
@@ -2792,8 +2976,8 @@ function chooseWeekId(weeks: Week[], preferredWeekId?: string): string | undefin
   }
 
   const sortedWeeks = sortWeeks(weeks);
-  const currentMonday = getCurrentMonday();
-  return sortedWeeks.find((week) => week.startDate >= currentMonday)?.id ?? sortedWeeks[sortedWeeks.length - 1]?.id;
+  const defaultMonday = getDefaultPlannerMonday();
+  return sortedWeeks.find((week) => week.startDate >= defaultMonday)?.id ?? sortedWeeks[sortedWeeks.length - 1]?.id;
 }
 
 function buildWeekId(startDate: string): string {
