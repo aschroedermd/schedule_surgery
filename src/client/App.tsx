@@ -43,6 +43,7 @@ import {
 } from "./api";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
+import { formatMonthLabel, getMonthFromDate, isCallDate } from "../shared/coverage";
 import { addDays, displayDate, getCurrentMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
 import {
@@ -78,14 +79,16 @@ import {
 } from "../shared/services";
 import {
   ROTATION_BLOCK_DATES,
+  getCalendarNightResidentsForDate,
   getResidentServiceTagsForDate,
   getRotationBlockForDate,
   getRotationForBlock,
+  getRotationForDate,
   getTodayDate,
   normalizeRotationServiceToServiceLine
 } from "../shared/rotations";
 
-type Tab = "board" | "my" | "calendar" | "schedule" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
+type Tab = "board" | "my" | "calendar" | "call" | "schedule" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
 type PlannerSession = Session;
 type LayoutMode = "desktop" | "mobile";
 type InputMode = "pointer" | "touch";
@@ -426,12 +429,12 @@ export function App() {
 
       <nav className="tabs" aria-label="Planner sections">
         {([
-          ["board", "O.R."],
-          ["my", "Mine"],
+          ["board", "OR / Clinic"],
+          ["my", "My Schedule"],
           ["calendar", "Calendar"],
+          ["call", "CALL 📟"],
           ["schedule", "Resident Schedule"],
           ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests (${pendingCoverageRequestCount})` : "Requests"]] as const : []),
-          ...(isAdmin ? [["entry", "Cases & Clinic"], ["roster", "Residents"], ["defaults", "Setup"], ["users", "Users"]] as const : []),
           ["activity", "Activity"],
           ["account", "Account"]
         ] as const).map(([tab, label]) => (
@@ -474,6 +477,7 @@ export function App() {
           onMutate={runMutation}
         />
       )}
+      {activeTab === "call" && <CallShiftsTab state={state} />}
       {activeTab === "schedule" && (
         <ResidentScheduleTab state={state} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
       )}
@@ -914,6 +918,68 @@ function MyScheduleTab({
             </div>
           )}
         </section>
+      </div>
+    </section>
+  );
+}
+
+function CallShiftsTab({ state }: { state: PlannerState }) {
+  const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
+  const nightTeamSegments = getNightTeamSegments(state, month);
+  const weekendRows = getWeekendCallRows(state, month);
+
+  useEffect(() => {
+    localStorage.setItem("coverageCalendarMonth", month);
+  }, [month]);
+
+  return (
+    <section className="call-shifts-page">
+      <div className="call-shifts-toolbar">
+        <div>
+          <p className="eyebrow">CALL 📟</p>
+          <h2>{formatMonthLabel(month)}</h2>
+        </div>
+        <div className="coverage-toolbar-actions">
+          <button title="Previous month" className="icon-button" onClick={() => setMonth(shiftMonthValue(month, -1))}>
+            <ChevronLeft size={17} />
+          </button>
+          <input aria-label="Call month" type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+          <button title="Next month" className="icon-button" onClick={() => setMonth(shiftMonthValue(month, 1))}>
+            <ChevronRight size={17} />
+          </button>
+        </div>
+      </div>
+
+      <section className="call-night-panel">
+        {nightTeamSegments.length === 0 ? (
+          <p>
+            <strong>Night team:</strong> None listed
+          </p>
+        ) : nightTeamSegments.length === 1 ? (
+          <p>
+            <strong>Night team:</strong> {nightTeamSegments[0].residentNames || "None listed"}
+          </p>
+        ) : (
+          <>
+            <strong>Night team:</strong>
+            <div className="call-night-segments">
+              {nightTeamSegments.map((segment) => (
+                <span key={`${segment.startDate}:${segment.endDate}`}>
+                  {formatCallDateRange(segment.startDate, segment.endDate)}: {segment.residentNames || "None listed"}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
+      <div className="call-week-list">
+        {weekendRows.map((row) => (
+          <article key={row.anchorDate} className="call-week-row">
+            <strong>{row.label}</strong>
+            <p>{row.items.join(" | ")}</p>
+          </article>
+        ))}
       </div>
     </section>
   );
@@ -2443,6 +2509,158 @@ function getBlockServiceGroups(residents: Resident[], blockNumber: number): { se
     .sort((a, b) => a.service.localeCompare(b.service));
 }
 
+interface CallNightSegment {
+  startDate: string;
+  endDate: string;
+  residentNames: string;
+}
+
+interface CallWeekendRow {
+  anchorDate: string;
+  label: string;
+  items: string[];
+}
+
+function getDefaultCallMonth(state: PlannerState): string {
+  const firstCallEntry = [...state.coverageEntries]
+    .filter((entry) => entry.kind === "call")
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  return firstCallEntry ? getMonthFromDate(firstCallEntry.date) : getTodayDate().slice(0, 7);
+}
+
+function getNightTeamSegments(state: PlannerState, month: string): CallNightSegment[] {
+  const { startDate, endDate } = getMonthBounds(month);
+  const segments = ROTATION_BLOCK_DATES
+    .filter((block) => block.endDate >= startDate && block.startDate <= endDate)
+    .map<CallNightSegment>((block) => {
+      const segmentStart = block.startDate > startDate ? block.startDate : startDate;
+      const segmentEnd = block.endDate < endDate ? block.endDate : endDate;
+      return {
+        startDate: segmentStart,
+        endDate: segmentEnd,
+        residentNames: formatResidentList(getCalendarNightResidentsForDate(state.residents, segmentStart))
+      };
+    });
+
+  return mergeCallNightSegments(segments);
+}
+
+function mergeCallNightSegments(segments: CallNightSegment[]): CallNightSegment[] {
+  const merged: CallNightSegment[] = [];
+  for (const segment of segments) {
+    const previous = merged[merged.length - 1];
+    if (previous && previous.residentNames === segment.residentNames && addDays(previous.endDate, 1) === segment.startDate) {
+      previous.endDate = segment.endDate;
+      continue;
+    }
+    merged.push({ ...segment });
+  }
+  return merged;
+}
+
+function getWeekendCallRows(state: PlannerState, month: string): CallWeekendRow[] {
+  const callDates = getDatesInMonth(month).filter(isCallDate);
+  const groupedDates = new Map<string, string[]>();
+  for (const date of callDates) {
+    const anchor = getWeekendAnchorDate(date);
+    groupedDates.set(anchor, [...(groupedDates.get(anchor) ?? []), date]);
+  }
+
+  return [...groupedDates.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([anchorDate, dates]) => ({
+      anchorDate,
+      label: `Week of ${formatShortDate(anchorDate)}`,
+      items: dates
+        .sort((a, b) => a.localeCompare(b))
+        .map((date) => `${displayDate(date)}: ${formatCallResidentsForDate(state, date)}`)
+    }));
+}
+
+function getDatesInMonth(month: string): string[] {
+  const { startDate, endDate } = getMonthBounds(month);
+  const dates: string[] = [];
+  for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
+    dates.push(date);
+  }
+  return dates;
+}
+
+function getMonthBounds(month: string): { startDate: string; endDate: string } {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const startDate = `${month}-01`;
+  const end = new Date(year, monthNumber, 0);
+  const endDate = `${year}-${String(monthNumber).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+  return { startDate, endDate };
+}
+
+function getWeekendAnchorDate(date: string): string {
+  const day = parseLocalDate(date).getDay();
+  if (day === 0) return addDays(date, -2);
+  if (day === 6) return addDays(date, -1);
+  return date;
+}
+
+function formatCallResidentsForDate(state: PlannerState, date: string): string {
+  const entries = state.coverageEntries.filter((entry) => entry.date === date && entry.kind === "call" && entry.residentId);
+  if (entries.length === 0) return "Not listed";
+  const surgeryEntries = entries.filter((entry) => !isSccCallEntry(state, entry));
+  const sccEntries = entries.filter((entry) => isSccCallEntry(state, entry));
+  const surgeryNames = formatResidentList(getEntryResidents(state, surgeryEntries));
+  const sccNames = formatResidentList(getEntryResidents(state, sccEntries));
+  if (surgeryNames && sccNames) return `${surgeryNames}; SCC: ${sccNames}`;
+  return surgeryNames || `SCC: ${sccNames}`;
+}
+
+function getEntryResidents(state: PlannerState, entries: Array<{ residentId?: string }>): Resident[] {
+  const residentsById = new Map(state.residents.map((resident) => [resident.id, resident]));
+  return entries.map((entry) => (entry.residentId ? residentsById.get(entry.residentId) : undefined)).filter((resident): resident is Resident => Boolean(resident));
+}
+
+function isSccCallEntry(state: PlannerState, entry: { residentId?: string; note?: string; date: string }): boolean {
+  if (/\b(icu|scc)\b/i.test(entry.note ?? "")) return true;
+  const resident = entry.residentId ? state.residents.find((candidate) => candidate.id === entry.residentId) : undefined;
+  return resident ? getRotationForDate(resident, entry.date)?.service.toLowerCase().includes("scc") ?? false : false;
+}
+
+function formatResidentList(residents: Resident[]): string {
+  return sortResidentsBySeniority(residents).map(formatResidentName).join(", ");
+}
+
+function sortResidentsBySeniority(residents: Resident[]): Resident[] {
+  return [...residents].sort((a, b) => {
+    const rankDelta = getTrainingLevelRank(b.trainingLevel) - getTrainingLevelRank(a.trainingLevel);
+    if (rankDelta !== 0) return rankDelta;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function getTrainingLevelRank(trainingLevel: TrainingLevel): number {
+  const ranks: Record<TrainingLevel, number> = {
+    Fellow: 6,
+    PGY5: 5,
+    PGY4: 4,
+    PGY3: 3,
+    PGY2: 2,
+    PGY1: 1
+  };
+  return ranks[trainingLevel] ?? 0;
+}
+
+function formatCallDateRange(startDate: string, endDate: string): string {
+  return startDate === endDate ? formatShortDate(startDate) : `${formatShortDate(startDate)}-${formatShortDate(endDate)}`;
+}
+
+function formatShortDate(date: string): string {
+  return parseLocalDate(date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function shiftMonthValue(month: string, delta: number): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const shifted = new Date(year, monthNumber - 1 + delta, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function sortWeeks(weeks: Week[]): Week[] {
   return [...weeks].sort((a, b) => a.startDate.localeCompare(b.startDate));
 }
@@ -2450,11 +2668,13 @@ function sortWeeks(weeks: Week[]): Week[] {
 function getTabTitle(tab: Tab): string {
   switch (tab) {
     case "board":
-      return "O.R.";
+      return "OR / Clinic";
     case "my":
       return "My Schedule";
     case "calendar":
       return "Calendar";
+    case "call":
+      return "CALL 📟";
     case "schedule":
       return "Resident Schedule";
     case "requests":
