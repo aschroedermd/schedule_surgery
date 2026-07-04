@@ -37,7 +37,7 @@ DATABASE_URL=memory npm run dev
 - New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. Server-generated temporary passwords are shown once and force the user to choose a new password.
 - Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` instead of plaintext, so current passwords are not viewable; admin resets and generated new-user passwords are temporary and shown once.
 - Weekly Monday-Friday board with OR blocks, turnover-aware sequential case timing, clinic sessions, warnings, and activity feed.
-- Monthly call and rounding calendar with resident colors, Friday-Sunday call slots, Saturday-Sunday rounding slots, weekday off/note entries, and red unassigned weekend blocks when neither call nor rounding is assigned.
+- Monthly rounding calendar with resident colors, shared Friday-Sunday call-team summaries, service-specific Saturday-Sunday rounders, weekday off/note entries, and red weekend blocks when the visible service has neither an on-service call resident nor an assigned rounder.
 - Request-privileged calendar edits are submitted as requests; users with edit privilege for that service can approve or deny them from the Requests tab.
 - Manual setup for hospitals, attendings, residents/fellows, resident block rotations, unavailable time, case defaults, OR blocks, cases, and clinic sessions.
 - Auto-suggestion that preserves non-suggestion assignments and prioritizes safe OR coverage before clinic assignment.

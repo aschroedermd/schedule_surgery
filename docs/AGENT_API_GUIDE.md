@@ -158,6 +158,8 @@ hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cas
    - clinic: `POST /api/assignments` with `kind: "clinic"`
 7. Verify by reading the computed weekly schedule and warnings for the same `weekId`.
 
+Calendar `call` entries are global across services and support multiple residents on the same Friday-Sunday date for the surgery call team plus SCC/ICU call. Calendar `rounding` entries are service-specific and also support multiple same-day residents on Saturday-Sunday. To add another person, create a new `coverageEntries[]` item; to change an existing person, patch or delete that entry by `id`.
+
 Posting a case assignment for a different resident on the same `targetId` adds that resident as a co-assignee. The API rejects duplicate resident/case pairs.
 
 When reading `GET /api/weeks/{weekId}/schedule`, use each scheduled case's `assignments[]` array for the full effective resident list. A case can include an inherited `kind: "block"` assignment plus one or more direct `kind: "case"` assignments. The singular `assignment` field is only the primary/compatibility assignment and may omit co-assignees.

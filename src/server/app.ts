@@ -1048,10 +1048,7 @@ function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, 
 }
 
 function upsertCoverageEntry(state: PlannerState, entry: CoverageEntry): PlannerState {
-  const replacesSlot = entry.kind === "call" || entry.kind === "rounding";
-  const coverageEntries = state.coverageEntries
-    .filter((candidate) => candidate.id !== entry.id)
-    .filter((candidate) => !replacesSlot || candidate.date !== entry.date || candidate.kind !== entry.kind);
+  const coverageEntries = state.coverageEntries.filter((candidate) => candidate.id !== entry.id);
 
   return {
     ...state,

@@ -568,9 +568,9 @@ export function getOpenApiDocument() {
       },
       "/api/coverage-entries": {
         post: {
-          summary: "Create or replace a call calendar entry",
+          summary: "Create a call calendar entry",
           description:
-            "Requires edit privilege for serviceLine, or admin/API admin access. Call is allowed Friday-Sunday; rounding is allowed Saturday-Sunday. Call/rounding entries replace the same date/kind slot.",
+            "Requires edit privilege for serviceLine, or admin/API admin access. Call is allowed Friday-Sunday and is shared across services; multiple same-day call entries can represent the surgery call team and SCC/ICU call. Rounding is allowed Saturday-Sunday and supports multiple service-specific rounders. Patch or delete by id to change an existing entry.",
           requestBody: {
             required: true,
             content: {

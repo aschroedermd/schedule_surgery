@@ -22,12 +22,12 @@ import {
   updateCoverageEntry
 } from "./api";
 import {
+  getCoverageEntries,
   formatMonthLabel,
-  getCoverageSlot,
   getMonthFromDate,
   getMonthGridDates,
   getResidentColor,
-  hasWeekendCoverage,
+  hasServiceRoundingCoverage,
   isCallDate,
   isRoundingDate,
   isWeekendCoverageRequired
@@ -96,8 +96,15 @@ export function CalendarTab({
     [dates, state.residents, visibleServices]
   );
   const visibleCoverageEntries = useMemo(
-    () => state.coverageEntries.filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices)),
+    () =>
+      state.coverageEntries.filter(
+        (entry) => entry.kind !== "call" && coverageEntryMatchesServices(state, entry, visibleServices)
+      ),
     [state, visibleServices]
+  );
+  const callEntries = useMemo(
+    () => state.coverageEntries.filter((entry) => entry.kind === "call"),
+    [state.coverageEntries]
   );
   const currentResident = useMemo(() => findResidentForUsername(state, username), [state, username]);
   const pendingCount = state.coverageRequests.filter(
@@ -204,6 +211,7 @@ export function CalendarTab({
             visibleServices={visibleServices}
             visibleResidents={visibleResidents}
             coverageEntries={visibleCoverageEntries}
+            callEntries={callEntries}
             currentResident={currentResident}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
@@ -224,6 +232,7 @@ function CoverageDay({
   visibleServices,
   visibleResidents,
   coverageEntries,
+  callEntries,
   currentResident,
   isAdmin,
   servicePrivileges,
@@ -233,6 +242,7 @@ function CoverageDay({
 }: CalendarAccessProps & {
   visibleResidents: Resident[];
   coverageEntries: CoverageEntry[];
+  callEntries: CoverageEntry[];
   currentResident?: Resident;
   month: string;
   date: string;
@@ -240,10 +250,13 @@ function CoverageDay({
   const inMonth = getMonthFromDate(date) === month;
   const dayVisibleResidents = visibleResidents.filter((resident) => residentMatchesServices(resident, visibleServices, date));
   const entries = coverageEntries.filter((entry) => entry.date === date);
-  const callEntry = getCoverageSlot(coverageEntries, date, "call");
-  const roundingEntry = getCoverageSlot(coverageEntries, date, "rounding");
+  const dayCallEntries = getCoverageEntries(callEntries, date, "call");
+  const roundingEntries = getCoverageEntries(coverageEntries, date, "rounding");
   const required = inMonth && isWeekendCoverageRequired(date);
-  const unassigned = required && !hasWeekendCoverage(coverageEntries, date);
+  const uncoveredRoundingServices = required
+    ? visibleServices.filter((serviceLine) => !hasServiceRoundingCoverage(state.coverageEntries, state.residents, date, serviceLine))
+    : [];
+  const unassigned = uncoveredRoundingServices.length > 0;
   const pendingRequests = state.coverageRequests.filter(
     (request) =>
       request.status === "pending" &&
@@ -311,52 +324,53 @@ function CoverageDay({
           {unassigned && (
             <span className="unassigned-flag">
               <AlertTriangle size={13} />
-              Unassigned
+              {formatUncoveredRounderLabel(uncoveredRoundingServices)}
             </span>
           )}
         </div>
       </header>
 
-      <div className="coverage-slots">
-        {isCallDate(date) && (
-          <CoverageSlotSelect
-            label="Call"
-            kind="call"
+      {isRoundingDate(date) && (
+        <div className="coverage-rounding-list">
+          {roundingEntries.length > 0 && (
+            <div className="coverage-slots">
+              {roundingEntries.map((entry) => (
+                <CoverageSlotSelect
+                  key={entry.id}
+                  label="Round"
+                  kind="rounding"
+                  date={date}
+                  entry={entry}
+                  state={state}
+                  token={token}
+                  selectedService={selectedService}
+                  visibleServices={visibleServices}
+                  visibleResidents={dayVisibleResidents}
+                  currentResident={currentResident}
+                  isAdmin={isAdmin}
+                  servicePrivileges={servicePrivileges}
+                  disabled={!inMonth || !canCreateForVisibleServices}
+                  allowResidentTrade={inMonth}
+                  onMutate={onMutate}
+                />
+              ))}
+            </div>
+          )}
+          <AddRounderControl
             date={date}
-            entry={callEntry}
             state={state}
             token={token}
             selectedService={selectedService}
             visibleServices={visibleServices}
             visibleResidents={dayVisibleResidents}
-            currentResident={currentResident}
+            existingEntries={roundingEntries}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
             disabled={!inMonth || !canCreateForVisibleServices}
-            allowResidentTrade={inMonth}
             onMutate={onMutate}
           />
-        )}
-        {isRoundingDate(date) && (
-          <CoverageSlotSelect
-            label="Round"
-            kind="rounding"
-            date={date}
-            entry={roundingEntry}
-            state={state}
-            token={token}
-            selectedService={selectedService}
-            visibleServices={visibleServices}
-            visibleResidents={dayVisibleResidents}
-            currentResident={currentResident}
-            isAdmin={isAdmin}
-            servicePrivileges={servicePrivileges}
-            disabled={!inMonth || !canCreateForVisibleServices}
-            allowResidentTrade={inMonth}
-            onMutate={onMutate}
-          />
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="coverage-chip-list">
         {otherEntries.map((entry) => (
@@ -415,7 +429,100 @@ function CoverageDay({
           </button>
         </form>
       )}
+
+      {isCallDate(date) && <CallTeamSummary state={state} entries={dayCallEntries} />}
     </article>
+  );
+}
+
+function AddRounderControl({
+  date,
+  state,
+  token,
+  selectedService,
+  visibleServices,
+  visibleResidents,
+  existingEntries,
+  isAdmin,
+  servicePrivileges,
+  disabled,
+  onMutate
+}: {
+  date: string;
+  state: PlannerState;
+  token: string;
+  selectedService: string;
+  visibleServices: string[];
+  visibleResidents: Resident[];
+  existingEntries: CoverageEntry[];
+  isAdmin: boolean;
+  servicePrivileges: ServicePrivileges;
+  disabled: boolean;
+  onMutate: MutationRunner;
+}) {
+  const assignedResidentIds = useMemo(
+    () => new Set(existingEntries.map((entry) => entry.residentId).filter((residentId): residentId is string => Boolean(residentId))),
+    [existingEntries]
+  );
+  const availableResidents = useMemo(
+    () =>
+      visibleResidents.filter((resident) => {
+        if (assignedResidentIds.has(resident.id)) return false;
+        const serviceLine = resolveResidentMutationService(state, resident.id, visibleServices, selectedService, date);
+        return canRequestService(isAdmin, servicePrivileges, serviceLine);
+      }),
+    [assignedResidentIds, date, isAdmin, selectedService, servicePrivileges, state, visibleResidents, visibleServices]
+  );
+  const [residentId, setResidentId] = useState(availableResidents[0]?.id ?? "");
+
+  useEffect(() => {
+    if (availableResidents.some((resident) => resident.id === residentId)) return;
+    setResidentId(availableResidents[0]?.id ?? "");
+  }, [availableResidents, residentId]);
+
+  async function addRounder(event: FormEvent) {
+    event.preventDefault();
+    if (disabled || !residentId) return;
+    const entry = makeClientCoverageEntry(date, "rounding", residentId, "");
+    const serviceLine = resolveResidentMutationService(state, residentId, visibleServices, selectedService, date);
+    const canEdit = canEditService(isAdmin, servicePrivileges, serviceLine);
+    const canRequest = canRequestService(isAdmin, servicePrivileges, serviceLine);
+    if (!canRequest) return;
+    const action = canEdit
+      ? () => createCoverageEntry(token, entry, serviceLine)
+      : () =>
+          submitCoverageRequest(
+            token,
+            {
+              action: "create",
+              requestedEntry: entry,
+              message: "Request rounding assignment"
+            },
+            serviceLine
+          );
+    await onMutate(action, canEdit ? "Rounder added" : "Request submitted");
+  }
+
+  if (disabled || availableResidents.length === 0) return null;
+
+  return (
+    <form className="coverage-add-rounder" onSubmit={addRounder}>
+      <select
+        aria-label="Round resident"
+        value={residentId}
+        onChange={(event) => setResidentId(event.target.value)}
+      >
+        {availableResidents.map((resident) => (
+          <option key={resident.id} value={resident.id}>
+            {formatResidentName(resident)}
+          </option>
+        ))}
+      </select>
+      <button className="secondary-button" type="submit" disabled={!residentId}>
+        <Plus size={14} />
+        round
+      </button>
+    </form>
   );
 }
 
@@ -665,6 +772,44 @@ function CoverageSlotSelect({
       )}
     </div>
   );
+}
+
+function CallTeamSummary({ state, entries }: { state: PlannerState; entries: CoverageEntry[] }) {
+  const sortedEntries = [...entries].sort((a, b) => {
+    const aResident = state.residents.find((resident) => resident.id === a.residentId);
+    const bResident = state.residents.find((resident) => resident.id === b.residentId);
+    return (aResident?.name ?? a.id).localeCompare(bResident?.name ?? b.id);
+  });
+  const surgeryEntries = sortedEntries.filter((entry) => !isIcuCallEntry(state, entry));
+  const icuEntries = sortedEntries.filter((entry) => isIcuCallEntry(state, entry));
+
+  return (
+    <div className="coverage-call-team">
+      <span>Call: {formatCallEntryNames(state, surgeryEntries)}</span>
+      {icuEntries.length > 0 && <span>SCC: {formatCallEntryNames(state, icuEntries)}</span>}
+    </div>
+  );
+}
+
+function formatCallEntryNames(state: PlannerState, entries: CoverageEntry[]): string {
+  if (entries.length === 0) return "None listed";
+  return entries.map((entry) => formatCallEntryName(state, entry)).join(", ");
+}
+
+function formatCallEntryName(state: PlannerState, entry: CoverageEntry): string {
+  const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
+  const name = resident ? formatResidentName(resident) : "Unknown resident";
+  return entry.note && !isIcuNote(entry.note) ? `${name} (${entry.note})` : name;
+}
+
+function isIcuCallEntry(state: PlannerState, entry: CoverageEntry): boolean {
+  if (isIcuNote(entry.note)) return true;
+  const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
+  return resident ? isResidentOnService(resident, "ICU", entry.date) : false;
+}
+
+function isIcuNote(note: string): boolean {
+  return /\b(icu|scc)\b/i.test(note);
 }
 
 function CoverageChip({
@@ -948,13 +1093,15 @@ function coverageRequestMatchesServices(
   coverageRequest: CoverageChangeRequest,
   visibleServices: string[]
 ): boolean {
+  const entry = state.coverageEntries.find((candidate) => candidate.id === coverageRequest.entryId);
+  if (coverageRequest.requestedEntry?.kind === "call" || entry?.kind === "call") return true;
   if (coverageRequest.serviceLine) return serviceIsVisible(visibleServices, coverageRequest.serviceLine);
   if (coverageRequest.requestedEntry) return coverageEntryMatchesServices(state, coverageRequest.requestedEntry, visibleServices);
-  const entry = state.coverageEntries.find((candidate) => candidate.id === coverageRequest.entryId);
   return entry ? coverageEntryMatchesServices(state, entry, visibleServices) : true;
 }
 
 function coverageEntryMatchesServices(state: PlannerState, entry: CoverageEntry, visibleServices: string[]): boolean {
+  if (entry.kind === "call") return true;
   if (!entry.residentId) return true;
   const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
   return resident ? residentMatchesServices(resident, visibleServices, entry.date) : true;
@@ -1003,6 +1150,11 @@ function getDefaultCalendarServices(serviceLines: string[], selectedService: str
 function normalizeCalendarServices(selectedServices: string[], serviceLines: string[], selectedService: string): string[] {
   const normalized = serviceLines.filter((serviceLine) => selectedServices.some((candidate) => servicesMatch(candidate, serviceLine)));
   return normalized.length > 0 ? normalized : getDefaultCalendarServices(serviceLines, selectedService);
+}
+
+function formatUncoveredRounderLabel(uncoveredServices: string[]): string {
+  if (uncoveredServices.length === 1) return `No ${uncoveredServices[0]} rounder`;
+  return `${uncoveredServices.length} services need rounders`;
 }
 
 function resolveEntryMutationService(

@@ -566,6 +566,29 @@ describe("planner API", () => {
     );
   });
 
+  it("keeps multiple same-day call entries for the shared call team", async () => {
+    const { app, token } = await loginAs("admin");
+
+    await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "", serviceLine: "Davies" })
+      .expect(201);
+
+    const response = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_chief", note: "", serviceLine: "Davies" })
+      .expect(201);
+
+    expect(response.body.coverageEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_fellow" }),
+        expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_chief" })
+      ])
+    );
+  });
+
   it("lets admins remove accidental coverage requests from the request log", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");

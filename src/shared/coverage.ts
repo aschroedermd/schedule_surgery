@@ -1,5 +1,6 @@
 import { addDays, formatDate, parseLocalDate } from "./date";
 import { CoverageEntry, CoverageKind, Resident } from "./types";
+import { isResidentOnService } from "./services";
 
 export function isCallDate(date: string): boolean {
   const day = parseLocalDate(date).getDay();
@@ -30,6 +31,10 @@ export function getCoverageSlot(entries: CoverageEntry[], date: string, kind: "c
   return entries.find((entry) => entry.date === date && entry.kind === kind);
 }
 
+export function getCoverageEntries(entries: CoverageEntry[], date: string, kind: "call" | "rounding"): CoverageEntry[] {
+  return entries.filter((entry) => entry.date === date && entry.kind === kind);
+}
+
 export function hasWeekendCoverage(entries: CoverageEntry[], date: string): boolean {
   return entries.some(
     (entry) =>
@@ -37,6 +42,21 @@ export function hasWeekendCoverage(entries: CoverageEntry[], date: string): bool
       Boolean(entry.residentId) &&
       (entry.kind === "call" || entry.kind === "rounding")
   );
+}
+
+export function hasServiceRoundingCoverage(
+  entries: CoverageEntry[],
+  residents: Resident[],
+  date: string,
+  serviceLine: string
+): boolean {
+  const residentsById = new Map(residents.map((resident) => [resident.id, resident]));
+  return entries.some((entry) => {
+    if (entry.date !== date || !entry.residentId) return false;
+    if (entry.kind !== "call" && entry.kind !== "rounding") return false;
+    const resident = residentsById.get(entry.residentId);
+    return resident ? isResidentOnService(resident, serviceLine, date) : false;
+  });
 }
 
 export function getMonthGridDates(month: string): string[] {
