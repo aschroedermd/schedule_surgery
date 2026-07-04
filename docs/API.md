@@ -25,7 +25,7 @@ curl -X POST https://your-domain.example/api/auth/login \
 
 The response token can be passed as `Authorization: Bearer <token>`. MCP/tools can use `X-API-Key` when API keys are configured.
 
-Seeded browser users are `admin` and anonymized resident placeholders such as `resident01`. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
+Seeded browser users are `admin` plus resident-linked accounts. Named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
 
 The admin Users tab is protected by a separate `USERS_PIN` of at least 8 characters. It can change that pin, add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
 
@@ -109,11 +109,14 @@ The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, 
 POST /api/coverage-requests
 POST /api/coverage-requests/:id/approve
 POST /api/coverage-requests/:id/deny
+DELETE /api/coverage-requests/:id
 ```
 
 Default calendar requests require `request` or `edit` privilege for `serviceLine` and are approved or denied by a service editor. Resident call trades use `requestType: "resident-trade"` and must come from the logged-in resident who owns `entryId`; `targetResidentId` can accept or deny. Include `swapEntryId` to swap two call or rounding entries, or omit it for a one-way handoff.
 
 Resident profile requests use `requestType: "resident-profile"` and let a linked resident request a display-name or alias change. Only admins can approve or deny these requests; approved requests update `residents[].name` and `residents[].aliases`.
+
+Admins can remove accidental or obsolete request records with `DELETE /api/coverage-requests/:id`. Deleting a request removes it from the log without approving, denying, or applying it.
 
 ```json
 {
@@ -286,6 +289,7 @@ Recommended MCP tools:
 - `claim_coverage`: `POST /api/claims`
 - `submit_coverage_request`: `POST /api/coverage-requests`
 - `resolve_coverage_request`: `POST /api/coverage-requests/{id}/approve` or `/deny`
+- `delete_coverage_request`: `DELETE /api/coverage-requests/{id}`
 
 MCP safety defaults:
 

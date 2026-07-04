@@ -1,3 +1,4 @@
+import { buildResidentUsername } from "../shared/id";
 import { ROTATION_BLOCK_DATES } from "../shared/rotations";
 import { Resident, TrainingLevel } from "../shared/types";
 
@@ -599,14 +600,16 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
 ];
 
 export const RESIDENT_USER_SEEDS = RESIDENT_ROTATION_SEED.map((resident, index) => ({
-  username: getPlaceholderUsername(index),
-  displayName: getPlaceholderName(index)
+  username: getSeedUsername(resident, index),
+  displayName: resident.name ?? getPlaceholderName(index),
+  legacyUsername: getPlaceholderUsername(index),
+  legacyDisplayName: getPlaceholderName(index)
 }));
 
 export function createRotationResidents(): Resident[] {
   return RESIDENT_ROTATION_SEED.map((resident, index) => ({
     id: resident.id,
-    username: getPlaceholderUsername(index),
+    username: getSeedUsername(resident, index),
     name: resident.name ?? getPlaceholderName(index),
     aliases: resident.aliases ?? [],
     trainingLevel: resident.trainingLevel,
@@ -650,4 +653,8 @@ function getPlaceholderName(index: number): string {
 
 function getPlaceholderUsername(index: number): string {
   return `resident${String(index + 1).padStart(2, "0")}`;
+}
+
+function getSeedUsername(resident: ResidentRotationSeed, index: number): string {
+  return resident.name ? buildResidentUsername(resident.name) || getPlaceholderUsername(index) : getPlaceholderUsername(index);
 }

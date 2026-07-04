@@ -647,6 +647,29 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
+  app.delete("/api/coverage-requests/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const id = getParam(req.params.id);
+      const state = await store.load();
+      const coverageRequest = requireCoverageRequest(state, id);
+      const nextState: PlannerState = {
+        ...state,
+        coverageRequests: state.coverageRequests.filter((requestItem) => requestItem.id !== id)
+      };
+      const withActivity = addActivity(
+        nextState,
+        req.user?.role ?? "admin",
+        "removed coverage request",
+        describeCoverageRequest(state, coverageRequest),
+        "coverageRequest",
+        id
+      );
+      res.json(await commitState(req, withActivity));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/claims", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();

@@ -651,6 +651,17 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/coverage-requests/{id}": {
+        delete: {
+          summary: "Remove a coverage request from the request log",
+          description: "Admin-only cleanup for accidental or obsolete requests. This removes the request record without applying, approving, or denying it.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
       "/api/coverage-requests/{id}/approve": {
         post: {
           summary: "Approve and apply a calendar request",

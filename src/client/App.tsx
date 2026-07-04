@@ -44,7 +44,7 @@ import {
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import { addDays, displayDate, getCurrentMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
-import { createId } from "../shared/id";
+import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
 import {
   Assignment,
   Attending,
@@ -1765,7 +1765,7 @@ function RosterTab({
         <h2>Resident Roster</h2>
         <fieldset disabled={disabled}>
           <label>Username<input value={editing.username ?? ""} onChange={(event) => setEditing({ ...editing, username: normalizeUsernameInput(event.target.value) })} /></label>
-          <label>Display name<input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label>
+          <label>Display name<input value={editing.name} onChange={(event) => setEditing(updateResidentNameDraft(editing, event.target.value))} /></label>
           <label>Aliases<input value={(editing.aliases ?? []).join(", ")} onChange={(event) => setEditing({ ...editing, aliases: splitTags(event.target.value) })} /></label>
           <label>Emoji<input value={editing.emoji ?? ""} onChange={(event) => setEditing({ ...editing, emoji: firstInputCharacter(event.target.value) })} /></label>
           <label>Level<select value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
@@ -2304,6 +2304,21 @@ function makeEmptyResident(selectedService: string): Resident {
   };
 }
 
+function updateResidentNameDraft(resident: Resident, name: string): Resident {
+  const nextUsername = buildResidentUsername(name);
+  if (!nextUsername) return { ...resident, name };
+  if (shouldUpdateResidentUsernameFromName(resident)) {
+    return { ...resident, name, username: nextUsername };
+  }
+  return { ...resident, name };
+}
+
+function shouldUpdateResidentUsernameFromName(resident: Resident): boolean {
+  const username = normalizeUsernameInput(resident.username ?? "");
+  const currentDerivedUsername = buildResidentUsername(resident.name);
+  return !username || isPlaceholderResidentUsername(username) || (Boolean(currentDerivedUsername) && username === currentDerivedUsername);
+}
+
 function serviceLineOptions(state: PlannerState): { id: string; name: string }[] {
   return getStateServiceLines(state).map((serviceLine) => ({ id: serviceLine, name: serviceLine }));
 }
@@ -2622,12 +2637,6 @@ function getSessionResidentServiceLine(state: PlannerState, session: PlannerSess
     state.residents.find((candidate) => normalizeUsername(candidate.username ?? buildResidentUsername(candidate.name)) === normalizeUsername(session.username));
   if (!resident) return undefined;
   return getResidentServiceTagsForDate(resident, getTodayDate()).find(isKnownServiceLine);
-}
-
-function buildResidentUsername(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2) return "";
-  return normalizeUsername(`${parts[0][0] ?? ""}${parts.slice(1).join("")}`);
 }
 
 function normalizeUsername(value: string): string {

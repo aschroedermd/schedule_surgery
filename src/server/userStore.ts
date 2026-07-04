@@ -239,6 +239,19 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
   const seedPassword = getInitialSeedUserPassword();
   for (const user of DEFAULT_USERS) {
     const existing = users.get(user.username);
+    if (!existing && user.legacyUsername !== user.username) {
+      const legacy = users.get(user.legacyUsername);
+      if (legacy) {
+        users.delete(user.legacyUsername);
+        users.set(user.username, {
+          ...legacy,
+          username: user.username,
+          displayName: legacy.displayName === user.legacyDisplayName ? user.displayName : legacy.displayName,
+          updatedAt: now
+        });
+        continue;
+      }
+    }
     if (!existing) {
       users.set(user.username, makeSeedUser(user.username, user.displayName, "viewer", seedPassword, now, true));
     }

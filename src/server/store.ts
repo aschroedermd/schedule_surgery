@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { buildResidentUsername, isPlaceholderResidentUsername } from "../shared/id";
 import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
 import { Attending, ClinicSession, PlannerState, Resident } from "../shared/types";
 import { createInitialState, createSeedCoverageEntries } from "./sampleData";
@@ -185,7 +186,7 @@ function normalizeResident(resident: Resident): Resident {
   const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" };
   return {
     ...resident,
-    username: normalizeOptionalUsername(resident.username),
+    username: normalizeResidentUsername(resident),
     aliases: normalizeResidentAliases(resident.aliases),
     emoji: normalizeResidentEmoji(resident.emoji),
     serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),
@@ -194,6 +195,17 @@ function normalizeResident(resident: Resident): Resident {
     unavailable: resident.unavailable ?? [],
     rotationSchedule: normalizeRotationSchedule(resident.rotationSchedule)
   };
+}
+
+function normalizeResidentUsername(resident: Resident): string | undefined {
+  const normalized = normalizeOptionalUsername(resident.username);
+  const derived = shouldDeriveResidentUsername(resident.name) ? buildResidentUsername(resident.name) : undefined;
+  if (derived && (!normalized || isPlaceholderResidentUsername(normalized))) return derived;
+  return normalized;
+}
+
+function shouldDeriveResidentUsername(name: string): boolean {
+  return !/^Resident\s+\d+$/i.test(name.trim());
 }
 
 function normalizeResidentAliases(aliases: string[] | undefined): string[] {
@@ -258,7 +270,7 @@ function mergeSeededResident(resident: Resident, seeded: Resident, hasExistingRo
   return {
     ...seeded,
     id: resident.id,
-    username: resident.username ?? seeded.username,
+    username: resident.username && !isPlaceholderResidentUsername(resident.username) ? resident.username : seeded.username,
     name: shouldUseSeedIdentity ? seeded.name : resident.name,
     aliases: resident.aliases?.length ? resident.aliases : seeded.aliases ?? [],
     trainingLevel: shouldUseSeedIdentity ? seeded.trainingLevel : resident.trainingLevel,

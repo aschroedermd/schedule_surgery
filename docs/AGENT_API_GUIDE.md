@@ -35,7 +35,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
   -d '{"username":"admin","password":"..."}'
 ```
 
-Seeded browser users are `admin` plus anonymized resident placeholders such as `resident01` when `SEED_USER_PASSWORD` is configured privately. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
+Seeded browser users are `admin` plus resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
 
 The live OpenAPI document is at:
 
@@ -132,6 +132,7 @@ POST   /api/weeks/{weekId}/suggest?service=Davies
 POST   /api/coverage-requests
 POST   /api/coverage-requests/{requestId}/approve
 POST   /api/coverage-requests/{requestId}/deny
+DELETE /api/coverage-requests/{requestId}
 ```
 
 Allowed `collection` values:
@@ -217,6 +218,8 @@ Admins can directly edit `residents[].name` and `residents[].aliases`. Linked re
   "message": "Preferred display name"
 }
 ```
+
+Admins can remove accidental or obsolete request records with `DELETE /api/coverage-requests/{requestId}`. This removes the request from the log without applying, approving, or denying it.
 
 ## Minimal JSON Shapes
 

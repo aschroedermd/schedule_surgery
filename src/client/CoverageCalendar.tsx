@@ -16,6 +16,7 @@ import {
   approveCoverageRequest,
   createCoverageEntry,
   deleteCoverageEntry,
+  deleteCoverageRequest,
   denyCoverageRequest,
   submitCoverageRequest,
   updateCoverageEntry
@@ -867,35 +868,53 @@ export function RequestsTab({
 
   return (
     <section className="requests-list">
-      {sortedRequests.map((coverageRequest) => (
-        <article key={coverageRequest.id} className={`request-item ${coverageRequest.status}`}>
-          <div className="request-main">
-            <span className={`request-status ${coverageRequest.status}`}>{formatRequestStatus(coverageRequest)}</span>
-            <strong>{describeRequest(state, coverageRequest)}</strong>
-            <p>{coverageRequest.message || "No extra note"}</p>
-            {coverageRequest.requesterName && <span>From {coverageRequest.requesterName}</span>}
-            <span>{new Date(coverageRequest.createdAt).toLocaleString()}</span>
-          </div>
-          {canResolveRequest(state, coverageRequest, username, isAdmin, servicePrivileges) && coverageRequest.status === "pending" && (
-            <div className="request-actions">
-              <button
-                className="secondary-button"
-                onClick={() => onMutate(() => denyCoverageRequest(token, coverageRequest.id), "Request denied")}
-              >
-                <XCircle size={16} />
-                Deny
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => onMutate(() => approveCoverageRequest(token, coverageRequest.id), "Request approved")}
-              >
-                <CheckCircle2 size={16} />
-                {isResidentTradeRequest(coverageRequest) ? "Accept" : "Approve"}
-              </button>
+      {sortedRequests.map((coverageRequest) => {
+        const canResolve = canResolveRequest(state, coverageRequest, username, isAdmin, servicePrivileges);
+        const canShowActions = (canResolve && coverageRequest.status === "pending") || isAdmin;
+
+        return (
+          <article key={coverageRequest.id} className={`request-item ${coverageRequest.status}`}>
+            <div className="request-main">
+              <span className={`request-status ${coverageRequest.status}`}>{formatRequestStatus(coverageRequest)}</span>
+              <strong>{describeRequest(state, coverageRequest)}</strong>
+              <p>{coverageRequest.message || "No extra note"}</p>
+              {coverageRequest.requesterName && <span>From {coverageRequest.requesterName}</span>}
+              <span>{new Date(coverageRequest.createdAt).toLocaleString()}</span>
             </div>
-          )}
-        </article>
-      ))}
+            {canShowActions && (
+              <div className="request-actions">
+                {canResolve && coverageRequest.status === "pending" && (
+                  <>
+                    <button
+                      className="secondary-button"
+                      onClick={() => onMutate(() => denyCoverageRequest(token, coverageRequest.id), "Request denied")}
+                    >
+                      <XCircle size={16} />
+                      Deny
+                    </button>
+                    <button
+                      className="primary-button"
+                      onClick={() => onMutate(() => approveCoverageRequest(token, coverageRequest.id), "Request approved")}
+                    >
+                      <CheckCircle2 size={16} />
+                      {isResidentTradeRequest(coverageRequest) ? "Accept" : "Approve"}
+                    </button>
+                  </>
+                )}
+                {isAdmin && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => onMutate(() => deleteCoverageRequest(token, coverageRequest.id), "Request removed")}
+                  >
+                    <Trash2 size={16} />
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
+          </article>
+        );
+      })}
     </section>
   );
 }

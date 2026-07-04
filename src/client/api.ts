@@ -188,6 +188,13 @@ export async function denyCoverageRequest(token: string, id: string, adminNote?:
   });
 }
 
+export async function deleteCoverageRequest(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/coverage-requests/${id}`, {
+    method: "DELETE",
+    token
+  });
+}
+
 export async function claimCoverage(token: string, claim: ClaimRequest): Promise<PlannerState> {
   return request<PlannerState>("/api/claims", {
     method: "POST",
