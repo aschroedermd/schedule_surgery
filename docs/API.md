@@ -27,29 +27,27 @@ The response token can be passed as `Authorization: Bearer <token>`. MCP/tools c
 
 Seeded browser users are `admin` plus resident-linked accounts. Named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
 
-The admin Users tab is protected by a separate `USERS_PIN` of at least 8 characters. It can change that pin, add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
+The admin Users tab can add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
 
 - `view`: read-only.
 - `request`: can submit coverage calendar edit requests for that service.
 - `edit`: can directly edit service assignments and coverage entries, and approve/deny requests for that service.
 
-User-management endpoints require an admin bearer token and the users pin:
+User-management endpoints require a logged-in admin browser-session bearer token; API-key admin access does not manage browser users:
 
 ```text
-GET    /api/users?pin=$USERS_PIN
+GET    /api/users
 POST   /api/users
 POST   /api/users/bulk
 PATCH  /api/users/:username
 PATCH  /api/users/:username/password
-DELETE /api/users/:username?pin=$USERS_PIN
-PATCH  /api/users-pin
+DELETE /api/users/:username
 ```
 
 For `POST /api/users` and `POST /api/users/bulk`, omit `password` to have the server generate a one-time temporary password. Bulk creation uses this shape:
 
 ```json
 {
-  "pin": "$USERS_PIN",
   "users": [
     {
       "username": "jsmith",

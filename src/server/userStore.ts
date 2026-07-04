@@ -6,7 +6,6 @@ import { RESIDENT_USER_SEEDS } from "./residentRotationSeed";
 
 const DEFAULT_USERS = RESIDENT_USER_SEEDS;
 const TEMPORARY_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000;
-const MIN_PIN_LENGTH = 8;
 
 interface PasswordHash {
   algorithm: "scrypt";
@@ -20,7 +19,6 @@ interface StoredUser extends UserSummary {
 
 interface UserStoreData {
   version: 1;
-  pinHash: PasswordHash;
   users: StoredUser[];
 }
 
@@ -52,8 +50,6 @@ export interface UserStore {
   deleteUser(username: string): Promise<void>;
   resetPassword(username: string): Promise<PasswordResetResult>;
   changePassword(username: string, currentPassword: string, nextPassword: string): Promise<UserSummary>;
-  verifyPin(pin: string): Promise<boolean>;
-  updatePin(currentPin: string, nextPin: string): Promise<void>;
 }
 
 export class FileUserStore implements UserStore {
@@ -157,19 +153,6 @@ export class FileUserStore implements UserStore {
     return toSummary(user);
   }
 
-  async verifyPin(pin: string): Promise<boolean> {
-    const data = await this.load();
-    return verifySecret(pin, data.pinHash);
-  }
-
-  async updatePin(currentPin: string, nextPin: string): Promise<void> {
-    assertUsablePin(nextPin);
-    const data = await this.load();
-    if (!verifySecret(currentPin, data.pinHash)) throw new Error("Current pin code is incorrect");
-    data.pinHash = hashSecret(nextPin);
-    await this.save(data);
-  }
-
   private async load(): Promise<UserStoreData> {
     let loaded: UserStoreData | undefined;
     try {
@@ -259,7 +242,6 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
 
   return {
     version: 1,
-    pinHash: input?.pinHash ?? hashSecret(getInitialUsersPin()),
     users: [...users.values()]
   };
 }
@@ -377,20 +359,12 @@ function assertUsableSecret(secret: string, label: string) {
   if (secret.length < 4) throw new Error(`${label} must be at least 4 characters`);
 }
 
-function assertUsablePin(pin: string) {
-  if (pin.length < MIN_PIN_LENGTH) throw new Error(`Pin code must be at least ${MIN_PIN_LENGTH} characters`);
-}
-
 function getInitialAdminPassword(): string {
   return process.env.ADMIN_PASSWORD ?? generateTemporaryPassword();
 }
 
 function getInitialSeedUserPassword(): string {
   return process.env.SEED_USER_PASSWORD ?? generateTemporaryPassword();
-}
-
-function getInitialUsersPin(): string {
-  return process.env.USERS_PIN ?? generateTemporaryPassword();
 }
 
 function generateTemporaryPassword(): string {

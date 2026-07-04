@@ -209,69 +209,58 @@ export async function getUncoveredMessage(token: string, weekId: string, date?: 
   return result.message;
 }
 
-export async function fetchUsers(token: string, pin: string): Promise<UserSummary[]> {
-  const result = await request<UsersResponse>(`/api/users${buildQuery({ pin })}`, { token });
+export async function fetchUsers(token: string): Promise<UserSummary[]> {
+  const result = await request<UsersResponse>("/api/users", { token });
   return result.users;
 }
 
 export async function createUser(
   token: string,
-  pin: string,
   payload: { username: string; displayName?: string; role?: Role; password?: string; servicePrivileges?: ServicePrivileges }
 ): Promise<UserCreateResponse> {
   return request<UserCreateResponse>("/api/users", {
     method: "POST",
     token,
-    body: JSON.stringify({ ...payload, pin })
+    body: JSON.stringify(payload)
   });
 }
 
 export async function createUsers(
   token: string,
-  pin: string,
   users: Array<{ username: string; displayName?: string; role?: Role; password?: string; servicePrivileges?: ServicePrivileges }>
 ): Promise<BulkUserCreateResponse> {
   return request<BulkUserCreateResponse>("/api/users/bulk", {
     method: "POST",
     token,
-    body: JSON.stringify({ pin, users })
+    body: JSON.stringify({ users })
   });
 }
 
 export async function updateUser(
   token: string,
-  pin: string,
   username: string,
   patch: { displayName?: string; role?: Role; servicePrivileges?: ServicePrivileges }
 ): Promise<UserSummary[]> {
   const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}`, {
     method: "PATCH",
     token,
-    body: JSON.stringify({ ...patch, pin })
+    body: JSON.stringify(patch)
   });
   return result.users;
 }
 
-export async function deleteUser(token: string, pin: string, username: string): Promise<UserSummary[]> {
-  const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}${buildQuery({ pin })}`, {
+export async function deleteUser(token: string, username: string): Promise<UserSummary[]> {
+  const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}`, {
     method: "DELETE",
     token
   });
   return result.users;
 }
 
-export async function resetUserPassword(token: string, pin: string, username: string): Promise<PasswordResetResponse> {
-  return request<PasswordResetResponse>(`/api/users/${encodeURIComponent(username)}/password${buildQuery({ pin })}`, {
+export async function resetUserPassword(token: string, username: string): Promise<PasswordResetResponse> {
+  return request<PasswordResetResponse>(`/api/users/${encodeURIComponent(username)}/password`, {
     method: "PATCH",
     token
-  });
-}
-
-export async function updateUsersPin(token: string, currentPin: string, nextPin: string): Promise<void> {
-  await request<{ ok: boolean }>("/api/users-pin", {
-    method: "PATCH",
-    token,
-    body: JSON.stringify({ currentPin, nextPin })
   });
 }
 

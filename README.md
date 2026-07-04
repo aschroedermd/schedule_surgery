@@ -33,7 +33,7 @@ DATABASE_URL=memory npm run dev
 
 - Username/password browser logins. Seeded named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. Set `SEED_USER_PASSWORD` privately if those accounts should be login-ready.
 - No `guest` account is seeded. `admin` starts with the private `ADMIN_PASSWORD` configured when the user store is first created.
-- Admins get a pinned Users tab, protected by the private `USERS_PIN`, for single or bulk user creation, deleting users, changing the pin, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges.
+- Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges.
 - New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. Server-generated temporary passwords are shown once and force the user to choose a new password.
 - Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` instead of plaintext, so current passwords are not viewable; admin resets and generated new-user passwords are temporary and shown once.
 - Weekly Monday-Friday board with OR blocks, turnover-aware sequential case timing, clinic sessions, warnings, and activity feed.

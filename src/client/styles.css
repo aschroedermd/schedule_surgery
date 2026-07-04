@@ -1320,6 +1320,23 @@ h2 {
   font-weight: 800;
 }
 
+.user-privileges {
+  display: grid;
+  gap: 8px;
+}
+
+.privilege-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.privilege-presets .secondary-button {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 0.76rem;
+}
+
 .temporary-password {
   width: fit-content;
   border: 1px solid #b9c8d8;

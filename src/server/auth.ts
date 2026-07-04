@@ -131,6 +131,15 @@ export function requireAdmin(req: AuthenticatedRequest, res: Response, next: Nex
   next();
 }
 
+export function requireSessionAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  if (!passwordReady(req, res)) return;
+  if (req.user?.role !== "admin" || req.user.authType !== "session") {
+    res.status(403).json({ error: "Admin browser session required" });
+    return;
+  }
+  next();
+}
+
 export function requireServiceEdit(req: AuthenticatedRequest, res: Response, serviceLine: string | undefined): boolean {
   if (!passwordReady(req, res)) return false;
   if (hasServicePrivilege(req.user, serviceLine, "edit")) return true;

@@ -9,7 +9,6 @@ import { createInitialState } from "./sampleData";
 import { MemoryStateStore, normalizePlannerState } from "./store";
 import { ServicePrivilege } from "../shared/types";
 
-const TEST_USERS_PIN = "test-users-pin";
 const TEST_SEED_USER_PASSWORD = "resident-dev-password";
 
 async function loginAs(username: string) {
@@ -37,7 +36,7 @@ async function grantPrivilege(app: ReturnType<typeof createApp>, adminToken: str
   await request(app)
     .patch(`/api/users/${username}`)
     .set("authorization", `Bearer ${adminToken}`)
-    .send({ pin: TEST_USERS_PIN, servicePrivileges: { [service]: privilege } })
+    .send({ servicePrivileges: { [service]: privilege } })
     .expect(200);
 }
 
@@ -48,7 +47,6 @@ describe("planner API", () => {
     process.env.APP_SECRET = "test-secret";
     process.env.ADMIN_API_KEY = "test-admin-api-key";
     process.env.VIEWER_API_KEY = "test-viewer-api-key";
-    process.env.USERS_PIN = TEST_USERS_PIN;
     process.env.SEED_USER_PASSWORD = TEST_SEED_USER_PASSWORD;
   });
 
@@ -84,11 +82,11 @@ describe("planner API", () => {
       .expect(201);
   });
 
-  it("seeds user accounts and lets admin manage privileges behind the users pin", async () => {
+  it("seeds user accounts and lets admin manage privileges", async () => {
     const { app, token } = await loginAs("admin");
 
-    await request(app).get("/api/users?pin=1111").set("authorization", `Bearer ${token}`).expect(403);
-    const usersResponse = await request(app).get(`/api/users?pin=${encodeURIComponent(TEST_USERS_PIN)}`).set("authorization", `Bearer ${token}`).expect(200);
+    const usersResponse = await request(app).get("/api/users").set("authorization", `Bearer ${token}`).expect(200);
+    await request(app).get("/api/users").set("x-api-key", "test-admin-api-key").expect(403);
 
     expect(usersResponse.body.users).toEqual(
       expect.arrayContaining([
@@ -112,11 +110,13 @@ describe("planner API", () => {
         servicePrivileges: expect.objectContaining({ Davies: "view", ICU: "view" })
       })
     );
+    const viewerToken = await loginOnApp(app, "resident02");
+    await request(app).get("/api/users").set("authorization", `Bearer ${viewerToken}`).expect(403);
 
     const createResponse = await request(app)
       .post("/api/users")
       .set("authorization", `Bearer ${token}`)
-      .send({ pin: TEST_USERS_PIN, username: "jsmith", servicePrivileges: { Berry: "request" } })
+      .send({ username: "jsmith", servicePrivileges: { Berry: "request" } })
       .expect(201);
     expect(createResponse.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
     expect(createResponse.body.user).toEqual(
@@ -131,7 +131,6 @@ describe("planner API", () => {
       .post("/api/users/bulk")
       .set("authorization", `Bearer ${token}`)
       .send({
-        pin: TEST_USERS_PIN,
         users: [
           { username: "bulkone", displayName: "Bulk One", servicePrivileges: { Davies: "request" } },
           { username: "bulktwo", displayName: "Bulk Two", servicePrivileges: { Fogel: "edit" } }
@@ -166,10 +165,10 @@ describe("planner API", () => {
     await request(app)
       .patch("/api/users/tcao")
       .set("authorization", `Bearer ${token}`)
-      .send({ pin: TEST_USERS_PIN, servicePrivileges: { Berry: "edit" } })
+      .send({ servicePrivileges: { Berry: "edit" } })
       .expect(200);
     const resetResponse = await request(app)
-      .patch(`/api/users/tcao/password?pin=${encodeURIComponent(TEST_USERS_PIN)}`)
+      .patch("/api/users/tcao/password")
       .set("authorization", `Bearer ${token}`)
       .expect(200);
     expect(resetResponse.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
@@ -222,7 +221,7 @@ describe("planner API", () => {
     );
     const { app, token } = await loginAs("admin");
 
-    const usersResponse = await request(app).get(`/api/users?pin=${encodeURIComponent(TEST_USERS_PIN)}`).set("authorization", `Bearer ${token}`).expect(200);
+    const usersResponse = await request(app).get("/api/users").set("authorization", `Bearer ${token}`).expect(200);
 
     expect(usersResponse.body.users).toEqual(
       expect.arrayContaining([

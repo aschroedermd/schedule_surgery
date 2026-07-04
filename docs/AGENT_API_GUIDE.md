@@ -35,7 +35,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
   -d '{"username":"admin","password":"..."}'
 ```
 
-Seeded browser users are `admin` plus resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` with the users pin to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes.
+Seeded browser users are `admin` plus resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Logged-in admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes. Admin API keys do not manage browser-user accounts.
 
 The live OpenAPI document is at:
 

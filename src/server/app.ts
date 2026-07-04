@@ -33,6 +33,7 @@ import {
   createToken,
   requireAdmin,
   requirePasswordReady,
+  requireSessionAdmin,
   requireServiceEdit,
   requireServiceRequest,
   validateLogin
@@ -57,7 +58,6 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   const userStore = options.userStore ?? createDefaultUserStore();
   const requireAuth = authenticate(userStore);
   const loginLimiter = createRateLimiter(8, 15 * 60 * 1000);
-  const pinLimiter = createRateLimiter(6, 10 * 60 * 1000);
   const stateSubscribers = new Set<express.Response>();
 
   app.set("trust proxy", 1);
@@ -144,24 +144,16 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.get("/api/users", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.get("/api/users", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      if (!(await verifyUserAdminPin(pinLimiter, req, userStore, req.query.pin))) {
-        res.status(403).json({ error: "Invalid users pin code" });
-        return;
-      }
       res.json({ users: await userStore.listUsers() });
     } catch (error) {
       next(error);
     }
   });
 
-  app.post("/api/users", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/users", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      if (!(await verifyUserAdminPin(pinLimiter, req, userStore, req.body.pin))) {
-        res.status(403).json({ error: "Invalid users pin code" });
-        return;
-      }
       const created = await userStore.createUser(req.body);
       res.status(201).json({ ...created, users: await userStore.listUsers() });
     } catch (error) {
@@ -169,12 +161,8 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.post("/api/users/bulk", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/users/bulk", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      if (!(await verifyUserAdminPin(pinLimiter, req, userStore, req.body.pin))) {
-        res.status(403).json({ error: "Invalid users pin code" });
-        return;
-      }
       const users = Array.isArray(req.body.users) ? req.body.users : [];
       const created = await userStore.createUsers(users);
       res.status(201).json({ created, users: await userStore.listUsers() });
@@ -183,12 +171,8 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.patch("/api/users/:username", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/users/:username", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      if (!(await verifyUserAdminPin(pinLimiter, req, userStore, req.body.pin))) {
-        res.status(403).json({ error: "Invalid users pin code" });
-        return;
-      }
       const user = await userStore.updateUser(getParam(req.params.username), {
         displayName: readOptionalString(req.body.displayName),
         role: req.body.role === "admin" ? "admin" : req.body.role === "viewer" ? "viewer" : undefined,
@@ -200,12 +184,8 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.patch("/api/users/:username/password", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/users/:username/password", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      if (!(await verifyUserAdminPin(pinLimiter, req, userStore, req.body.pin ?? req.query.pin))) {
-        res.status(403).json({ error: "Invalid users pin code" });
-        return;
-      }
       const reset = await userStore.resetPassword(getParam(req.params.username));
       res.json({ ...reset, users: await userStore.listUsers() });
     } catch (error) {
@@ -213,23 +193,10 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.delete("/api/users/:username", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.delete("/api/users/:username", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      if (!(await verifyUserAdminPin(pinLimiter, req, userStore, req.query.pin))) {
-        res.status(403).json({ error: "Invalid users pin code" });
-        return;
-      }
       await userStore.deleteUser(getParam(req.params.username));
       res.json({ users: await userStore.listUsers() });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.patch("/api/users-pin", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
-    try {
-      await userStore.updatePin(String(req.body.currentPin ?? ""), String(req.body.nextPin ?? ""));
-      res.json({ ok: true });
     } catch (error) {
       next(error);
     }
@@ -1630,20 +1597,6 @@ function coverageRequestReferencesResident(coverageRequest: CoverageChangeReques
 
 function hasAnyEditPrivilege(user: SessionUser): boolean {
   return Object.values(user.servicePrivileges).some((privilege) => privilege === "edit");
-}
-
-async function verifyUserAdminPin(
-  limiter: RateLimiter,
-  req: AuthenticatedRequest,
-  userStore: UserStore,
-  value: unknown
-): Promise<boolean> {
-  const key = `${req.ip}:${req.user?.username ?? "anonymous"}:users-pin`;
-  if (!limiter.tryConsume(key)) {
-    throw new HttpError(429, "Too many pin attempts; wait a few minutes and try again");
-  }
-  const pin = Array.isArray(value) ? value[0] : value;
-  return typeof pin === "string" && (await userStore.verifyPin(pin));
 }
 
 function readServiceLine(req: AuthenticatedRequest): string | undefined {

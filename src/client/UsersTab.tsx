@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Copy, KeyRound, Plus, Save, Trash2, Users } from "lucide-react";
+import { Copy, Eye, KeyRound, Pencil, Plus, Save, Send, Trash2, Users } from "lucide-react";
 import {
   changeMyPassword,
   createUser,
@@ -7,8 +7,7 @@ import {
   deleteUser,
   fetchUsers,
   resetUserPassword,
-  updateUser,
-  updateUsersPin
+  updateUser
 } from "./api";
 import type { PasswordChangeResponse } from "./api";
 import { Role, ServicePrivilege, ServicePrivileges, UserSummary } from "../shared/types";
@@ -24,11 +23,10 @@ export function UsersTab({
   serviceLines: string[];
   onToast: (message: string) => void;
 }) {
-  const [pin, setPin] = useState("");
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [drafts, setDrafts] = useState<Record<string, UserSummary>>({});
   const [temporaryPasswords, setTemporaryPasswords] = useState<Record<string, string>>({});
-  const [newPin, setNewPin] = useState("");
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [addDraft, setAddDraft] = useState<{
     entries: string;
     role: Role;
@@ -43,11 +41,29 @@ export function UsersTab({
     servicePrivileges: buildPrivileges(serviceLines, "view")
   });
   const [error, setError] = useState<string | undefined>();
-  const unlocked = users.length > 0;
 
   useEffect(() => {
     setDrafts(Object.fromEntries(users.map((user) => [user.username, user])));
   }, [users]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingUsers(true);
+    setError(undefined);
+    fetchUsers(token)
+      .then((nextUsers) => {
+        if (!cancelled) setUsers(nextUsers);
+      })
+      .catch((fetchError) => {
+        if (!cancelled) setError(fetchError instanceof Error ? fetchError.message : "User list failed to load");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingUsers(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   useEffect(() => {
     setAddDraft((current) => ({
@@ -55,13 +71,6 @@ export function UsersTab({
       servicePrivileges: normalizePrivilegesForServices(current.servicePrivileges, serviceLines)
     }));
   }, [serviceLines]);
-
-  async function unlock(event: FormEvent) {
-    event.preventDefault();
-    await runUsersAction(async () => {
-      setUsers(await fetchUsers(token, pin));
-    });
-  }
 
   async function addUser(event: FormEvent) {
     event.preventDefault();
@@ -76,8 +85,8 @@ export function UsersTab({
       }));
       const result =
         payload.length === 1
-          ? await createUser(token, pin, payload[0])
-          : await createUsers(token, pin, payload);
+          ? await createUser(token, payload[0])
+          : await createUsers(token, payload);
       const created = "created" in result ? result.created : [{ user: result.user, temporaryPassword: result.temporaryPassword }];
       setUsers(result.users);
       setTemporaryPasswords((current) => ({
@@ -98,7 +107,7 @@ export function UsersTab({
     if (!draft) return;
     await runUsersAction(async () => {
       setUsers(
-        await updateUser(token, pin, username, {
+        await updateUser(token, username, {
           displayName: draft.displayName,
           role: draft.role,
           servicePrivileges: draft.servicePrivileges
@@ -110,7 +119,7 @@ export function UsersTab({
 
   async function resetPassword(username: string) {
     await runUsersAction(async () => {
-      const result = await resetUserPassword(token, pin, username);
+      const result = await resetUserPassword(token, username);
       setUsers(result.users);
       setTemporaryPasswords((current) => ({ ...current, [username]: result.temporaryPassword }));
       onToast("Temporary password generated");
@@ -120,23 +129,13 @@ export function UsersTab({
   async function removeUser(username: string) {
     if (!window.confirm(`Delete ${username}?`)) return;
     await runUsersAction(async () => {
-      setUsers(await deleteUser(token, pin, username));
+      setUsers(await deleteUser(token, username));
       setTemporaryPasswords((current) => {
         const next = { ...current };
         delete next[username];
         return next;
       });
       onToast("User deleted");
-    });
-  }
-
-  async function changePin(event: FormEvent) {
-    event.preventDefault();
-    await runUsersAction(async () => {
-      await updateUsersPin(token, pin, newPin);
-      setPin(newPin);
-      setNewPin("");
-      onToast("Users pin updated");
     });
   }
 
@@ -165,26 +164,6 @@ export function UsersTab({
     return buildPrivileges(serviceLines, addDraft.preset);
   }
 
-  if (!unlocked) {
-    return (
-      <section className="users-panel pin-panel">
-        <form className="editor-panel" onSubmit={unlock}>
-          <h2>Users</h2>
-          <p className="muted-copy">Enter the users pin code.</p>
-          <label>
-            Pin code
-            <input value={pin} type="password" inputMode="numeric" onChange={(event) => setPin(event.target.value)} autoFocus />
-          </label>
-          {error && <p className="error-text">{error}</p>}
-          <button className="primary-button" type="submit">
-            <KeyRound size={16} />
-            Unlock
-          </button>
-        </form>
-      </section>
-    );
-  }
-
   return (
     <section className="users-panel">
       <div className="users-header">
@@ -192,23 +171,10 @@ export function UsersTab({
           <p className="eyebrow">Access</p>
           <h2>Users</h2>
         </div>
-        <form className="inline-form" onSubmit={changePin}>
-          <input
-            aria-label="New users pin"
-            value={newPin}
-            type="password"
-            inputMode="numeric"
-            placeholder="New pin"
-            onChange={(event) => setNewPin(event.target.value)}
-          />
-          <button className="secondary-button" type="submit" disabled={!newPin}>
-            <KeyRound size={15} />
-            Change Pin
-          </button>
-        </form>
       </div>
 
       {error && <div className="alert danger">{error}</div>}
+      {loadingUsers && <div className="alert">Loading users...</div>}
 
       {Object.keys(temporaryPasswords).length > 0 && (
         <section className="temporary-password-panel" aria-label="Temporary passwords">
@@ -343,23 +309,39 @@ export function UsersTab({
                   <option value="admin">admin</option>
                 </select>
               </label>
-              <div className="privilege-grid">
-                {serviceLines.map((serviceLine) => (
-                  <label key={serviceLine}>
-                    <span>{serviceLine}</span>
-                    <select
-                      aria-label={`${user.username} ${serviceLine} privilege`}
-                      value={draft.servicePrivileges[serviceLine] ?? "view"}
-                      onChange={(event) =>
-                        updatePrivileges(user.username, serviceLine, event.target.value as ServicePrivilege)
-                      }
-                    >
-                      <option value="view">view</option>
-                      <option value="request">request</option>
-                      <option value="edit">edit</option>
-                    </select>
-                  </label>
-                ))}
+              <div className="user-privileges">
+                <div className="privilege-presets" aria-label={`${user.username} bulk privileges`}>
+                  <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "edit")}>
+                    <Pencil size={14} />
+                    All edit
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "view")}>
+                    <Eye size={14} />
+                    All view
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "request")}>
+                    <Send size={14} />
+                    All request
+                  </button>
+                </div>
+                <div className="privilege-grid">
+                  {serviceLines.map((serviceLine) => (
+                    <label key={serviceLine}>
+                      <span>{serviceLine}</span>
+                      <select
+                        aria-label={`${user.username} ${serviceLine} privilege`}
+                        value={draft.servicePrivileges[serviceLine] ?? "view"}
+                        onChange={(event) =>
+                          updatePrivileges(user.username, serviceLine, event.target.value as ServicePrivilege)
+                        }
+                      >
+                        <option value="view">view</option>
+                        <option value="request">request</option>
+                        <option value="edit">edit</option>
+                      </select>
+                    </label>
+                  ))}
+                </div>
               </div>
               <div className="password-reset">
                 <span>{user.mustChangePassword ? "Change required" : "Stored as hash"}</span>
@@ -419,6 +401,10 @@ export function UsersTab({
         [serviceLine]: privilege
       }
     });
+  }
+
+  function setAllPrivileges(username: string, privilege: ServicePrivilege) {
+    updateDraft(username, { servicePrivileges: buildPrivileges(serviceLines, privilege) });
   }
 }
 

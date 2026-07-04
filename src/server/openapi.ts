@@ -240,8 +240,7 @@ export function getOpenApiDocument() {
       "/api/users": {
         get: {
           summary: "List browser users",
-          description: "Admin-only and protected by the users pin code.",
-          parameters: [{ name: "pin", in: "query", required: true, schema: { type: "string" } }],
+          description: "Requires a logged-in admin browser session. API keys are not accepted for browser-user management.",
           responses: {
             "200": {
               description: "User list",
@@ -256,27 +255,18 @@ export function getOpenApiDocument() {
                 }
               }
             },
-            "403": { description: "Invalid pin or non-admin user" }
+            "403": { description: "Non-admin user or API-key auth" }
           }
         },
         post: {
           summary: "Create browser user",
           description:
-            "Admin-only and protected by the users pin code. Omit password to generate a temporary password returned once and force a password change on next login.",
+            "Requires a logged-in admin browser session. API keys are not accepted for browser-user management. Omit password to generate a temporary password returned once and force a password change on next login.",
           requestBody: {
             required: true,
             content: {
               "application/json": {
-                schema: {
-                  allOf: [
-                    { $ref: "#/components/schemas/UserInput" },
-                    {
-                      type: "object",
-                      required: ["pin"],
-                      properties: { pin: { type: "string" } }
-                    }
-                  ]
-                }
+                schema: { $ref: "#/components/schemas/UserInput" }
               }
             }
           },
@@ -299,7 +289,7 @@ export function getOpenApiDocument() {
                 }
               }
             },
-            "403": { description: "Invalid pin or non-admin user" }
+            "403": { description: "Non-admin user or API-key auth" }
           }
         }
       },
@@ -307,16 +297,15 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create multiple browser users",
           description:
-            "Admin-only and protected by the users pin code. Creates all users in one batch and returns generated temporary passwords once.",
+            "Requires a logged-in admin browser session. API keys are not accepted for browser-user management. Creates all users in one batch and returns generated temporary passwords once.",
           requestBody: {
             required: true,
             content: {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["pin", "users"],
+                  required: ["users"],
                   properties: {
-                    pin: { type: "string" },
                     users: { type: "array", items: { $ref: "#/components/schemas/UserInput" } }
                   }
                 }
@@ -338,27 +327,27 @@ export function getOpenApiDocument() {
                 }
               }
             },
-            "403": { description: "Invalid pin or non-admin user" }
+            "403": { description: "Non-admin user or API-key auth" }
           }
         }
       },
       "/api/users/{username}": {
         patch: {
           summary: "Update browser user privileges",
-          description: "Admin-only and protected by the users pin code.",
+          description: "Requires a logged-in admin browser session. API keys are not accepted for browser-user management.",
           parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated user and refreshed user list" },
-            "403": { description: "Invalid pin or non-admin user" }
+            "403": { description: "Non-admin user or API-key auth" }
           }
         },
         delete: {
           summary: "Delete browser user",
-          description: "Admin-only and protected by the users pin code. The built-in admin account cannot be deleted.",
+          description: "Requires a logged-in admin browser session. API keys are not accepted for browser-user management. The built-in admin account cannot be deleted.",
           parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Refreshed user list" },
-            "403": { description: "Invalid pin or non-admin user" }
+            "403": { description: "Non-admin user or API-key auth" }
           }
         }
       },
@@ -366,21 +355,11 @@ export function getOpenApiDocument() {
         patch: {
           summary: "Generate a temporary password",
           description:
-            "Admin-only and protected by the users pin code. Generates a temporary password, returns it once, stores only its hash, and requires the user to change it on next login.",
+            "Requires a logged-in admin browser session. API keys are not accepted for browser-user management. Generates a temporary password, returns it once, stores only its hash, and requires the user to change it on next login.",
           parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Temporary password, updated user, and refreshed user list" },
-            "403": { description: "Invalid pin or non-admin user" }
-          }
-        }
-      },
-      "/api/users-pin": {
-        patch: {
-          summary: "Change users-tab pin code",
-          description: "Admin-only. Requires currentPin and nextPin in the JSON body.",
-          responses: {
-            "200": { description: "Pin changed" },
-            "403": { description: "Non-admin user" }
+            "403": { description: "Non-admin user or API-key auth" }
           }
         }
       },
