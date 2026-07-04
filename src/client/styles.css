@@ -1945,7 +1945,8 @@ h2 {
 
 .call-shifts-toolbar,
 .call-night-panel,
-.call-week-row {
+.call-week-row,
+.call-week-empty {
   display: grid;
   gap: 8px;
   border: 1px solid #d7e0ea;
@@ -1986,27 +1987,137 @@ h2 {
 
 .call-week-list {
   display: grid;
-  gap: 7px;
+  gap: 10px;
 }
 
 .call-week-row {
-  grid-template-columns: 128px minmax(0, 1fr);
-  align-items: start;
-  padding: 10px 12px;
+  padding: 12px;
 }
 
-.call-week-row strong {
-  color: #405166;
+.call-week-empty {
+  color: #5d7088;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.call-week-header,
+.call-day-header,
+.call-duty-line {
+  display: flex;
+  align-items: center;
+}
+
+.call-week-header {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.call-week-header strong {
+  color: #17364f;
+  font-size: 0.9rem;
+}
+
+.call-week-header span {
+  color: #667386;
   font-size: 0.78rem;
+  font-weight: 900;
 }
 
-.call-week-row p {
-  margin: 0;
+.call-weekend-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.call-day-card {
+  min-height: 112px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  border: 1px solid #d5dee8;
+  border-left: 4px solid #20675a;
+  border-radius: 7px;
+  background: #fbfcfe;
+  padding: 10px;
+}
+
+.call-day-card:nth-child(2) {
+  border-left-color: #b9831d;
+}
+
+.call-day-card:nth-child(3) {
+  border-left-color: #2f78c4;
+}
+
+.call-day-card.today {
+  background: #eef9f5;
+  box-shadow: inset 0 0 0 2px rgba(32, 103, 90, 0.18);
+}
+
+.call-day-card.outside-month {
+  background: #f3f6f9;
+  opacity: 0.62;
+}
+
+.call-day-card.empty .call-duty-list {
+  align-content: center;
+}
+
+.call-day-header {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.call-day-name {
+  color: #5d7088;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.call-day-date {
+  color: #1d2733;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.call-duty-list {
+  display: grid;
+  gap: 6px;
+}
+
+.call-duty-line {
+  min-width: 0;
+  align-items: start;
+  gap: 7px;
+}
+
+.call-duty-label {
+  width: 58px;
+  flex: 0 0 58px;
+  border-radius: 999px;
+  background: #edf2f7;
+  color: #526173;
+  padding: 2px 6px;
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.call-duty-line strong {
+  min-width: 0;
   color: #1d2733;
   font-size: 0.92rem;
-  font-weight: 800;
-  line-height: 1.45;
+  line-height: 1.25;
   overflow-wrap: anywhere;
+}
+
+.call-duty-empty {
+  color: #8290a2;
+  font-size: 0.9rem;
+  font-weight: 800;
 }
 
 @media (max-width: 980px) {
@@ -2014,8 +2125,19 @@ h2 {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .call-shifts-toolbar,
-  .call-week-row {
+  .call-shifts-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 680px) {
+  .call-week-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .call-weekend-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

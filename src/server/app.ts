@@ -15,7 +15,10 @@ import {
   formatClinicLabel,
   makeAssignment
 } from "../shared/scheduler";
+import { isResidentOnService } from "../shared/services";
 import {
+  CALL_POSITIONS,
+  CallPosition,
   ClaimRequest,
   CollectionName,
   CoverageChangeRequest,
@@ -41,6 +44,9 @@ import {
 import { getOpenApiDocument } from "./openapi";
 import { StateConflictError, StateStore } from "./store";
 import { UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
+
+const MAX_SURGERY_CALL_RESIDENTS = 3;
+const MAX_SCC_CALL_RESIDENTS = 1;
 
 const collections: CollectionName[] = [
   "hospitals",
@@ -843,7 +849,7 @@ function buildResidentCalendarIcs(state: PlannerState, residentId: string): stri
     events.push(
       allDayIcsEvent({
         uid: `${entry.id}@schedule-surgery`,
-        summary: `${capitalize(entry.kind)}${resident ? `: ${resident.name}` : ""}`,
+        summary: `${formatCoverageKindLabel(entry)}${resident ? `: ${resident.name}` : ""}`,
         description: entry.note,
         date: entry.date
       })
@@ -1032,7 +1038,8 @@ function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, 
   const date = assertDate(input.date ?? existing?.date);
   const residentId = readOptionalString(input.residentId);
   const serviceLine = readOptionalString(input.serviceLine) ?? existing?.serviceLine;
-  const note = readOptionalString(input.note) ?? "";
+  const callPosition = kind === "call" ? normalizeCallPosition(input.callPosition ?? existing?.callPosition) : undefined;
+  const note = normalizeCoverageEntryNote(kind, readOptionalString(input.note) ?? "");
   assertNoPhiText(note, "coverage note");
   const entry: CoverageEntry = {
     id: readOptionalString(input.id) ?? existing?.id ?? createId("cover"),
@@ -1040,6 +1047,7 @@ function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, 
     kind,
     residentId,
     serviceLine,
+    callPosition,
     note,
     createdAt: existing?.createdAt ?? readOptionalString(input.createdAt) ?? now,
     updatedAt: now
@@ -1347,14 +1355,88 @@ function applyResidentTradeRequest(state: PlannerState, coverageRequest: Coverag
 
 function validateCoverageEntry(state: PlannerState, entry: CoverageEntry): void {
   if (!isCoverageKindAllowedOnDate(entry.kind, entry.date)) {
-    throw new Error(`${entry.kind} is not allowed on ${entry.date}`);
+    throw new HttpError(400, `${entry.kind} is not allowed on ${entry.date}`);
   }
   if ((entry.kind === "call" || entry.kind === "rounding") && !entry.residentId) {
-    throw new Error(`${entry.kind} requires a resident`);
+    throw new HttpError(400, `${entry.kind} requires a resident`);
   }
   if (entry.residentId && !state.residents.some((resident) => resident.id === entry.residentId)) {
-    throw new Error(`Unknown resident: ${entry.residentId}`);
+    throw new HttpError(400, `Unknown resident: ${entry.residentId}`);
   }
+  if (entry.kind === "call") {
+    validateCallEntry(state, entry);
+  }
+}
+
+function validateCallEntry(state: PlannerState, entry: CoverageEntry): void {
+  if (entry.note && !isSccCallNote(entry.note)) {
+    throw new HttpError(400, "Call entries only accept resident assignments; note may only be SCC or ICU for SCC/ICU call");
+  }
+
+  const callEntries = [
+    ...state.coverageEntries.filter((candidate) => candidate.kind === "call" && candidate.date === entry.date && candidate.id !== entry.id),
+    entry
+  ].filter((candidate) => candidate.residentId);
+
+  const duplicateResident = callEntries.find(
+    (candidate, index) => callEntries.findIndex((other) => other.residentId === candidate.residentId) !== index
+  );
+  if (duplicateResident?.residentId) {
+    const residentName = state.residents.find((resident) => resident.id === duplicateResident.residentId)?.name ?? duplicateResident.residentId;
+    throw new HttpError(400, `${residentName} is already listed for call on ${entry.date}`);
+  }
+
+  const surgeryEntries = callEntries.filter((candidate) => !isSccCallEntry(state, candidate));
+  for (const surgeryEntry of surgeryEntries) {
+    if (!surgeryEntry.callPosition) {
+      throw new HttpError(400, "Surgery call entries require callPosition: senior, mid-level, or intern");
+    }
+  }
+  const duplicatePosition = surgeryEntries.find(
+    (candidate, index) =>
+      Boolean(candidate.callPosition) &&
+      surgeryEntries.findIndex((other) => other.callPosition === candidate.callPosition) !== index
+  );
+  if (duplicatePosition?.callPosition) {
+    throw new HttpError(400, `Surgery call already has a ${duplicatePosition.callPosition} resident on ${entry.date}`);
+  }
+  if (surgeryEntries.length > MAX_SURGERY_CALL_RESIDENTS) {
+    throw new HttpError(400, `Surgery call can include at most ${MAX_SURGERY_CALL_RESIDENTS} residents on ${entry.date}`);
+  }
+
+  const sccEntries = callEntries.filter((candidate) => isSccCallEntry(state, candidate));
+  if (sccEntries.some((candidate) => candidate.callPosition)) {
+    throw new HttpError(400, "SCC/ICU call entries do not use callPosition");
+  }
+  if (sccEntries.length > MAX_SCC_CALL_RESIDENTS) {
+    throw new HttpError(400, `SCC/ICU call can include at most ${MAX_SCC_CALL_RESIDENTS} resident on ${entry.date}`);
+  }
+}
+
+function normalizeCallPosition(value: unknown): CallPosition | undefined {
+  const normalized = readOptionalString(value)?.toLowerCase().replace(/[_\s]+/g, "-");
+  if (!normalized) return undefined;
+  if (normalized === "mid" || normalized === "midlevel") return "mid-level";
+  if (CALL_POSITIONS.includes(normalized as CallPosition)) return normalized as CallPosition;
+  throw new HttpError(400, "Invalid callPosition; use senior, mid-level, or intern");
+}
+
+function normalizeCoverageEntryNote(kind: CoverageKind, note: string): string {
+  if (kind !== "call") return note;
+  if (!note) return "";
+  if (/^icu$/i.test(note)) return "ICU";
+  if (/^scc$/i.test(note)) return "SCC";
+  return note;
+}
+
+function isSccCallEntry(state: PlannerState, entry: CoverageEntry): boolean {
+  if (isSccCallNote(entry.note)) return true;
+  const resident = entry.residentId ? state.residents.find((candidate) => candidate.id === entry.residentId) : undefined;
+  return resident ? isResidentOnService(resident, "ICU", entry.date) : false;
+}
+
+function isSccCallNote(note: string): boolean {
+  return /^(icu|scc)$/i.test(note.trim());
 }
 
 function isTradeableCoverageKind(kind: CoverageKind): boolean {
@@ -1442,7 +1524,19 @@ function normalizeAliasList(value: unknown): string[] {
 
 function compareCoverageEntries(a: CoverageEntry, b: CoverageEntry): number {
   const kindOrder = { call: 0, rounding: 1, off: 2, note: 3 };
-  return a.date.localeCompare(b.date) || kindOrder[a.kind] - kindOrder[b.kind] || a.id.localeCompare(b.id);
+  return (
+    a.date.localeCompare(b.date) ||
+    kindOrder[a.kind] - kindOrder[b.kind] ||
+    getCoverageEntryPositionRank(a) - getCoverageEntryPositionRank(b) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+function getCoverageEntryPositionRank(entry: CoverageEntry): number {
+  if (entry.kind !== "call") return 0;
+  if (entry.callPosition) return CALL_POSITIONS.indexOf(entry.callPosition);
+  if (isSccCallNote(entry.note)) return CALL_POSITIONS.length + 1;
+  return CALL_POSITIONS.length;
 }
 
 function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
@@ -1508,7 +1602,16 @@ function describeCoverageEntry(state: PlannerState, entry: CoverageEntry): strin
     ? state.residents.find((resident) => resident.id === entry.residentId)?.name ?? "Unknown resident"
     : "General";
   const note = entry.note ? ` (${entry.note})` : "";
-  return `${residentName} ${entry.kind} on ${entry.date}${note}`;
+  return `${residentName} ${formatCoverageKindLabel(entry).toLowerCase()} on ${entry.date}${note}`;
+}
+
+function formatCoverageKindLabel(entry: CoverageEntry): string {
+  if (entry.kind === "call" && entry.callPosition) return `${formatCallPositionLabel(entry.callPosition)} call`;
+  return capitalize(entry.kind);
+}
+
+function formatCallPositionLabel(callPosition: CallPosition): string {
+  return callPosition === "mid-level" ? "Mid-level" : capitalize(callPosition);
 }
 
 function capitalize(value: string): string {

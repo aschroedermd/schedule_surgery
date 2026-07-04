@@ -35,6 +35,8 @@ import {
 import { addDays, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
 import {
+  CALL_POSITIONS,
+  CallPosition,
   CoverageChangeRequest,
   CoverageEntry,
   CoverageKind,
@@ -797,31 +799,39 @@ function CoverageSlotSelect({
 }
 
 function CallTeamSummary({ state, entries }: { state: PlannerState; entries: CoverageEntry[] }) {
-  const sortedEntries = [...entries].sort((a, b) => {
-    const aResident = state.residents.find((resident) => resident.id === a.residentId);
-    const bResident = state.residents.find((resident) => resident.id === b.residentId);
-    return (aResident?.name ?? a.id).localeCompare(bResident?.name ?? b.id);
-  });
-  const surgeryEntries = sortedEntries.filter((entry) => !isIcuCallEntry(state, entry));
-  const icuEntries = sortedEntries.filter((entry) => isIcuCallEntry(state, entry));
+  const surgeryEntries = entries.filter((entry) => !isIcuCallEntry(state, entry));
+  const icuEntries = entries.filter((entry) => isIcuCallEntry(state, entry));
+  const surgeryNames = formatCallEntryNames(state, getOrderedSurgeryCallEntries(surgeryEntries));
 
   return (
     <div className="coverage-call-team">
-      <span>Call: {formatCallEntryNames(state, surgeryEntries)}</span>
+      <span>Call: {surgeryNames}</span>
       {icuEntries.length > 0 && <span>SCC: {formatCallEntryNames(state, icuEntries)}</span>}
     </div>
   );
 }
 
-function formatCallEntryNames(state: PlannerState, entries: CoverageEntry[]): string {
-  if (entries.length === 0) return "None listed";
-  return entries.map((entry) => formatCallEntryName(state, entry)).join(", ");
+function getOrderedSurgeryCallEntries(entries: CoverageEntry[]): CoverageEntry[] {
+  const entriesByPosition = new Map<CallPosition, CoverageEntry[]>();
+  const unpositionedEntries: CoverageEntry[] = [];
+  for (const entry of entries) {
+    if (entry.callPosition) {
+      entriesByPosition.set(entry.callPosition, [...(entriesByPosition.get(entry.callPosition) ?? []), entry]);
+    } else {
+      unpositionedEntries.push(entry);
+    }
+  }
+
+  return [...CALL_POSITIONS.flatMap((position) => entriesByPosition.get(position) ?? []), ...unpositionedEntries];
 }
 
-function formatCallEntryName(state: PlannerState, entry: CoverageEntry): string {
-  const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
-  const name = resident ? formatResidentName(resident) : "Unknown resident";
-  return entry.note && !isIcuNote(entry.note) ? `${name} (${entry.note})` : name;
+function formatCallEntryNames(state: PlannerState, entries: CoverageEntry[]): string {
+  if (entries.length === 0) return "None listed";
+  const residents = entries
+    .map((entry) => state.residents.find((candidate) => candidate.id === entry.residentId))
+    .filter((resident): resident is Resident => Boolean(resident));
+  if (residents.length === 0) return "None listed";
+  return residents.map((resident) => getResidentLastName(resident.name)).join(", ");
 }
 
 function isIcuCallEntry(state: PlannerState, entry: CoverageEntry): boolean {
@@ -1268,7 +1278,11 @@ function describeEntry(state: PlannerState, entry: CoverageEntry): string {
   const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
   const residentName = resident ? formatResidentName(resident) : "General";
   const note = entry.note ? ` (${entry.note})` : "";
-  return `${residentName} ${entry.kind} on ${entry.date}${note}`;
+  return `${residentName} ${formatCoverageKindLabel(entry).toLowerCase()} on ${entry.date}${note}`;
+}
+
+function formatCoverageKindLabel(entry: CoverageEntry): string {
+  return entry.kind;
 }
 
 function formatRequestStatus(coverageRequest: CoverageChangeRequest): string {

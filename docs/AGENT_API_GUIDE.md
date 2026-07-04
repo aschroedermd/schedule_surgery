@@ -126,6 +126,9 @@ DELETE /api/entities/{collection}/{id}
 POST   /api/assignments
 PATCH  /api/assignments/{id}
 DELETE /api/assignments/{id}
+POST   /api/coverage-entries
+PATCH  /api/coverage-entries/{id}
+DELETE /api/coverage-entries/{id}
 POST   /api/claims
 POST   /api/weeks/{weekId}/suggest
 POST   /api/weeks/{weekId}/suggest?service=Davies
@@ -158,7 +161,9 @@ hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cas
    - clinic: `POST /api/assignments` with `kind: "clinic"`
 7. Verify by reading the computed weekly schedule and warnings for the same `weekId`.
 
-Calendar `call` entries are global across services and support multiple residents on the same Friday-Sunday date for the surgery call team plus SCC/ICU call. Calendar `rounding` entries are service-specific and also support multiple same-day residents on Saturday-Sunday; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. To add another person, create a new `coverageEntries[]` item; to change an existing person, patch or delete that entry by `id`.
+Calendar `call` entries are global across services. For each Friday-Sunday surgery call date, create one `coverageEntries[]` item for each position: `callPosition: "senior"`, `callPosition: "mid-level"`, and `callPosition: "intern"`, with `residentId` resolved from `state.residents`. Do not put role labels, source text, imported PDF labels, or names in `note`; those positions belong in `callPosition`. For the one SCC/ICU call resident, create one additional `kind: "call"` entry and either leave `note` blank when the resident's rotation is already SCC/ICU or set `note` to exactly `SCC` or `ICU`; omit `callPosition` for SCC/ICU. The API rejects duplicate same-day call residents, duplicate surgery call positions, missing `callPosition` on surgery call entries, more than one SCC/ICU call resident, and free-text call notes. The Calendar and CALL tab use `callPosition` for senior/mid-level/intern ordering but display compact last names only.
+
+Calendar `rounding` entries are service-specific and also support multiple same-day residents on Saturday-Sunday; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. To add another person, create a new `coverageEntries[]` item; to change an existing person, patch or delete that entry by `id`.
 
 Posting a case assignment for a different resident on the same `targetId` adds that resident as a co-assignee. The API rejects duplicate resident/case pairs.
 

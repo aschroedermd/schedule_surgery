@@ -18,6 +18,10 @@ export type AssignmentSource = "admin" | "suggestion" | "viewer-claim";
 
 export type CoverageKind = "call" | "rounding" | "off" | "note";
 
+export const CALL_POSITIONS = ["senior", "mid-level", "intern"] as const;
+
+export type CallPosition = (typeof CALL_POSITIONS)[number];
+
 export type CoverageRequestAction = "create" | "update" | "delete";
 
 export type CoverageRequestStatus = "pending" | "approved" | "denied";
@@ -146,6 +150,7 @@ export interface CoverageEntry {
   kind: CoverageKind;
   residentId?: string;
   serviceLine?: string;
+  callPosition?: CallPosition;
   note: string;
   createdAt: string;
   updatedAt: string;

@@ -523,7 +523,7 @@ describe("planner API", () => {
     await request(app)
       .post("/api/coverage-entries")
       .set("authorization", `Bearer ${requesterToken}`)
-      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "", serviceLine: "Davies" })
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", callPosition: "senior", note: "", serviceLine: "Davies" })
       .expect(403);
 
     const requestResponse = await request(app)
@@ -536,6 +536,7 @@ describe("planner API", () => {
           date: "2026-07-03",
           kind: "call",
           residentId: "res_fellow",
+          callPosition: "senior",
           note: ""
         },
         message: "Can this resident cover this call?"
@@ -572,13 +573,13 @@ describe("planner API", () => {
     await request(app)
       .post("/api/coverage-entries")
       .set("authorization", `Bearer ${token}`)
-      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "", serviceLine: "Davies" })
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", callPosition: "senior", note: "", serviceLine: "Davies" })
       .expect(201);
 
     const response = await request(app)
       .post("/api/coverage-entries")
       .set("authorization", `Bearer ${token}`)
-      .send({ date: "2026-07-03", kind: "call", residentId: "res_chief", note: "", serviceLine: "Davies" })
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_chief", callPosition: "mid-level", note: "", serviceLine: "Davies" })
       .expect(201);
 
     expect(response.body.coverageEntries).toEqual(
@@ -587,6 +588,75 @@ describe("planner API", () => {
         expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_chief" })
       ])
     );
+  });
+
+  it("keeps surgery call entries resident-only and capped at three plus one SCC/ICU resident", async () => {
+    const { app, token } = await loginAs("admin");
+
+    const invalidNoteResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-03",
+        kind: "call",
+        residentId: "res_chief",
+        note: "Night team chief; Block 1 FINAL 6.25.2026",
+        serviceLine: "Davies"
+      })
+      .expect(400);
+    expect(invalidNoteResponse.body.error).toMatch(/only accept resident assignments/i);
+
+    const missingPositionResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_chief", note: "", serviceLine: "Davies" })
+      .expect(400);
+    expect(missingPositionResponse.body.error).toMatch(/require callPosition/i);
+
+    for (const [residentId, callPosition] of [
+      ["res_fellow", "senior"],
+      ["res_chief", "mid-level"],
+      ["res_swaak", "intern"]
+    ] as const) {
+      await request(app)
+        .post("/api/coverage-entries")
+        .set("authorization", `Bearer ${token}`)
+        .send({ date: "2026-07-03", kind: "call", residentId, callPosition, note: "", serviceLine: "Davies" })
+        .expect(201);
+    }
+
+    const sccResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_blue", note: "icu", serviceLine: "Davies" })
+      .expect(201);
+
+    expect(sccResponse.body.coverageEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_blue", note: "ICU" })
+      ])
+    );
+
+    const duplicateResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_chief", callPosition: "mid-level", note: "", serviceLine: "Davies" })
+      .expect(400);
+    expect(duplicateResponse.body.error).toMatch(/already listed for call/i);
+
+    const duplicatePositionResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_bradley", callPosition: "senior", note: "", serviceLine: "Davies" })
+      .expect(400);
+    expect(duplicatePositionResponse.body.error).toMatch(/already has a senior resident/i);
+
+    const secondSccResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_somaiah", note: "SCC", serviceLine: "Davies" })
+      .expect(400);
+    expect(secondSccResponse.body.error).toMatch(/SCC\/ICU call can include at most 1 resident/i);
   });
 
   it("preserves the target service for off-service rounding entries", async () => {
@@ -628,6 +698,7 @@ describe("planner API", () => {
           date: "2026-07-03",
           kind: "call",
           residentId: "res_fellow",
+          callPosition: "senior",
           note: ""
         },
         message: "Duplicate request"
@@ -1090,7 +1161,7 @@ describe("planner API", () => {
     await request(app)
       .post("/api/coverage-entries")
       .set("authorization", `Bearer ${token}`)
-      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", note: "", serviceLine: "Davies" })
+      .send({ date: "2026-07-03", kind: "call", residentId: "res_fellow", callPosition: "senior", note: "", serviceLine: "Davies" })
       .expect(201);
 
     const deleteResponse = await request(app)

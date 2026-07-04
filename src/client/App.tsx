@@ -50,6 +50,8 @@ import {
   Assignment,
   Attending,
   AttendingBlock,
+  CALL_POSITIONS,
+  CallPosition,
   ClinicSession,
   CollectionName,
   Hospital,
@@ -80,12 +82,14 @@ import {
 import {
   ROTATION_BLOCK_DATES,
   getCalendarNightResidentsForDate,
+  getResidentLastName,
   getResidentServiceTagsForDate,
   getRotationBlockForDate,
   getRotationForBlock,
   getRotationForDate,
   getTodayDate,
-  normalizeRotationServiceToServiceLine
+  normalizeRotationServiceToServiceLine,
+  sortResidentsBySeniority
 } from "../shared/rotations";
 
 type Tab = "board" | "my" | "calendar" | "call" | "schedule" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
@@ -927,6 +931,7 @@ function CallShiftsTab({ state }: { state: PlannerState }) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
   const nightTeamSegments = getNightTeamSegments(state, month);
   const weekendRows = getWeekendCallRows(state, month);
+  const today = getTodayDate();
 
   useEffect(() => {
     localStorage.setItem("coverageCalendarMonth", month);
@@ -974,12 +979,43 @@ function CallShiftsTab({ state }: { state: PlannerState }) {
       </section>
 
       <div className="call-week-list">
-        {weekendRows.map((row) => (
-          <article key={row.anchorDate} className="call-week-row">
-            <strong>{row.label}</strong>
-            <p>{row.items.join(" | ")}</p>
-          </article>
-        ))}
+        {weekendRows.length === 0 ? (
+          <section className="call-week-empty">No weekend call listed for this month.</section>
+        ) : (
+          weekendRows.map((row) => (
+            <article key={row.anchorDate} className="call-week-row">
+              <header className="call-week-header">
+                <strong>{row.label}</strong>
+                <span>{row.dateRange}</span>
+              </header>
+              <div className="call-weekend-grid">
+                {row.days.map((day) => (
+                  <section
+                    key={day.date}
+                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length ? "" : " empty"}${day.date === today ? " today" : ""}`}
+                  >
+                    <header className="call-day-header">
+                      <span className="call-day-name">{day.weekday}</span>
+                      <span className="call-day-date">{formatShortDate(day.date)}</span>
+                    </header>
+                    <div className="call-duty-list">
+                      {day.groups.length === 0 ? (
+                        <span className="call-duty-empty">Not listed</span>
+                      ) : (
+                        day.groups.map((group) => (
+                          <div key={group.label} className="call-duty-line">
+                            <span className="call-duty-label">{group.label}</span>
+                            <strong>{group.residentNames}</strong>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </article>
+          ))
+        )}
       </div>
     </section>
   );
@@ -2515,10 +2551,23 @@ interface CallNightSegment {
   residentNames: string;
 }
 
+interface CallDutyGroup {
+  label: string;
+  residentNames: string;
+}
+
+interface CallWeekendDay {
+  date: string;
+  weekday: string;
+  inMonth: boolean;
+  groups: CallDutyGroup[];
+}
+
 interface CallWeekendRow {
   anchorDate: string;
   label: string;
-  items: string[];
+  dateRange: string;
+  days: CallWeekendDay[];
 }
 
 function getDefaultCallMonth(state: PlannerState): string {
@@ -2568,12 +2617,23 @@ function getWeekendCallRows(state: PlannerState, month: string): CallWeekendRow[
 
   return [...groupedDates.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([anchorDate, dates]) => ({
+    .map(([anchorDate]) => ({
       anchorDate,
       label: `Week of ${formatShortDate(anchorDate)}`,
-      items: dates
-        .sort((a, b) => a.localeCompare(b))
-        .map((date) => `${displayDate(date)}: ${formatCallResidentsForDate(state, date)}`)
+      dateRange: formatCallDateRange(anchorDate, addDays(anchorDate, 2)),
+      days: [
+        { weekday: "Fri", offset: 0 },
+        { weekday: "Sat", offset: 1 },
+        { weekday: "Sun", offset: 2 }
+      ].map(({ weekday, offset }) => {
+        const date = addDays(anchorDate, offset);
+        return {
+          date,
+          weekday,
+          inMonth: getMonthFromDate(date) === month,
+          groups: getCallDutyGroupsForDate(state, date)
+        };
+      })
     }));
 }
 
@@ -2601,20 +2661,40 @@ function getWeekendAnchorDate(date: string): string {
   return date;
 }
 
-function formatCallResidentsForDate(state: PlannerState, date: string): string {
+function getCallDutyGroupsForDate(state: PlannerState, date: string): CallDutyGroup[] {
   const entries = state.coverageEntries.filter((entry) => entry.date === date && entry.kind === "call" && entry.residentId);
-  if (entries.length === 0) return "Not listed";
+  if (entries.length === 0) return [];
   const surgeryEntries = entries.filter((entry) => !isSccCallEntry(state, entry));
   const sccEntries = entries.filter((entry) => isSccCallEntry(state, entry));
-  const surgeryNames = formatResidentList(getEntryResidents(state, surgeryEntries));
-  const sccNames = formatResidentList(getEntryResidents(state, sccEntries));
-  if (surgeryNames && sccNames) return `${surgeryNames}; SCC: ${sccNames}`;
-  return surgeryNames || `SCC: ${sccNames}`;
+  const surgeryNames = formatCallEntryLastNameList(state, getOrderedSurgeryCallEntries(surgeryEntries));
+  const sccNames = formatCallEntryLastNameList(state, sccEntries);
+  return [
+    ...(surgeryNames ? [{ label: "Call", residentNames: surgeryNames }] : []),
+    ...(sccNames ? [{ label: "SCC", residentNames: sccNames }] : [])
+  ];
+}
+
+function getOrderedSurgeryCallEntries<T extends { callPosition?: CallPosition }>(entries: T[]): T[] {
+  const entriesByPosition = new Map<CallPosition, T[]>();
+  const unpositionedEntries: T[] = [];
+  for (const entry of entries) {
+    if (entry.callPosition) {
+      entriesByPosition.set(entry.callPosition, [...(entriesByPosition.get(entry.callPosition) ?? []), entry]);
+    } else {
+      unpositionedEntries.push(entry);
+    }
+  }
+
+  return [...CALL_POSITIONS.flatMap((position) => entriesByPosition.get(position) ?? []), ...unpositionedEntries];
 }
 
 function getEntryResidents(state: PlannerState, entries: Array<{ residentId?: string }>): Resident[] {
   const residentsById = new Map(state.residents.map((resident) => [resident.id, resident]));
   return entries.map((entry) => (entry.residentId ? residentsById.get(entry.residentId) : undefined)).filter((resident): resident is Resident => Boolean(resident));
+}
+
+function formatCallEntryLastNameList(state: PlannerState, entries: Array<{ residentId?: string }>): string {
+  return getEntryResidents(state, entries).map((resident) => getResidentLastName(resident.name)).join(", ");
 }
 
 function isSccCallEntry(state: PlannerState, entry: { residentId?: string; note?: string; date: string }): boolean {
@@ -2625,26 +2705,6 @@ function isSccCallEntry(state: PlannerState, entry: { residentId?: string; note?
 
 function formatResidentList(residents: Resident[]): string {
   return sortResidentsBySeniority(residents).map(formatResidentName).join(", ");
-}
-
-function sortResidentsBySeniority(residents: Resident[]): Resident[] {
-  return [...residents].sort((a, b) => {
-    const rankDelta = getTrainingLevelRank(b.trainingLevel) - getTrainingLevelRank(a.trainingLevel);
-    if (rankDelta !== 0) return rankDelta;
-    return a.name.localeCompare(b.name);
-  });
-}
-
-function getTrainingLevelRank(trainingLevel: TrainingLevel): number {
-  const ranks: Record<TrainingLevel, number> = {
-    Fellow: 6,
-    PGY5: 5,
-    PGY4: 4,
-    PGY3: 3,
-    PGY2: 2,
-    PGY1: 1
-  };
-  return ranks[trainingLevel] ?? 0;
 }
 
 function formatCallDateRange(startDate: string, endDate: string): string {

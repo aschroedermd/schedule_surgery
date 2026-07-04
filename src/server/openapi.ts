@@ -1,4 +1,4 @@
-import { SERVICE_LINES } from "../shared/types";
+import { CALL_POSITIONS, SERVICE_LINES } from "../shared/types";
 
 export function getOpenApiDocument() {
   return {
@@ -142,7 +142,15 @@ export function getOpenApiDocument() {
             kind: { type: "string", enum: ["call", "rounding", "off", "note"] },
             residentId: { type: "string" },
             serviceLine: { type: "string", enum: [...SERVICE_LINES] },
-            note: { type: "string" }
+            callPosition: {
+              type: "string",
+              enum: [...CALL_POSITIONS],
+              description: "Required for surgery call entries. Use senior, mid-level, or intern. Omit for SCC/ICU call."
+            },
+            note: {
+              type: "string",
+              description: "For call entries, omit this unless marking the one SCC/ICU resident with exactly SCC or ICU."
+            }
           }
         },
         CoverageRequestInput: {
@@ -571,7 +579,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create a call calendar entry",
           description:
-            "Requires edit privilege for serviceLine, or admin/API admin access. Call is allowed Friday-Sunday and is shared across services; multiple same-day call entries can represent the surgery call team and SCC/ICU call. Rounding is allowed Saturday-Sunday and supports multiple service-specific rounders. Patch or delete by id to change an existing entry.",
+            "Requires edit privilege for serviceLine, or admin/API admin access. Call is allowed Friday-Sunday and is shared across services. Each surgery call date uses one residentId from the resident list for each callPosition: senior, mid-level, and intern. Each position can be filled once per date. The one SCC/ICU resident is an additional call entry with note SCC or ICU and no callPosition. Do not put role names, source labels, or free text in call note. Rounding is allowed Saturday-Sunday and supports multiple service-specific rounders. Patch or delete by id to change an existing entry.",
           requestBody: {
             required: true,
             content: {
@@ -582,6 +590,7 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" },
+            "400": { description: "Invalid coverage entry" },
             "403": { description: "Edit privilege required" }
           }
         }

@@ -1,5 +1,5 @@
 import { formatDate } from "./date";
-import { Resident, ResidentRotationBlock, SERVICE_LINES, ServiceLine } from "./types";
+import { Resident, ResidentRotationBlock, SERVICE_LINES, ServiceLine, TrainingLevel } from "./types";
 
 export const ROTATION_BLOCK_DATES = [
   { blockNumber: 1, startDate: "2026-07-01", endDate: "2026-08-02" },
@@ -78,6 +78,26 @@ export function getCalendarNightResidentsForDate(residents: Resident[], date: st
 
   const sccNight = residents.filter((resident) => getRotationForDate(resident, date)?.service === "SCC Night");
   return sortResidentsByName([...nightFloat, ...sccNight]).slice(0, 3);
+}
+
+export function sortResidentsBySeniority<T extends Pick<Resident, "name" | "trainingLevel">>(residents: T[]): T[] {
+  return [...residents].sort((a, b) => {
+    const rankDelta = getTrainingLevelRank(b.trainingLevel) - getTrainingLevelRank(a.trainingLevel);
+    if (rankDelta !== 0) return rankDelta;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+export function getTrainingLevelRank(trainingLevel: TrainingLevel): number {
+  const ranks: Record<TrainingLevel, number> = {
+    Fellow: 6,
+    PGY5: 5,
+    PGY4: 4,
+    PGY3: 3,
+    PGY2: 2,
+    PGY1: 1
+  };
+  return ranks[trainingLevel] ?? 0;
 }
 
 export function getResidentLastName(name: string): string {

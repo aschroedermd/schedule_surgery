@@ -175,15 +175,15 @@ export function createSeedCoverageEntries(): CoverageEntry[] {
     seedCoverageEntry("cover_2026_07_01_adeleke_step3", "2026-07-01", "note", "res_fellow", "STEP 3"),
     seedCoverageEntry("cover_2026_07_02_adeleke_step3", "2026-07-02", "note", "res_fellow", "STEP 3"),
     seedCoverageEntry("cover_2026_07_04_schroeder_round", "2026-07-04", "rounding", "res_chief"),
-    seedCoverageEntry("cover_2026_07_05_schroeder_call", "2026-07-05", "call", "res_chief"),
+    seedCoverageEntry("cover_2026_07_05_schroeder_call", "2026-07-05", "call", "res_chief", "", "senior"),
     seedCoverageEntry("cover_2026_07_09_cao_paternity", "2026-07-09", "off", "res_offservice", "paternity"),
-    seedCoverageEntry("cover_2026_07_10_swaak_call", "2026-07-10", "call", "res_swaak"),
-    seedCoverageEntry("cover_2026_07_11_adeleke_call", "2026-07-11", "call", "res_fellow"),
+    seedCoverageEntry("cover_2026_07_10_swaak_call", "2026-07-10", "call", "res_swaak", "", "mid-level"),
+    seedCoverageEntry("cover_2026_07_11_adeleke_call", "2026-07-11", "call", "res_fellow", "", "senior"),
     seedCoverageEntry("cover_2026_07_12_adeleke_round", "2026-07-12", "rounding", "res_fellow"),
-    seedCoverageEntry("cover_2026_07_17_schroeder_call", "2026-07-17", "call", "res_chief"),
+    seedCoverageEntry("cover_2026_07_17_schroeder_call", "2026-07-17", "call", "res_chief", "", "senior"),
     seedCoverageEntry("cover_2026_07_18_schroeder_round", "2026-07-18", "rounding", "res_chief"),
     seedCoverageEntry("cover_2026_07_19_schroeder_round", "2026-07-19", "rounding", "res_chief"),
-    seedCoverageEntry("cover_2026_07_24_swaak_call", "2026-07-24", "call", "res_swaak"),
+    seedCoverageEntry("cover_2026_07_24_swaak_call", "2026-07-24", "call", "res_swaak", "", "mid-level"),
     seedCoverageEntry("cover_2026_07_25_swaak_round", "2026-07-25", "rounding", "res_swaak"),
     seedCoverageEntry("cover_2026_07_26_swaak_round", "2026-07-26", "rounding", "res_swaak"),
     seedCoverageEntry("cover_2026_07_31_swaak_conference", "2026-07-31", "off", "res_swaak", "conference"),
@@ -197,13 +197,15 @@ function seedCoverageEntry(
   date: string,
   kind: CoverageEntry["kind"],
   residentId: string,
-  note = ""
+  note = "",
+  callPosition?: CoverageEntry["callPosition"]
 ): CoverageEntry {
   return {
     id,
     date,
     kind,
     residentId,
+    callPosition,
     note,
     createdAt: seedCreatedAt,
     updatedAt: seedCreatedAt
