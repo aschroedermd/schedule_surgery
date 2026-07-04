@@ -1031,6 +1031,7 @@ function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, 
   const kind = assertCoverageKind(input.kind ?? existing?.kind);
   const date = assertDate(input.date ?? existing?.date);
   const residentId = readOptionalString(input.residentId);
+  const serviceLine = readOptionalString(input.serviceLine) ?? existing?.serviceLine;
   const note = readOptionalString(input.note) ?? "";
   assertNoPhiText(note, "coverage note");
   const entry: CoverageEntry = {
@@ -1038,6 +1039,7 @@ function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, 
     date,
     kind,
     residentId,
+    serviceLine,
     note,
     createdAt: existing?.createdAt ?? readOptionalString(input.createdAt) ?? now,
     updatedAt: now

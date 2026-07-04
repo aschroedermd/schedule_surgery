@@ -141,6 +141,7 @@ export function getOpenApiDocument() {
             date: { type: "string", format: "date" },
             kind: { type: "string", enum: ["call", "rounding", "off", "note"] },
             residentId: { type: "string" },
+            serviceLine: { type: "string", enum: [...SERVICE_LINES] },
             note: { type: "string" }
           }
         },

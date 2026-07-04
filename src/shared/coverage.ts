@@ -1,6 +1,6 @@
 import { addDays, formatDate, parseLocalDate } from "./date";
 import { CoverageEntry, CoverageKind, Resident } from "./types";
-import { isResidentOnService } from "./services";
+import { isResidentOnService, servicesMatch } from "./services";
 
 export function isCallDate(date: string): boolean {
   const day = parseLocalDate(date).getDay();
@@ -54,6 +54,7 @@ export function hasServiceRoundingCoverage(
   return entries.some((entry) => {
     if (entry.date !== date || !entry.residentId) return false;
     if (entry.kind !== "call" && entry.kind !== "rounding") return false;
+    if (entry.kind === "rounding" && entry.serviceLine) return servicesMatch(entry.serviceLine, serviceLine);
     const resident = residentsById.get(entry.residentId);
     return resident ? isResidentOnService(resident, serviceLine, date) : false;
   });

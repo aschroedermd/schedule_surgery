@@ -891,19 +891,79 @@ h2 {
 
 .coverage-add-rounder {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+  justify-items: start;
+}
+
+.coverage-add-rounder-trigger {
+  min-height: 24px;
+  padding: 3px 7px;
+  border-style: dashed;
+  font-size: 0.7rem;
+  line-height: 1;
+  text-transform: none;
+}
+
+.coverage-add-rounder.expanded {
+  justify-items: stretch;
+}
+
+.coverage-rounder-picker {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  border: 1px solid #d8e0ea;
+  border-radius: 7px;
+  background: #fbfcfe;
+  padding: 6px;
+}
+
+.coverage-rounder-picker-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
   gap: 5px;
 }
 
-.coverage-add-rounder select {
+.coverage-rounder-picker-header input {
   min-height: 31px;
   padding: 4px 7px;
 }
 
-.coverage-add-rounder .secondary-button {
+.coverage-rounder-picker-header .icon-button {
+  width: 28px;
   min-height: 31px;
-  padding: 5px 8px;
-  text-transform: lowercase;
+}
+
+.coverage-rounder-options {
+  display: grid;
+  gap: 4px;
+  max-height: 170px;
+  overflow-y: auto;
+}
+
+.coverage-rounder-option {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  border: 1px solid rgba(64, 79, 98, 0.14);
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px 7px;
+  color: #1d2733;
+  text-align: left;
+}
+
+.coverage-rounder-option strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.coverage-rounder-option span,
+.coverage-rounder-empty {
+  color: #66758a;
+  font-size: 0.68rem;
+  font-weight: 800;
 }
 
 .coverage-call-team {
@@ -1758,10 +1818,6 @@ h2 {
   .coverage-trade-form .icon-button {
     grid-column: 2;
     grid-row: 1 / 4;
-  }
-
-  .coverage-add-rounder {
-    grid-template-columns: minmax(0, 1fr) 82px;
   }
 
   .coverage-note-form,

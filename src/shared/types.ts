@@ -145,6 +145,7 @@ export interface CoverageEntry {
   date: string;
   kind: CoverageKind;
   residentId?: string;
+  serviceLine?: string;
   note: string;
   createdAt: string;
   updatedAt: string;

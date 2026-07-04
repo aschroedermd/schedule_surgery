@@ -345,7 +345,7 @@ function CoverageDay({
                   token={token}
                   selectedService={selectedService}
                   visibleServices={visibleServices}
-                  visibleResidents={dayVisibleResidents}
+                  visibleResidents={state.residents}
                   currentResident={currentResident}
                   isAdmin={isAdmin}
                   servicePrivileges={servicePrivileges}
@@ -362,7 +362,6 @@ function CoverageDay({
             token={token}
             selectedService={selectedService}
             visibleServices={visibleServices}
-            visibleResidents={dayVisibleResidents}
             existingEntries={roundingEntries}
             isAdmin={isAdmin}
             servicePrivileges={servicePrivileges}
@@ -441,7 +440,6 @@ function AddRounderControl({
   token,
   selectedService,
   visibleServices,
-  visibleResidents,
   existingEntries,
   isAdmin,
   servicePrivileges,
@@ -453,43 +451,44 @@ function AddRounderControl({
   token: string;
   selectedService: string;
   visibleServices: string[];
-  visibleResidents: Resident[];
   existingEntries: CoverageEntry[];
   isAdmin: boolean;
   servicePrivileges: ServicePrivileges;
   disabled: boolean;
   onMutate: MutationRunner;
 }) {
+  const rounderServiceLine = resolveRoundingMutationService(visibleServices, selectedService);
+  const canCreateRounder = !disabled && canRequestService(isAdmin, servicePrivileges, rounderServiceLine);
   const assignedResidentIds = useMemo(
     () => new Set(existingEntries.map((entry) => entry.residentId).filter((residentId): residentId is string => Boolean(residentId))),
     [existingEntries]
   );
   const availableResidents = useMemo(
     () =>
-      visibleResidents.filter((resident) => {
-        if (assignedResidentIds.has(resident.id)) return false;
-        const serviceLine = resolveResidentMutationService(state, resident.id, visibleServices, selectedService, date);
-        return canRequestService(isAdmin, servicePrivileges, serviceLine);
-      }),
-    [assignedResidentIds, date, isAdmin, selectedService, servicePrivileges, state, visibleResidents, visibleServices]
+      state.residents
+        .filter((resident) => !assignedResidentIds.has(resident.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [assignedResidentIds, state.residents]
   );
-  const [residentId, setResidentId] = useState(availableResidents[0]?.id ?? "");
+  const [showPicker, setShowPicker] = useState(false);
+  const [residentFilter, setResidentFilter] = useState("");
+  const filteredResidents = useMemo(() => {
+    const normalizedFilter = normalizeResidentSearch(residentFilter);
+    if (!normalizedFilter) return availableResidents;
+    return availableResidents.filter((resident) => residentMatchesSearch(resident, normalizedFilter));
+  }, [availableResidents, residentFilter]);
 
-  useEffect(() => {
-    if (availableResidents.some((resident) => resident.id === residentId)) return;
-    setResidentId(availableResidents[0]?.id ?? "");
-  }, [availableResidents, residentId]);
-
-  async function addRounder(event: FormEvent) {
-    event.preventDefault();
-    if (disabled || !residentId) return;
-    const entry = makeClientCoverageEntry(date, "rounding", residentId, "");
-    const serviceLine = resolveResidentMutationService(state, residentId, visibleServices, selectedService, date);
-    const canEdit = canEditService(isAdmin, servicePrivileges, serviceLine);
-    const canRequest = canRequestService(isAdmin, servicePrivileges, serviceLine);
+  async function addRounder(residentId: string) {
+    if (!canCreateRounder) return;
+    const entry = {
+      ...makeClientCoverageEntry(date, "rounding", residentId, ""),
+      serviceLine: rounderServiceLine
+    };
+    const canEdit = canEditService(isAdmin, servicePrivileges, rounderServiceLine);
+    const canRequest = canRequestService(isAdmin, servicePrivileges, rounderServiceLine);
     if (!canRequest) return;
     const action = canEdit
-      ? () => createCoverageEntry(token, entry, serviceLine)
+      ? () => createCoverageEntry(token, entry, rounderServiceLine)
       : () =>
           submitCoverageRequest(
             token,
@@ -498,31 +497,54 @@ function AddRounderControl({
               requestedEntry: entry,
               message: "Request rounding assignment"
             },
-            serviceLine
+            rounderServiceLine
           );
     await onMutate(action, canEdit ? "Rounder added" : "Request submitted");
+    setShowPicker(false);
+    setResidentFilter("");
   }
 
-  if (disabled || availableResidents.length === 0) return null;
+  if (!canCreateRounder) return null;
 
   return (
-    <form className="coverage-add-rounder" onSubmit={addRounder}>
-      <select
-        aria-label="Round resident"
-        value={residentId}
-        onChange={(event) => setResidentId(event.target.value)}
-      >
-        {availableResidents.map((resident) => (
-          <option key={resident.id} value={resident.id}>
-            {formatResidentName(resident)}
-          </option>
-        ))}
-      </select>
-      <button className="secondary-button" type="submit" disabled={!residentId}>
-        <Plus size={14} />
-        round
+    <div className={`coverage-add-rounder${showPicker ? " expanded" : ""}`}>
+      <button className="secondary-button coverage-add-rounder-trigger" type="button" onClick={() => setShowPicker(true)}>
+        +round
       </button>
-    </form>
+      {showPicker && (
+        <div className="coverage-rounder-picker">
+          <div className="coverage-rounder-picker-header">
+            <input
+              aria-label="Filter round residents"
+              value={residentFilter}
+              placeholder="Find resident"
+              autoFocus
+              onChange={(event) => setResidentFilter(event.target.value)}
+            />
+            <button
+              title="Close rounder picker"
+              className="icon-button"
+              type="button"
+              onClick={() => {
+                setShowPicker(false);
+                setResidentFilter("");
+              }}
+            >
+              <XCircle size={13} />
+            </button>
+          </div>
+          <div className="coverage-rounder-options">
+            {filteredResidents.map((resident) => (
+              <button key={resident.id} className="coverage-rounder-option" type="button" onClick={() => addRounder(resident.id)}>
+                <strong>{formatResidentName(resident)}</strong>
+                <span>{formatResidentServiceHint(resident, date)}</span>
+              </button>
+            ))}
+            {filteredResidents.length === 0 && <span className="coverage-rounder-empty">No matches</span>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -626,7 +648,7 @@ function CoverageSlotSelect({
     if (disabled) return;
     if (!entry && !residentId) return;
 
-    const serviceLine = entry && !residentId
+    const serviceLine = entry
       ? resolveEntryMutationService(state, entry, visibleServices, selectedService)
       : resolveResidentMutationService(state, residentId, visibleServices, selectedService, date);
     const canEdit = canEditService(isAdmin, servicePrivileges, serviceLine);
@@ -1102,6 +1124,7 @@ function coverageRequestMatchesServices(
 
 function coverageEntryMatchesServices(state: PlannerState, entry: CoverageEntry, visibleServices: string[]): boolean {
   if (entry.kind === "call") return true;
+  if (entry.kind === "rounding" && entry.serviceLine) return serviceIsVisible(visibleServices, entry.serviceLine);
   if (!entry.residentId) return true;
   const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
   return resident ? residentMatchesServices(resident, visibleServices, entry.date) : true;
@@ -1157,12 +1180,17 @@ function formatUncoveredRounderLabel(uncoveredServices: string[]): string {
   return `${uncoveredServices.length} services need rounders`;
 }
 
+function resolveRoundingMutationService(visibleServices: string[], selectedService: string): string {
+  return visibleServices.find((serviceLine) => servicesMatch(serviceLine, selectedService)) ?? visibleServices[0] ?? selectedService;
+}
+
 function resolveEntryMutationService(
   state: PlannerState,
   entry: CoverageEntry,
   visibleServices: string[],
   selectedService: string
 ): string {
+  if (entry.kind === "rounding" && entry.serviceLine) return entry.serviceLine;
   return resolveResidentMutationService(state, entry.residentId, visibleServices, selectedService, entry.date);
 }
 
@@ -1296,6 +1324,21 @@ function normalizeUsername(value: string): string {
 
 function formatResidentName(resident: Pick<Resident, "name" | "emoji">): string {
   return resident.emoji ? `${resident.emoji} ${resident.name}` : resident.name;
+}
+
+function formatResidentServiceHint(resident: Resident, date: string): string {
+  const serviceTags = getResidentServiceTagsForDate(resident, date);
+  return serviceTags[0] ?? "no service";
+}
+
+function residentMatchesSearch(resident: Resident, normalizedFilter: string): boolean {
+  return normalizeResidentSearch([resident.name, resident.username, ...(resident.aliases ?? [])].filter(Boolean).join(" ")).includes(
+    normalizedFilter
+  );
+}
+
+function normalizeResidentSearch(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function getDefaultCoverageMonth(state: PlannerState): string {

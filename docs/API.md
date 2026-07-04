@@ -101,7 +101,7 @@ GET /api/events?token=<browser bearer token>
 
 The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`.
 
-Calendar `call` entries are shared across all services and can have multiple residents on the same Friday-Sunday date, including SCC/ICU call. Calendar `rounding` entries are service-specific by the assigned resident's dated service and can also have multiple residents on the same Saturday-Sunday date. Create additional call or rounding entries with `POST /api/coverage-entries`; patch or delete a specific `coverageEntries[].id` to change an existing person.
+Calendar `call` entries are shared across all services and can have multiple residents on the same Friday-Sunday date, including SCC/ICU call. Calendar `rounding` entries are service-specific and can also have multiple residents on the same Saturday-Sunday date; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. Create additional call or rounding entries with `POST /api/coverage-entries`; patch or delete a specific `coverageEntries[].id` to change an existing person.
 
 ## Calendar Requests, Trades, and Profile Requests
 

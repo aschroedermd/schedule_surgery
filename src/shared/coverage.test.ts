@@ -77,4 +77,13 @@ describe("coverage calendar rules", () => {
     expect(hasServiceRoundingCoverage(entries, residents, "2026-07-04", "Berry")).toBe(true);
     expect(hasServiceRoundingCoverage(entries, residents, "2026-07-04", "ICU")).toBe(false);
   });
+
+  it("uses an explicit rounding service when a resident rounds off their own service", () => {
+    const entries: CoverageEntry[] = [
+      { ...baseEntry, id: "cover_berry_rounds_davies", residentId: "res_berry", kind: "rounding", serviceLine: "Davies" }
+    ];
+
+    expect(hasServiceRoundingCoverage(entries, residents, "2026-07-04", "Davies")).toBe(true);
+    expect(hasServiceRoundingCoverage(entries, residents, "2026-07-04", "Berry")).toBe(false);
+  });
 });
