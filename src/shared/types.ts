@@ -12,6 +12,8 @@ export type ServiceLine = (typeof SERVICE_LINES)[number];
 
 export type TrainingLevel = "PGY1" | "PGY2" | "PGY3" | "PGY4" | "PGY5" | "Fellow";
 
+export type ResidentRosterKind = "primary" | "off-service";
+
 export type AssignmentKind = "case" | "block" | "clinic";
 
 export type AssignmentSource = "admin" | "suggestion" | "viewer-claim";
@@ -75,6 +77,10 @@ export interface Resident {
   aliases?: string[];
   emoji?: string;
   trainingLevel: TrainingLevel;
+  rosterKind?: ResidentRosterKind;
+  sourceProgram?: string;
+  sourceProgramAbbreviation?: string;
+  accountEligible?: boolean;
   serviceTags: string[];
   serviceStatus?: ServiceStatus;
   color?: string;

@@ -25,7 +25,7 @@ curl -X POST https://your-domain.example/api/auth/login \
 
 The response token can be passed as `Authorization: Bearer <token>`. MCP/tools can use `X-API-Key` when API keys are configured.
 
-Seeded browser users are `admin` plus resident-linked accounts. Named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
+Seeded browser users are `admin` plus resident-linked accounts for account-eligible residents. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; off-service rotators from outside programs are kept as assignable-only residents unless `accountEligible` is enabled, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and requires the user to choose a new password before using the planner.
 
 The admin Users tab can add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
 
@@ -99,7 +99,7 @@ GET /api/events?token=<browser bearer token>
 
 `/api/residents/:residentId/calendar.ics` returns a resident-specific ICS feed containing OR, clinic, call, rounding, off, and note entries. Admins can export any resident; non-admin browser users can export only the resident linked by `residents[].username`. Residents also support editable `aliases` for alternate display names.
 
-The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`.
+The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`. Off-service residents can also carry `rosterKind: "off-service"`, `sourceProgram`, `sourceProgramAbbreviation` such as `EM` or `Pl Sx`, and `accountEligible: false` when they should be manually selectable without seeded login accounts.
 
 Calendar `call` entries are shared across all services. Surgery call uses one `residentId` from `state.residents` for each `callPosition`: `senior`, `mid-level`, and `intern`. The one SCC/ICU resident is an additional call entry with `note: "SCC"` or `note: "ICU"` and no `callPosition`. Call `note` must otherwise be blank; do not store role labels, source text, or pasted names there. Calendar `rounding` entries are service-specific and can have multiple residents on the same Saturday-Sunday date; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. Create additional call or rounding entries with `POST /api/coverage-entries`; patch or delete a specific `coverageEntries[].id` to change an existing person.
 
@@ -125,8 +125,8 @@ Admins can remove accidental or obsolete request records with `DELETE /api/cover
   "targetResidentId": "res_fellow",
   "requestedResidentProfile": {
     "residentId": "res_fellow",
-    "name": "Nikki Broden",
-    "aliases": ["Nicole Broden", "N Broden"]
+    "name": "Dayo Adeleke",
+    "aliases": ["Adedayo Adeleke", "A Adeleke"]
   },
   "message": "Preferred display name"
 }

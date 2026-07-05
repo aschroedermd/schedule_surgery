@@ -58,7 +58,7 @@ describe("planner API", () => {
       .send({ id: "hosp_test", name: "Test Hospital", shortName: "TH", color: "#333333" })
       .expect(201);
 
-    const viewer = await loginAs("resident02");
+    const viewer = await loginAs("cblue");
     await request(viewer.app)
       .post("/api/entities/hospitals")
       .set("authorization", `Bearer ${viewer.token}`)
@@ -90,27 +90,29 @@ describe("planner API", () => {
 
     expect(usersResponse.body.users).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ username: "nbroden", role: "viewer" }),
-        expect.objectContaining({ username: "resident02", role: "viewer" }),
+        expect.objectContaining({ username: "aadeleke", role: "viewer" }),
+        expect.objectContaining({ username: "cblue", role: "viewer" }),
         expect.objectContaining({ username: "tcao", role: "viewer" }),
-        expect.objectContaining({ username: "resident26", role: "viewer" }),
+        expect.objectContaining({ username: "hbrown", role: "viewer" }),
+        expect.objectContaining({ username: "aswaak", role: "viewer" }),
         expect.objectContaining({ username: "admin", role: "admin" })
       ])
     );
+    expect(usersResponse.body.users).not.toEqual(expect.arrayContaining([expect.objectContaining({ username: "aarnholt" })]));
     const residentLogin = await request(app)
       .post("/api/auth/login")
-      .send({ username: "resident02", password: TEST_SEED_USER_PASSWORD })
+      .send({ username: "cblue", password: TEST_SEED_USER_PASSWORD })
       .expect(200);
     expect(residentLogin.body).toEqual(
       expect.objectContaining({
-        username: "resident02",
-        displayName: "Resident 02",
+        username: "cblue",
+        displayName: "Christian Blue",
         role: "viewer",
         mustChangePassword: true,
         servicePrivileges: expect.objectContaining({ Davies: "view", ICU: "view" })
       })
     );
-    const viewerToken = await loginOnApp(app, "resident02");
+    const viewerToken = await loginOnApp(app, "cblue");
     await request(app).get("/api/users").set("authorization", `Bearer ${viewerToken}`).expect(403);
 
     const createResponse = await request(app)
@@ -226,8 +228,8 @@ describe("planner API", () => {
     expect(usersResponse.body.users).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          username: "nbroden",
-          displayName: "Nicole Broden",
+          username: "aadeleke",
+          displayName: "Adedayo Adeleke",
           servicePrivileges: expect.objectContaining({ Davies: "request" })
         })
       ])
@@ -235,7 +237,7 @@ describe("planner API", () => {
     expect(usersResponse.body.users).not.toEqual(expect.arrayContaining([expect.objectContaining({ username: "resident01" })]));
   });
 
-  it("serves the seeded July call calendar from the imported PDF", async () => {
+  it("serves the seeded July call calendar from the MedHub rotation export", async () => {
     const { app, token } = await loginAs("admin");
 
     const response = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
@@ -244,44 +246,63 @@ describe("planner API", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "res_chief",
-          name: "Resident 22",
-          username: "resident22",
+          name: "Andrew Schroeder",
+          username: "aschroeder",
           trainingLevel: "PGY5",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
         }),
         expect.objectContaining({
           id: "res_fellow",
-          name: "Nicole Broden",
-          username: "nbroden",
-          trainingLevel: "Fellow",
+          name: "Adedayo Adeleke",
+          username: "aadeleke",
+          trainingLevel: "PGY1",
           rotationSchedule: expect.arrayContaining([
             expect.objectContaining({ blockNumber: 1, service: "Davies" }),
-            expect.objectContaining({ blockNumber: 2, service: "Davies" })
+            expect.objectContaining({ blockNumber: 2, service: "Ferrara" })
           ])
         }),
         expect.objectContaining({
           id: "res_offservice",
-          name: "Thein Cao",
+          name: "Thien Cao",
           username: "tcao",
           trainingLevel: "PGY2",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
         }),
         expect.objectContaining({
           id: "res_swaak",
-          name: "Resident 26",
-          username: "resident26",
+          name: "Amanda Swaak",
+          username: "aswaak",
           trainingLevel: "PGY3",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 8, service: "Keeley Vasc" })])
         }),
         expect.objectContaining({
           id: "res_blue",
-          name: "Resident 02",
-          username: "resident02",
+          name: "Christian Blue",
+          username: "cblue",
           rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "SCC Night" })])
+        }),
+        expect.objectContaining({
+          id: "res_external_hannah_brown",
+          name: "Hannah Brown",
+          username: "hbrown",
+          rosterKind: "off-service",
+          sourceProgramAbbreviation: "Pl Sx",
+          accountEligible: true,
+          rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 8, service: "Davies" })])
+        }),
+        expect.objectContaining({
+          id: "res_external_alayna_arnholt",
+          name: "Alayna Arnholt",
+          rosterKind: "off-service",
+          sourceProgramAbbreviation: "EM",
+          accountEligible: false,
+          rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 6, service: "Gilbert" })])
         })
       ])
     );
-    expect(response.body.residents).toHaveLength(30);
+    const alayna = response.body.residents.find((resident: { id: string }) => resident.id === "res_external_alayna_arnholt");
+    expect(alayna.username).toBeUndefined();
+    expect(response.body.residents).toHaveLength(103);
     expect(response.body.attendings).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "att_nussbaum", name: "Dr. Nussbaum", service: "Berry" })])
     );
@@ -324,7 +345,7 @@ describe("planner API", () => {
     expect(normalized.clinicSessions).toEqual([]);
   });
 
-  it("matches T-Cao to Thein Cao when adding rotation schedule data", () => {
+  it("matches T-Cao to Thien Cao when adding rotation schedule data", () => {
     const base = createInitialState();
     const normalized = normalizePlannerState({
       ...base,
@@ -347,12 +368,35 @@ describe("planner API", () => {
 
     expect(cao).toEqual(
       expect.objectContaining({
-        name: "Thein Cao",
+        name: "Thien Cao",
         trainingLevel: "PGY2",
         rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
       })
     );
-    expect(normalized.residents.filter((resident) => resident.name === "Thein Cao")).toHaveLength(1);
+    expect(normalized.residents.filter((resident) => resident.name === "Thien Cao")).toHaveLength(1);
+  });
+
+  it("adds off-service rotators to legacy rotation states only once", () => {
+    const base = createInitialState();
+    const legacyPrimaryResidents = base.residents.filter((resident) => resident.rosterKind !== "off-service");
+    const migrated = normalizePlannerState({ ...base, residents: legacyPrimaryResidents });
+
+    expect(migrated.residents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "res_external_hannah_brown", accountEligible: true, sourceProgramAbbreviation: "Pl Sx" }),
+        expect.objectContaining({ id: "res_external_alayna_arnholt", accountEligible: false, sourceProgramAbbreviation: "EM" })
+      ])
+    );
+
+    const afterDelete = normalizePlannerState({
+      ...migrated,
+      residents: migrated.residents.filter((resident) => resident.id !== "res_external_hannah_brown")
+    });
+
+    expect(afterDelete.residents).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "res_external_hannah_brown" })])
+    );
+    expect(afterDelete.residents).toHaveLength(102);
   });
 
   it("derives resident usernames from first initial and last name", () => {
@@ -424,17 +468,17 @@ describe("planner API", () => {
     expect(normalized.residents).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "res_swaak" })]));
     expect(cao).toEqual(
       expect.objectContaining({
-        name: "Thein Cao",
+        name: "Thien Cao",
         rotationSchedule: expect.arrayContaining([expect.objectContaining({ blockNumber: 1, service: "Davies" })])
       })
     );
     expect(broden).toEqual(
       expect.objectContaining({
-        name: "Nicole Broden",
-        trainingLevel: "Fellow",
+        name: "Adedayo Adeleke",
+        trainingLevel: "PGY1",
         rotationSchedule: expect.arrayContaining([
           expect.objectContaining({ blockNumber: 1, service: "Davies" }),
-          expect.objectContaining({ blockNumber: 2, service: "Davies" })
+          expect.objectContaining({ blockNumber: 2, service: "Ferrara" })
         ])
       })
     );
@@ -515,10 +559,10 @@ describe("planner API", () => {
       .send({ username: "admin", password: "admin-dev-password" })
       .expect(200);
     const adminToken = adminLogin.body.token as string;
-    await grantPrivilege(app, adminToken, "resident26", "Davies", "request");
-    await grantPrivilege(app, adminToken, "resident22", "Davies", "edit");
-    const requesterToken = await loginOnApp(app, "resident26");
-    const editorToken = await loginOnApp(app, "resident22");
+    await grantPrivilege(app, adminToken, "aswaak", "Davies", "request");
+    await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");
+    const requesterToken = await loginOnApp(app, "aswaak");
+    const editorToken = await loginOnApp(app, "aschroeder");
 
     await request(app)
       .post("/api/coverage-entries")
@@ -548,7 +592,7 @@ describe("planner API", () => {
       expect.arrayContaining([expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_fellow" })])
     );
     expect(requestResponse.body.coverageRequests[0]).toEqual(
-      expect.objectContaining({ status: "pending", requesterUsername: "resident26", serviceLine: "Davies" })
+      expect.objectContaining({ status: "pending", requesterUsername: "aswaak", serviceLine: "Davies" })
     );
 
     const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
@@ -683,10 +727,10 @@ describe("planner API", () => {
   it("lets admins remove accidental coverage requests from the request log", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
-    await grantPrivilege(app, adminToken, "resident26", "Davies", "request");
-    await grantPrivilege(app, adminToken, "resident22", "Davies", "edit");
-    const requesterToken = await loginOnApp(app, "resident26");
-    const editorToken = await loginOnApp(app, "resident22");
+    await grantPrivilege(app, adminToken, "aswaak", "Davies", "request");
+    await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");
+    const requesterToken = await loginOnApp(app, "aswaak");
+    const editorToken = await loginOnApp(app, "aschroeder");
 
     const requestResponse = await request(app)
       .post("/api/coverage-requests")
@@ -733,9 +777,9 @@ describe("planner API", () => {
 
   it("lets linked residents request and accept call trades with each other", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
-    const requesterToken = await loginOnApp(app, "resident22");
-    const targetToken = await loginOnApp(app, "nbroden");
-    const unrelatedToken = await loginOnApp(app, "resident02");
+    const requesterToken = await loginOnApp(app, "aschroeder");
+    const targetToken = await loginOnApp(app, "aadeleke");
+    const unrelatedToken = await loginOnApp(app, "cblue");
 
     const requestResponse = await request(app)
       .post("/api/coverage-requests")
@@ -756,7 +800,7 @@ describe("planner API", () => {
       expect.objectContaining({
         requestType: "resident-trade",
         status: "pending",
-        requesterUsername: "resident22",
+        requesterUsername: "aschroeder",
         requesterResidentId: "res_chief",
         targetResidentId: "res_fellow",
         swapEntryId: "cover_2026_07_11_adeleke_call"
@@ -800,17 +844,17 @@ describe("planner API", () => {
     const response = await request(app)
       .patch("/api/entities/residents/res_fellow")
       .set("authorization", `Bearer ${token}`)
-      .send({ aliases: ["Nikki", " N Broden ", "Nikki"] })
+      .send({ aliases: ["Dayo", " A Adeleke ", "Dayo"] })
       .expect(200);
     const broden = response.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
 
-    expect(broden).toEqual(expect.objectContaining({ aliases: ["Nikki", "N Broden"] }));
+    expect(broden).toEqual(expect.objectContaining({ aliases: ["Dayo", "A Adeleke"] }));
   });
 
   it("routes linked resident profile changes through admin approval", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
-    const requesterToken = await loginOnApp(app, "nbroden");
-    const otherResidentToken = await loginOnApp(app, "resident02");
+    const requesterToken = await loginOnApp(app, "aadeleke");
+    const otherResidentToken = await loginOnApp(app, "cblue");
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
 
     await request(app)
@@ -837,8 +881,8 @@ describe("planner API", () => {
         targetResidentId: "res_fellow",
         requestedResidentProfile: {
           residentId: "res_fellow",
-          name: "Nikki Broden",
-          aliases: ["Nicole Broden", "N Broden"]
+          name: "Dayo Adeleke",
+          aliases: ["Adedayo Adeleke", "A Adeleke"]
         },
         message: "Preferred display name"
       })
@@ -849,13 +893,13 @@ describe("planner API", () => {
       expect.objectContaining({
         requestType: "resident-profile",
         status: "pending",
-        requesterUsername: "nbroden",
+        requesterUsername: "aadeleke",
         requesterResidentId: "res_fellow",
         targetResidentId: "res_fellow",
         requestedResidentProfile: expect.objectContaining({
           residentId: "res_fellow",
-          name: "Nikki Broden",
-          aliases: ["Nicole Broden", "N Broden"]
+          name: "Dayo Adeleke",
+          aliases: ["Adedayo Adeleke", "A Adeleke"]
         })
       })
     );
@@ -876,8 +920,8 @@ describe("planner API", () => {
 
     expect(updatedResident).toEqual(
       expect.objectContaining({
-        name: "Nikki Broden",
-        aliases: ["Nicole Broden", "N Broden"]
+        name: "Dayo Adeleke",
+        aliases: ["Adedayo Adeleke", "A Adeleke"]
       })
     );
     expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === profileRequest.id)).toEqual(
@@ -887,8 +931,8 @@ describe("planner API", () => {
 
   it("lets a service editor claim an uncovered case and records the claim", async () => {
     const admin = await loginAs("admin");
-    await grantPrivilege(admin.app, admin.token, "resident26", "Davies", "edit");
-    const token = await loginOnApp(admin.app, "resident26");
+    await grantPrivilege(admin.app, admin.token, "aswaak", "Davies", "edit");
+    const token = await loginOnApp(admin.app, "aswaak");
 
     const claimResponse = await request(admin.app)
       .post("/api/claims")

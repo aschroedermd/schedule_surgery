@@ -535,7 +535,7 @@ function chooseResidentForTarget(
   target: AssignmentTarget,
   serviceLine?: string
 ): Resident | undefined {
-  const candidates = state.residents.map((resident) => {
+  const candidates = state.residents.filter(isAutoAssignmentCandidate).map((resident) => {
     const simulated = {
       ...state,
       assignments: [
@@ -555,6 +555,10 @@ function chooseResidentForTarget(
   return candidates
     .filter((candidate): candidate is { resident: Resident; score: number } => Boolean(candidate))
     .sort((a, b) => b.score - a.score)[0]?.resident;
+}
+
+function isAutoAssignmentCandidate(resident: Resident): boolean {
+  return resident.accountEligible !== false;
 }
 
 function scoreResidentForTarget(resident: Resident, target: AssignmentTarget): number {

@@ -407,7 +407,7 @@ function CoverageDay({
             <option value="">General</option>
             {dayVisibleResidents.map((resident) => (
               <option key={resident.id} value={resident.id}>
-                {formatResidentName(resident)}
+                {formatResidentCoverageOption(resident, date)}
               </option>
             ))}
           </select>
@@ -742,7 +742,7 @@ function CoverageSlotSelect({
             <option value="">Unassigned</option>
             {visibleResidents.map((residentOption) => (
               <option key={residentOption.id} value={residentOption.id}>
-                {formatResidentName(residentOption)}
+                {formatResidentCoverageOption(residentOption, date)}
               </option>
             ))}
           </select>
@@ -767,7 +767,7 @@ function CoverageSlotSelect({
           >
             {tradeResidentOptions.map((residentOption) => (
               <option key={residentOption.id} value={residentOption.id}>
-                {formatResidentName(residentOption)}
+                {formatResidentCoverageOption(residentOption, date)}
               </option>
             ))}
           </select>
@@ -982,7 +982,7 @@ function CoverageChip({
             <option value="">General</option>
             {residents.map((residentOption) => (
               <option key={residentOption.id} value={residentOption.id}>
-                {formatResidentName(residentOption)}
+                {formatResidentCoverageOption(residentOption, entry.date)}
               </option>
             ))}
           </select>
@@ -1342,13 +1342,28 @@ function formatResidentName(resident: Pick<Resident, "name" | "emoji">): string 
 
 function formatResidentServiceHint(resident: Resident, date: string): string {
   const serviceTags = getResidentServiceTagsForDate(resident, date);
-  return serviceTags[0] ?? "no service";
+  return [serviceTags[0] ?? "no service", formatResidentSourceTag(resident)].filter(Boolean).join(" · ");
 }
 
 function residentMatchesSearch(resident: Resident, normalizedFilter: string): boolean {
-  return normalizeResidentSearch([resident.name, resident.username, ...(resident.aliases ?? [])].filter(Boolean).join(" ")).includes(
-    normalizedFilter
-  );
+  return normalizeResidentSearch(
+    [
+      resident.name,
+      resident.username,
+      resident.sourceProgram,
+      resident.sourceProgramAbbreviation,
+      ...(resident.aliases ?? [])
+    ].filter(Boolean).join(" ")
+  ).includes(normalizedFilter);
+}
+
+function formatResidentCoverageOption(resident: Resident, date: string): string {
+  return `${formatResidentName(resident)} (${formatResidentServiceHint(resident, date)})`;
+}
+
+function formatResidentSourceTag(resident: Pick<Resident, "rosterKind" | "sourceProgramAbbreviation">): string {
+  if (resident.rosterKind !== "off-service") return "";
+  return resident.sourceProgramAbbreviation || "off-service";
 }
 
 function normalizeResidentSearch(value: string): string {

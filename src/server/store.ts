@@ -184,11 +184,19 @@ function normalizeResidents(residents: Resident[]): Resident[] {
 
 function normalizeResident(resident: Resident): Resident {
   const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" };
+  const sourceProgramAbbreviation = normalizeOptionalString(resident.sourceProgramAbbreviation);
+  const sourceProgram = normalizeOptionalString(resident.sourceProgram);
+  const rosterKind = normalizeResidentRosterKind(resident.rosterKind, sourceProgramAbbreviation);
+  const accountEligible = normalizeResidentAccountEligible(resident, rosterKind);
   return {
     ...resident,
-    username: normalizeResidentUsername(resident),
+    username: normalizeResidentUsername(resident, accountEligible),
     aliases: normalizeResidentAliases(resident.aliases),
     emoji: normalizeResidentEmoji(resident.emoji),
+    rosterKind,
+    sourceProgram,
+    sourceProgramAbbreviation,
+    accountEligible,
     serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),
     tags: resident.tags ?? [],
     trainingInterests: resident.trainingInterests ?? [],
@@ -197,11 +205,26 @@ function normalizeResident(resident: Resident): Resident {
   };
 }
 
-function normalizeResidentUsername(resident: Resident): string | undefined {
+function normalizeResidentUsername(resident: Resident, accountEligible: boolean): string | undefined {
+  if (!accountEligible) return undefined;
   const normalized = normalizeOptionalUsername(resident.username);
   const derived = shouldDeriveResidentUsername(resident.name) ? buildResidentUsername(resident.name) : undefined;
   if (derived && (!normalized || isPlaceholderResidentUsername(normalized))) return derived;
   return normalized;
+}
+
+function normalizeResidentRosterKind(
+  rosterKind: Resident["rosterKind"],
+  sourceProgramAbbreviation: string | undefined
+): Resident["rosterKind"] {
+  if (rosterKind === "primary" || rosterKind === "off-service") return rosterKind;
+  return sourceProgramAbbreviation ? "off-service" : "primary";
+}
+
+function normalizeResidentAccountEligible(resident: Resident, rosterKind: Resident["rosterKind"]): boolean {
+  if (typeof resident.accountEligible === "boolean") return resident.accountEligible;
+  if (resident.username) return true;
+  return rosterKind !== "off-service";
 }
 
 function shouldDeriveResidentUsername(name: string): boolean {
@@ -246,6 +269,12 @@ function mergeRotationSeedIfNeeded(residents: Resident[]): Resident[] {
     }
   }
   const hasExistingRotationSchedules = residents.some((resident) => resident.rotationSchedule?.length);
+  const hasOffServiceSeedBatch = residents.some(
+    (resident) =>
+      resident.rosterKind === "off-service" ||
+      Boolean(resident.sourceProgramAbbreviation) ||
+      resident.tags.includes("off-service")
+  );
   const mergedSeedIds = new Set<string>();
 
   const mergedResidents = residents.map((resident) => {
@@ -255,7 +284,18 @@ function mergeRotationSeedIfNeeded(residents: Resident[]): Resident[] {
     return mergeSeededResident(resident, seeded, hasExistingRotationSchedules);
   });
 
-  if (hasExistingRotationSchedules) return mergedResidents;
+  if (hasExistingRotationSchedules) {
+    if (hasOffServiceSeedBatch) return mergedResidents;
+    return [
+      ...mergedResidents,
+      ...seededResidents.filter(
+        (seeded) =>
+          seeded.rosterKind === "off-service" &&
+          !mergedSeedIds.has(seeded.id) &&
+          !mergedResidents.some((resident) => normalizeName(resident.name) === normalizeName(seeded.name))
+      )
+    ];
+  }
 
   return [
     ...mergedResidents,
@@ -274,6 +314,10 @@ function mergeSeededResident(resident: Resident, seeded: Resident, hasExistingRo
     name: shouldUseSeedIdentity ? seeded.name : resident.name,
     aliases: resident.aliases?.length ? resident.aliases : seeded.aliases ?? [],
     trainingLevel: shouldUseSeedIdentity ? seeded.trainingLevel : resident.trainingLevel,
+    rosterKind: resident.rosterKind ?? seeded.rosterKind,
+    sourceProgram: resident.sourceProgram ?? seeded.sourceProgram,
+    sourceProgramAbbreviation: resident.sourceProgramAbbreviation ?? seeded.sourceProgramAbbreviation,
+    accountEligible: typeof resident.accountEligible === "boolean" ? resident.accountEligible : seeded.accountEligible,
     serviceTags: resident.serviceTags.length ? resident.serviceTags : seeded.serviceTags,
     emoji: resident.emoji ?? seeded.emoji,
     color: resident.color ?? seeded.color,
@@ -336,6 +380,11 @@ function uniqueKnownServiceLines(values: string[]): string[] {
 
 function normalizeName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
 }
 
 function stripStateMeta(state: PlannerState): Omit<PlannerState, "version" | "updatedAt"> {

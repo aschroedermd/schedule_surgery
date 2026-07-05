@@ -31,7 +31,7 @@ DATABASE_URL=memory npm run dev
 
 ## What Is Implemented
 
-- Username/password browser logins. Seeded named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. Set `SEED_USER_PASSWORD` privately if those accounts should be login-ready.
+- Username/password browser logins. Seeded account-eligible residents use first-initial-plus-last-name usernames such as `aadeleke`; off-service rotators from outside programs remain assignable-only unless `accountEligible` is enabled. Set `SEED_USER_PASSWORD` privately if those accounts should be login-ready.
 - No `guest` account is seeded. `admin` starts with the private `ADMIN_PASSWORD` configured when the user store is first created.
 - Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges.
 - New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. Server-generated temporary passwords are shown once and force the user to choose a new password.
@@ -39,8 +39,8 @@ DATABASE_URL=memory npm run dev
 - Weekly Monday-Friday board with OR blocks, turnover-aware sequential case timing, clinic sessions, warnings, and activity feed.
 - Monthly rounding calendar with resident colors, shared Friday-Sunday call-team summaries, service-specific Saturday-Sunday rounders, weekday off/note entries, and red weekend blocks when the visible service has neither an on-service call resident nor an assigned rounder.
 - Request-privileged calendar edits are submitted as requests; users with edit privilege for that service can approve or deny them from the Requests tab.
-- Manual setup for hospitals, attendings, residents/fellows, resident block rotations, unavailable time, case defaults, OR blocks, cases, and clinic sessions.
-- Auto-suggestion that preserves non-suggestion assignments and prioritizes safe OR coverage before clinic assignment.
+- Manual setup for hospitals, attendings, residents/fellows, off-service rotators, resident block rotations, unavailable time, case defaults, OR blocks, cases, and clinic sessions.
+- Auto-suggestion that preserves non-suggestion assignments and prioritizes safe OR coverage before clinic assignment; assignable-only off-service rotators stay out of suggestions unless they are account-eligible.
 - Warning-but-allow behavior for roster/calendar off days, post-call assignments, overlapping coverage, cross-hospital split risk under the 90-minute buffer, and same-day arrangement checks when a resident has a stronger interest-matched case available.
 - Optimistic concurrency with state versions, 409 conflict responses, and browser auto-refresh over Server-Sent Events.
 - Personal "Mine" view, per-resident one-character markers, per-resident ICS export, and browser print support.

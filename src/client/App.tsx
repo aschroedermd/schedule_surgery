@@ -114,6 +114,10 @@ const emptyResident: Resident = {
   aliases: [],
   emoji: "",
   trainingLevel: "PGY3",
+  rosterKind: "primary",
+  sourceProgram: "General Surgery",
+  sourceProgramAbbreviation: "",
+  accountEligible: true,
   serviceTags: [DEFAULT_SERVICE_LINE],
   color: "#2f78c4",
   tags: [],
@@ -2001,13 +2005,27 @@ function RosterTab({
       >
         <h2>Resident Roster</h2>
         <fieldset disabled={disabled}>
-          <label>Username<input value={editing.username ?? ""} onChange={(event) => setEditing({ ...editing, username: normalizeUsernameInput(event.target.value) })} /></label>
+          <label className="inline-checkbox">
+            <input
+              type="checkbox"
+              checked={editing.accountEligible !== false}
+              onChange={(event) => setEditing(updateResidentAccountDraft(editing, event.target.checked))}
+            />
+            <span>Login account</span>
+          </label>
+          <label>Username<input disabled={editing.accountEligible === false} value={editing.username ?? ""} onChange={(event) => setEditing({ ...editing, username: normalizeUsernameInput(event.target.value), accountEligible: true })} /></label>
           <label>Display name<input value={editing.name} onChange={(event) => setEditing(updateResidentNameDraft(editing, event.target.value))} /></label>
           <label>Aliases<input value={(editing.aliases ?? []).join(", ")} onChange={(event) => setEditing({ ...editing, aliases: splitTags(event.target.value) })} /></label>
           <label>Emoji<input value={editing.emoji ?? ""} onChange={(event) => setEditing({ ...editing, emoji: firstInputCharacter(event.target.value) })} /></label>
           <label>Level<select value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
             {["PGY1", "PGY2", "PGY3", "PGY4", "PGY5", "Fellow"].map((level) => <option key={level}>{level}</option>)}
           </select></label>
+          <label>Roster<select value={editing.rosterKind ?? "primary"} onChange={(event) => setEditing({ ...editing, rosterKind: event.target.value as Resident["rosterKind"] })}>
+            <option value="primary">Primary</option>
+            <option value="off-service">Off-service</option>
+          </select></label>
+          <label>Source<input value={editing.sourceProgram ?? ""} onChange={(event) => setEditing({ ...editing, sourceProgram: event.target.value })} /></label>
+          <label>Source tag<input value={editing.sourceProgramAbbreviation ?? ""} onChange={(event) => setEditing({ ...editing, sourceProgramAbbreviation: event.target.value })} /></label>
           <label>Service tags<ServiceTagPicker state={state} selected={editing.serviceTags} onChange={(serviceTags) => setEditing({ ...editing, serviceTags })} /></label>
           <label>Color<input type="color" value={editing.color ?? "#2f78c4"} onChange={(event) => setEditing({ ...editing, color: event.target.value })} /></label>
           <label>Tags<input value={editing.tags.join(", ")} onChange={(event) => setEditing({ ...editing, tags: splitTags(event.target.value) })} /></label>
@@ -2057,7 +2075,7 @@ function RosterTab({
             <CompactEntity
               key={resident.id}
               title={`${formatResidentName(resident)} · ${resident.trainingLevel}`}
-              subtitle={`${resident.username ?? "no login"} · ${formatServiceTags(getResidentServiceTagsForDate(resident, week.startDate))} · ${formatResidentAliases(resident)} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
+              subtitle={`${formatResidentRosterSummary(resident, week.startDate)} · ${formatResidentAliases(resident)} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
               disabled={disabled}
               onEdit={() => setEditing(resident)}
               onDelete={() => onMutate(() => deleteEntity(token, "residents", resident.id), "Resident deleted")}
@@ -2544,10 +2562,19 @@ function makeEmptyResident(selectedService: string): Resident {
 function updateResidentNameDraft(resident: Resident, name: string): Resident {
   const nextUsername = buildResidentUsername(name);
   if (!nextUsername) return { ...resident, name };
-  if (shouldUpdateResidentUsernameFromName(resident)) {
+  if (resident.accountEligible !== false && shouldUpdateResidentUsernameFromName(resident)) {
     return { ...resident, name, username: nextUsername };
   }
   return { ...resident, name };
+}
+
+function updateResidentAccountDraft(resident: Resident, accountEligible: boolean): Resident {
+  if (!accountEligible) return { ...resident, accountEligible: false, username: undefined };
+  return {
+    ...resident,
+    accountEligible: true,
+    username: resident.username || buildResidentUsername(resident.name) || undefined
+  };
 }
 
 function shouldUpdateResidentUsernameFromName(resident: Resident): boolean {
@@ -2566,8 +2593,9 @@ function formatResidentOption(resident: Resident, selectedService: string, date?
     ? [selectedService, ...serviceTags.filter((serviceTag) => serviceTag !== selectedService)]
     : serviceTags;
   const serviceLabel = formatServiceTags(orderedTags);
-  if (!serviceLabel) return formatResidentName(resident);
-  return `${formatResidentName(resident)} (${serviceLabel})`;
+  const labels = [serviceLabel, formatResidentSourceTag(resident)].filter(Boolean);
+  if (!labels.length) return formatResidentName(resident);
+  return `${formatResidentName(resident)} (${labels.join(" · ")})`;
 }
 
 function formatServiceTags(serviceTags: string[]): string {
@@ -2600,6 +2628,23 @@ function formatResidentName(resident: Pick<Resident, "name" | "emoji">): string 
 
 function formatResidentAliases(resident: Pick<Resident, "aliases">): string {
   return resident.aliases?.length ? `aliases: ${resident.aliases.join(", ")}` : "no aliases";
+}
+
+function formatResidentRosterSummary(resident: Resident, date?: string): string {
+  const login = resident.accountEligible === false ? "assignable only" : resident.username ?? "login pending";
+  return [login, formatServiceTags(getResidentServiceTagsForDate(resident, date)), formatResidentSource(resident)].filter(Boolean).join(" · ");
+}
+
+function formatResidentSource(resident: Pick<Resident, "rosterKind" | "sourceProgram" | "sourceProgramAbbreviation">): string {
+  const source = resident.sourceProgramAbbreviation || resident.sourceProgram;
+  if (resident.rosterKind === "off-service" && source) return `off-service from ${source}`;
+  if (resident.rosterKind === "off-service") return "off-service";
+  return source ? `source: ${source}` : "";
+}
+
+function formatResidentSourceTag(resident: Pick<Resident, "rosterKind" | "sourceProgramAbbreviation">): string {
+  if (resident.rosterKind !== "off-service") return "";
+  return resident.sourceProgramAbbreviation || "off-service";
 }
 
 function findResidentForSession(state: PlannerState, session: PlannerSession): Resident | undefined {

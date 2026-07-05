@@ -35,7 +35,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
   -d '{"username":"admin","password":"..."}'
 ```
 
-Seeded browser users are `admin` plus resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `nbroden`; unnamed placeholder rows keep fallback usernames such as `resident02`. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Logged-in admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes. Admin API keys do not manage browser-user accounts.
+Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Logged-in admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes. Admin API keys do not manage browser-user accounts.
 
 The live OpenAPI document is at:
 
@@ -52,7 +52,7 @@ The database stores one JSON planner state. Important collections:
 - `weeks`: scheduling week metadata; a week starts on Monday.
 - `hospitals`: reusable hospital list.
 - `attendings`: reusable attending surgeon list.
-- `residents`: reusable resident/fellow list, login username link, display-name aliases, one-character marker, and availability blocks.
+- `residents`: reusable resident/fellow/rotator list, optional login username link, display-name aliases, one-character marker, source program metadata, `accountEligible`, and availability blocks.
 - `attendingBlocks`: one surgeon operating at one hospital on one date, with a first-case start time and `weekId`.
 - `cases`: ordered cases inside an attending block. Later case times are computed from prior estimated durations.
 - `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
@@ -64,7 +64,7 @@ Cases do not have independent start times. To change timing, patch the block `fi
 Service lines are selected client-side and persisted by each browser. The built-in service lines are `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`.
 
 - `attendings[].service` stores the attending's service line.
-- `residents[].rotationSchedule` stores dated resident block rotations; `residents[].serviceTags` remains a fallback for residents without a schedule.
+- `residents[].rotationSchedule` stores dated resident block rotations; `residents[].serviceTags` remains a fallback for residents without a schedule. `rosterKind: "off-service"` plus `sourceProgramAbbreviation` marks outside rotators from the MedHub side label, and `accountEligible: false` means selectable without seeded browser login.
 - `residents[].aliases` stores alternate resident display names for matching and lookup.
 - `clinicSessions[].service` controls service-line filtering and edit permissions for clinics.
 - Legacy or non-service-specific planner data is normalized into `Davies`.
@@ -219,8 +219,8 @@ Admins can directly edit `residents[].name` and `residents[].aliases`. Linked re
   "targetResidentId": "res_fellow",
   "requestedResidentProfile": {
     "residentId": "res_fellow",
-    "name": "Nikki Broden",
-    "aliases": ["Nicole Broden", "N Broden"]
+    "name": "Dayo Adeleke",
+    "aliases": ["Adedayo Adeleke", "A Adeleke"]
   },
   "message": "Preferred display name"
 }
@@ -297,7 +297,7 @@ Patch an existing clinic to become a procedure clinic:
 }
 ```
 
-Assign Broden to that case:
+Assign Adeleke to that case:
 
 ```json
 {
@@ -310,7 +310,7 @@ Assign Broden to that case:
 
 ## Agent Heuristics
 
-- When a user says “covered by Broden,” resolve Broden from `residents` by substring/name, then preserve the actual `id`.
+- When a user says “covered by Adeleke,” resolve Adeleke from `residents` by substring/name, then preserve the actual `id`.
 - When a user is working in a service line, filter reads and suggestions with the same `service` query parameter. Davies is the default seeded service.
 - When a user says “Katz at RMH,” resolve Katz from `attendings` and RMH from `hospitals.shortName`.
 - When a user says “Bower clinic,” resolve Bower from `attendings`, set `clinicSessions.attendingId`, and use the attending's service unless the user explicitly chose another service line.

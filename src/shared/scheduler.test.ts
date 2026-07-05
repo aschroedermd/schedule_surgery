@@ -79,6 +79,18 @@ describe("scheduler core", () => {
     expect(locked?.locked).toBe(true);
   });
 
+  it("keeps assignable-only off-service rotators out of auto-suggestions", () => {
+    const state = createInitialState();
+    const emRotator = state.residents.find((resident) => resident.id === "res_external_alayna_arnholt")!;
+    const plasticSurgeryRotator = state.residents.find((resident) => resident.id === "res_external_hannah_brown")!;
+
+    const emOnly = applySuggestion({ ...state, residents: [emRotator], assignments: [] }, "week_current");
+    const plasticSurgeryOnly = applySuggestion({ ...state, residents: [plasticSurgeryRotator], assignments: [] }, "week_current");
+
+    expect(emOnly.assignments).toHaveLength(0);
+    expect(plasticSurgeryOnly.assignments.some((assignment) => assignment.residentId === plasticSurgeryRotator.id)).toBe(true);
+  });
+
   it("does not warn about overlap when a resident has both stale case and block assignments for the same block", () => {
     const state = {
       ...createInitialState(),
@@ -265,6 +277,9 @@ describe("scheduler core", () => {
   it("flags check arrangement when a resident has a better same-day interest fit", () => {
     const state = {
       ...createInitialState(),
+      residents: createInitialState().residents.map((resident) =>
+        resident.id === "res_chief" ? { ...resident, trainingInterests: ["HPB"] } : resident
+      ),
       assignments: [
         makeAssignment("case", "case_chen_chole", "res_chief", "admin", false),
         makeAssignment("case", "case_chen_whipple", "res_fellow", "admin", false)
