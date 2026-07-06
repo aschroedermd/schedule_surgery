@@ -316,6 +316,10 @@ h2 {
   padding-bottom: 12px;
 }
 
+.board-schedule-editor {
+  margin-bottom: 14px;
+}
+
 .day-column {
   min-width: 236px;
   display: grid;

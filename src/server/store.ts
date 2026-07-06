@@ -186,7 +186,8 @@ function normalizeResident(resident: Resident): Resident {
   const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" };
   const sourceProgramAbbreviation = normalizeOptionalString(resident.sourceProgramAbbreviation);
   const sourceProgram = normalizeOptionalString(resident.sourceProgram);
-  const rosterKind = normalizeResidentRosterKind(resident.rosterKind, sourceProgramAbbreviation);
+  const tags = resident.tags ?? [];
+  const rosterKind = normalizeResidentRosterKind(resident, sourceProgramAbbreviation, tags);
   const accountEligible = normalizeResidentAccountEligible(resident, rosterKind);
   return {
     ...resident,
@@ -198,7 +199,7 @@ function normalizeResident(resident: Resident): Resident {
     sourceProgramAbbreviation,
     accountEligible,
     serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),
-    tags: resident.tags ?? [],
+    tags,
     trainingInterests: resident.trainingInterests ?? [],
     unavailable: resident.unavailable ?? [],
     rotationSchedule: normalizeRotationSchedule(resident.rotationSchedule)
@@ -214,10 +215,14 @@ function normalizeResidentUsername(resident: Resident, accountEligible: boolean)
 }
 
 function normalizeResidentRosterKind(
-  rosterKind: Resident["rosterKind"],
-  sourceProgramAbbreviation: string | undefined
+  resident: Resident,
+  sourceProgramAbbreviation: string | undefined,
+  tags: string[]
 ): Resident["rosterKind"] {
+  const rosterKind = resident.rosterKind;
   if (rosterKind === "primary" || rosterKind === "off-service") return rosterKind;
+  if (tags.some((tag) => tag.trim().toLowerCase() === "off-service")) return "off-service";
+  if (resident.accountEligible === false) return "off-service";
   return sourceProgramAbbreviation ? "off-service" : "primary";
 }
 

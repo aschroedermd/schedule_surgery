@@ -611,6 +611,103 @@ describe("planner API", () => {
     );
   });
 
+  it("lets service editors manage OR and clinic schedule rows only for edited services", async () => {
+    const { app, token: adminToken } = await loginAs("admin");
+    await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");
+    const editorToken = await loginOnApp(app, "aschroeder");
+    const viewerToken = await loginOnApp(app, "aswaak");
+
+    const daviesBlock = {
+      id: "block_editor_davies",
+      weekId: "week_current",
+      date: "2026-07-06",
+      attendingId: "att_chen",
+      hospitalId: "hosp_main",
+      firstCaseStartTime: "07:30",
+      notes: ""
+    };
+
+    await request(app)
+      .post("/api/entities/attendingBlocks")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .send(daviesBlock)
+      .expect(403);
+
+    await request(app)
+      .post("/api/entities/attendingBlocks")
+      .set("authorization", `Bearer ${editorToken}`)
+      .send(daviesBlock)
+      .expect(201);
+
+    await request(app)
+      .post("/api/entities/cases")
+      .set("authorization", `Bearer ${editorToken}`)
+      .send({
+        id: "case_editor_davies",
+        blockId: daviesBlock.id,
+        procedureLabel: "Laparoscopic cholecystectomy",
+        durationMinutes: 90,
+        priority: 2,
+        tags: ["general surgery"],
+        notes: "",
+        order: 0
+      })
+      .expect(201);
+
+    await request(app)
+      .post("/api/entities/clinicSessions")
+      .set("authorization", `Bearer ${editorToken}`)
+      .send({
+        id: "clinic_editor_davies",
+        weekId: "week_current",
+        date: "2026-07-07",
+        startTime: "13:00",
+        endTime: "17:00",
+        attendingId: "att_chen",
+        service: "Davies",
+        location: "University Hospital Clinic",
+        hospitalId: "hosp_main",
+        capacity: 1,
+        isProcedure: true
+      })
+      .expect(201);
+
+    const casePatch = await request(app)
+      .patch("/api/entities/cases/case_editor_davies")
+      .set("authorization", `Bearer ${editorToken}`)
+      .send({ procedureLabel: "Updated lap chole", durationMinutes: 100 })
+      .expect(200);
+    expect(casePatch.body.cases).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "case_editor_davies", procedureLabel: "Updated lap chole", durationMinutes: 100 })])
+    );
+
+    await request(app)
+      .patch("/api/entities/clinicSessions/clinic_editor_davies")
+      .set("authorization", `Bearer ${editorToken}`)
+      .send({ service: "Berry", attendingId: "att_nussbaum" })
+      .expect(403);
+
+    await request(app)
+      .post("/api/entities/attendingBlocks")
+      .set("authorization", `Bearer ${editorToken}`)
+      .send({ ...daviesBlock, id: "block_editor_berry", attendingId: "att_nussbaum" })
+      .expect(403);
+
+    await request(app)
+      .delete("/api/entities/cases/case_editor_davies")
+      .set("authorization", `Bearer ${editorToken}`)
+      .expect(200);
+    await request(app)
+      .delete("/api/entities/clinicSessions/clinic_editor_davies")
+      .set("authorization", `Bearer ${editorToken}`)
+      .expect(200);
+    const deleteBlock = await request(app)
+      .delete("/api/entities/attendingBlocks/block_editor_davies")
+      .set("authorization", `Bearer ${editorToken}`)
+      .expect(200);
+    expect(deleteBlock.body.attendingBlocks.map((block: { id: string }) => block.id)).not.toContain(daviesBlock.id);
+  });
+
   it("keeps multiple same-day call entries for the shared call team", async () => {
     const { app, token } = await loginAs("admin");
 

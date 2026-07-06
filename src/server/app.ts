@@ -18,8 +18,10 @@ import {
 import { isResidentOnService } from "../shared/services";
 import {
   CALL_POSITIONS,
+  AttendingBlock,
   CallPosition,
   ClaimRequest,
+  ClinicSession,
   CollectionName,
   CoverageChangeRequest,
   CoverageEntry,
@@ -28,7 +30,8 @@ import {
   PlannerState,
   Resident,
   ResidentProfileChange,
-  SessionUser
+  SessionUser,
+  SurgeryCase
 } from "../shared/types";
 import {
   AuthenticatedRequest,
@@ -58,6 +61,8 @@ const collections: CollectionName[] = [
   "cases",
   "clinicSessions"
 ];
+type ScheduleEditableCollection = "attendingBlocks" | "cases" | "clinicSessions";
+const scheduleEditableCollections = new Set<CollectionName>(["attendingBlocks", "cases", "clinicSessions"]);
 
 export function createApp(store: StateStore, options: { userStore?: UserStore } = {}) {
   const app = express();
@@ -297,11 +302,12 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.post("/api/entities/:collection", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/entities/:collection", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const collection = assertCollection(getParam(req.params.collection));
       const state = await store.load();
       const entity = req.body;
+      if (!requireEntityWriteAccess(req, res, state, collection, entity)) return;
       assertNoPhiInEntity(collection, entity);
       const nextState = {
         ...state,
@@ -314,11 +320,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.patch("/api/entities/:collection/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/entities/:collection/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const collection = assertCollection(getParam(req.params.collection));
       const id = getParam(req.params.id);
       const state = await store.load();
+      const existing = findEntity(state, collection, id);
+      const nextEntity = existing ? { ...existing, ...req.body, id } : undefined;
+      if (!requireEntityWriteAccess(req, res, state, collection, existing, nextEntity)) return;
       assertNoPhiInEntity(collection, req.body);
       const nextState = {
         ...state,
@@ -331,11 +340,12 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.delete("/api/entities/:collection/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.delete("/api/entities/:collection/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const collection = assertCollection(getParam(req.params.collection));
       const id = getParam(req.params.id);
       const state = await store.load();
+      if (!requireEntityWriteAccess(req, res, state, collection, findEntity(state, collection, id))) return;
       const nextState = collection === "weeks" ? deleteWeek(state, id) : deleteEntityFromCollection(state, collection, id);
       const withActivity = addActivity(nextState, req.user?.role ?? "admin", "deleted item", `Deleted ${collection}`, collection, id);
       res.json(await commitState(req, withActivity));
@@ -945,6 +955,67 @@ function assertCollection(value: string): CollectionName {
   return value as CollectionName;
 }
 
+function isScheduleEditableCollection(collection: CollectionName): collection is ScheduleEditableCollection {
+  return scheduleEditableCollections.has(collection);
+}
+
+function findEntity(state: PlannerState, collection: CollectionName, id: string): unknown | undefined {
+  return (state[collection] as Array<{ id: string }>).find((entity) => entity.id === id);
+}
+
+function requireEntityWriteAccess(
+  req: AuthenticatedRequest,
+  res: express.Response,
+  state: PlannerState,
+  collection: CollectionName,
+  currentEntity: unknown,
+  nextEntity?: unknown
+): boolean {
+  if (req.user?.role === "admin") return true;
+  if (!isScheduleEditableCollection(collection)) {
+    res.status(403).json({ error: "Admin access required" });
+    return false;
+  }
+
+  const entities = [currentEntity, nextEntity].filter(Boolean);
+  if (entities.length === 0) {
+    throw new HttpError(404, `${collection} item not found`);
+  }
+
+  for (const serviceLine of new Set(entities.map((entity) => getScheduleEntityServiceLine(state, collection, entity)))) {
+    if (!hasServicePrivilege(req.user, serviceLine, "edit")) {
+      res.status(403).json({ error: "Edit privilege required for this service" });
+      return false;
+    }
+  }
+  return true;
+}
+
+function getScheduleEntityServiceLine(state: PlannerState, collection: ScheduleEditableCollection, entity: unknown): string {
+  if (!entity || typeof entity !== "object") {
+    throw new HttpError(400, `Invalid ${collection} payload`);
+  }
+
+  if (collection === "attendingBlocks") {
+    const attendingId = readRequiredString((entity as Partial<AttendingBlock>).attendingId, "attendingId");
+    return getAttendingServiceLine(state, attendingId);
+  }
+
+  if (collection === "cases") {
+    const blockId = readRequiredString((entity as Partial<SurgeryCase>).blockId, "blockId");
+    return getBlockServiceLine(state, blockId);
+  }
+
+  const clinic = entity as Partial<ClinicSession>;
+  return readOptionalString(clinic.service) ?? getAttendingServiceLine(state, readRequiredString(clinic.attendingId, "attendingId"));
+}
+
+function getAttendingServiceLine(state: PlannerState, attendingId: string): string {
+  const attending = state.attendings.find((candidate) => candidate.id === attendingId);
+  if (!attending) throw new HttpError(400, `Attending not found: ${attendingId}`);
+  return attending.service;
+}
+
 function deleteEntityFromCollection(state: PlannerState, collection: CollectionName, id: string): PlannerState {
   if (collection === "residents") return deleteResident(state, id);
   if (collection === "attendings") return deleteAttending(state, id);
@@ -1511,6 +1582,12 @@ function assertDate(value: unknown): string {
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readRequiredString(value: unknown, field: string): string {
+  const normalized = readOptionalString(value);
+  if (!normalized) throw new HttpError(400, `${field} is required`);
+  return normalized;
 }
 
 function normalizeAliasList(value: unknown): string[] {

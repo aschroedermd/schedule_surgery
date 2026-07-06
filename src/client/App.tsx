@@ -43,6 +43,7 @@ import {
 } from "./api";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
+import { canEditScheduleForSelectedService, getNavigationTabs, type Tab } from "./navigation";
 import { formatMonthLabel, getMonthFromDate, isCallDate } from "../shared/coverage";
 import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
@@ -93,7 +94,6 @@ import {
   sortResidentsBySeniority
 } from "../shared/rotations";
 
-type Tab = "board" | "my" | "calendar" | "call" | "schedule" | "requests" | "entry" | "roster" | "defaults" | "activity" | "users" | "account";
 type PlannerSession = Session;
 type LayoutMode = "desktop" | "mobile";
 type InputMode = "pointer" | "touch";
@@ -133,6 +133,7 @@ export function App() {
   const [selectedWeekId, setSelectedWeekId] = useState("");
   const [selectedService, setSelectedService] = useState(() => getStoredServiceLine() ?? DEFAULT_SERVICE_LINE);
   const [activeTab, setActiveTab] = useState<Tab>("board");
+  const [isScheduleEditorOpen, setIsScheduleEditorOpen] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
   const [printSnapshot, setPrintSnapshot] = useState<BoardPrintSnapshot | undefined>();
@@ -142,7 +143,7 @@ export function App() {
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
   const isAdmin = session?.role === "admin";
   const selectedPrivilege = session ? getSessionPrivilege(session, selectedService) : "view";
-  const canEditSelectedService = Boolean(session && (isAdmin || selectedPrivilege === "edit"));
+  const canEditSelectedService = Boolean(session && canEditScheduleForSelectedService(isAdmin, selectedPrivilege));
   const canRequestSelectedService = Boolean(session && (canEditSelectedService || selectedPrivilege === "request"));
   const linkedResident = state && session ? findResidentForSession(state, session) : undefined;
   const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session) || linkedResident || (state?.coverageRequests.length ?? 0) > 0));
@@ -370,7 +371,7 @@ export function App() {
 
   useEffect(() => {
     if (!session) return;
-    if ((activeTab === "users" || activeTab === "entry" || activeTab === "roster" || activeTab === "defaults") && !isAdmin) {
+    if ((activeTab === "users" || activeTab === "roster" || activeTab === "defaults") && !isAdmin) {
       setActiveTab("board");
       return;
     }
@@ -378,6 +379,12 @@ export function App() {
       setActiveTab("board");
     }
   }, [activeTab, canUseRequests, isAdmin, session?.username]);
+
+  useEffect(() => {
+    if (activeTab !== "board" || !canEditSelectedService) {
+      setIsScheduleEditorOpen(false);
+    }
+  }, [activeTab, canEditSelectedService]);
 
   if (!session) {
     if (showLoggedOut) {
@@ -444,6 +451,16 @@ export function App() {
                 Suggest
               </button>
             )}
+            {canEditSelectedService && (
+              <button
+                title={isScheduleEditorOpen ? "Close schedule editor" : "Edit schedule"}
+                className={isScheduleEditorOpen ? "primary-button" : "secondary-button"}
+                onClick={() => setIsScheduleEditorOpen((open) => !open)}
+              >
+                <Scissors size={18} />
+                {isScheduleEditorOpen ? "Done Editing" : "Edit Schedule"}
+              </button>
+            )}
             <button
               title="Copy uncovered week"
               className="secondary-button"
@@ -465,16 +482,7 @@ export function App() {
       </header>
 
       <nav className="tabs" aria-label="Planner sections">
-        {([
-          ["board", "OR / Clinic 🔪"],
-          ["my", "My Schedule ☁️"],
-          ["calendar", "Calendar 🗓️"],
-          ["call", "CALL 📟"],
-          ["schedule", "Blocks ⏹️"],
-          ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests 📤 (${pendingCoverageRequestCount})` : "Requests 📤"]] as const : []),
-          ["activity", "Activity 🛒"],
-          ["account", "Account 🛠️"]
-        ] as const).map(([tab, label]) => (
+        {getNavigationTabs({ canUseRequests, pendingCoverageRequestCount, isAdmin }).map(([tab, label]) => (
           <button key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
             {label}
           </button>
@@ -488,6 +496,7 @@ export function App() {
           token={session.token}
           selectedService={selectedService}
           canEdit={canEditSelectedService}
+          showScheduleEditor={isScheduleEditorOpen}
           onMutate={runMutation}
           onCopied={(message) => setToast(message)}
         />
@@ -525,9 +534,6 @@ export function App() {
           servicePrivileges={session.servicePrivileges}
           onMutate={runMutation}
         />
-      )}
-      {activeTab === "entry" && (
-        <EntryTab state={state} week={selectedWeek} token={session.token} selectedService={selectedService} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "roster" && (
         <RosterTab state={state} week={selectedWeek} token={session.token} selectedService={selectedService} disabled={!isAdmin} onMutate={runMutation} />
@@ -779,6 +785,7 @@ function BoardTab({
   token,
   selectedService,
   canEdit,
+  showScheduleEditor,
   onMutate,
   onCopied
 }: {
@@ -787,57 +794,72 @@ function BoardTab({
   token: string;
   selectedService: string;
   canEdit: boolean;
+  showScheduleEditor: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
   onCopied: (message: string) => void;
 }) {
   return (
-    <section className="board-grid">
-      {schedule.days.map((day) => (
-        <article key={day.date} className="day-column">
-          <header className="day-header">
-            <div>
-              <h2>{displayDate(day.date)}</h2>
-              <span>{day.uncoveredCases.length} uncovered</span>
-            </div>
-            <button
-              title="Copy day"
-              className="icon-button"
-              onClick={async () => {
-                const message = await getUncoveredMessage(token, schedule.week.id, day.date, selectedService);
-                await navigator.clipboard.writeText(message);
-                onCopied("Day message copied");
-              }}
-            >
-              <ClipboardCopy size={16} />
-            </button>
-          </header>
+    <>
+      {showScheduleEditor && (
+        <section className="board-schedule-editor" aria-label="Edit OR and clinic schedule">
+          <ScheduleEditor
+            state={state}
+            week={schedule.week}
+            token={token}
+            selectedService={selectedService}
+            disabled={!canEdit}
+            onMutate={onMutate}
+          />
+        </section>
+      )}
+      <section className="board-grid">
+        {schedule.days.map((day) => (
+          <article key={day.date} className="day-column">
+            <header className="day-header">
+              <div>
+                <h2>{displayDate(day.date)}</h2>
+                <span>{day.uncoveredCases.length} uncovered</span>
+              </div>
+              <button
+                title="Copy day"
+                className="icon-button"
+                onClick={async () => {
+                  const message = await getUncoveredMessage(token, schedule.week.id, day.date, selectedService);
+                  await navigator.clipboard.writeText(message);
+                  onCopied("Day message copied");
+                }}
+              >
+                <ClipboardCopy size={16} />
+              </button>
+            </header>
 
-          {day.blocks.map((block) => (
-            <BlockView
-              key={block.id}
-              state={state}
-              block={block}
-              canEdit={canEdit}
-              token={token}
-              selectedService={selectedService}
-              onMutate={onMutate}
-            />
-          ))}
+            {day.blocks.map((block) => (
+              <BlockView
+                key={block.id}
+                state={state}
+                block={block}
+                canEdit={canEdit}
+                token={token}
+                selectedService={selectedService}
+                onMutate={onMutate}
+              />
+            ))}
 
-          {day.clinics.map((clinic) => (
-            <ClinicView
-              key={clinic.id}
-              state={state}
-              clinic={clinic}
-              canEdit={canEdit}
-              token={token}
-              selectedService={selectedService}
-              onMutate={onMutate}
-            />
-          ))}
-        </article>
-      ))}
-    </section>
+            {day.clinics.map((clinic) => (
+              <ClinicView
+                key={clinic.id}
+                state={state}
+                clinic={clinic}
+                canEdit={canEdit}
+                token={token}
+                selectedService={selectedService}
+                onMutate={onMutate}
+              />
+            ))}
+          </article>
+        ))}
+      </section>
+    </>
   );
 }
 
@@ -1593,7 +1615,7 @@ function AssignmentControl({
   );
 }
 
-function EntryTab({
+function ScheduleEditor({
   state,
   week,
   token,
@@ -2729,7 +2751,9 @@ function getRotationServiceOptions(state: PlannerState): string[] {
 function getBlockServiceGroups(residents: Resident[], blockNumber: number): { service: string; residents: Resident[] }[] {
   const groups = new Map<string, Resident[]>();
   for (const resident of residents) {
-    const service = getRotationForBlock(resident, blockNumber)?.service || "Not listed in source grid";
+    const rotation = getRotationForBlock(resident, blockNumber);
+    const service = rotation?.service || "Not listed in source grid";
+    if (service === "Not listed in source grid" && isOffServiceRosterResident(resident)) continue;
     groups.set(service, [...(groups.get(service) ?? []), resident]);
   }
   return [...groups.entries()]
@@ -2738,6 +2762,14 @@ function getBlockServiceGroups(residents: Resident[], blockNumber: number): { se
       residents: [...groupResidents].sort((a, b) => a.name.localeCompare(b.name))
     }))
     .sort((a, b) => a.service.localeCompare(b.service));
+}
+
+function isOffServiceRosterResident(resident: Resident): boolean {
+  return (
+    resident.rosterKind === "off-service" ||
+    resident.accountEligible === false ||
+    resident.tags.some((tag) => tag.trim().toLowerCase() === "off-service")
+  );
 }
 
 interface CallNightSegment {
@@ -2968,8 +3000,6 @@ function getTabTitle(tab: Tab): string {
       return "Blocks ⏹️";
     case "requests":
       return "Requests 📤";
-    case "entry":
-      return "Cases & Clinic";
     case "roster":
       return "Residents";
     case "defaults":
