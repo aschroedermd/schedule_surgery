@@ -254,12 +254,14 @@ function TamagotchiDevice({
         {hasHatched ? (
           <div className="nb-character-scene">
             <div className="nb-nameplate">Dr. Nussbaum</div>
-            <img
-              className={`nb-character${isTransforming ? " is-transforming" : ""}`}
-              src={OUTFIT_IMAGES[outfit]}
-              alt="Dr. Nussbaum"
-              draggable={false}
-            />
+            <div className="nb-character-frame">
+              <img
+                className={`nb-character${isTransforming ? " is-transforming" : ""}`}
+                src={OUTFIT_IMAGES[outfit]}
+                alt="Dr. Nussbaum"
+                draggable={false}
+              />
+            </div>
           </div>
         ) : (
           <button
