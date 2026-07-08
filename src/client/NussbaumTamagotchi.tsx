@@ -254,12 +254,10 @@ function TamagotchiDevice({
         {hasHatched ? (
           <div className="nb-character-scene">
             <div className="nb-nameplate">Dr. Nussbaum</div>
-            <div className="nb-character-frame">
-              <img
+            <div className="nb-character-frame" aria-label="Dr. Nussbaum" role="img">
+              <div
                 className={`nb-character${isTransforming ? " is-transforming" : ""}`}
-                src={OUTFIT_IMAGES[outfit]}
-                alt="Dr. Nussbaum"
-                draggable={false}
+                style={{ "--nb-character-url": `url("${OUTFIT_IMAGES[outfit]}")` } as CSSProperties}
               />
             </div>
           </div>
