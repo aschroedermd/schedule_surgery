@@ -1,0 +1,165 @@
+{
+  "feature": "Hidden Dr. Nussbaum Tamagotchi",
+  "source_app": "SurgeryDashboard",
+  "source_reference": "source-reference/TimerView.swift",
+  "images": [
+    {
+      "path": "images/Tamagotchi.png",
+      "original_path": "SurgeryDashboard/Assets.xcassets/Tamagotchi.imageset/Tamagotchi.png",
+      "role": "Device shell and physical button artwork",
+      "dimensions": {
+        "width": 708,
+        "height": 1258
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_char_16bit_whitecoat.png",
+      "original_path": "SurgeryDashboard/Assets.xcassets/NussbaumWhitecoat.imageset/nb_char_16bit_whitecoat.png",
+      "role": "Hatched Dr. Nussbaum whitecoat sprite",
+      "dimensions": {
+        "width": 489,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_char_16bit_scrubs.png",
+      "original_path": "SurgeryDashboard/Assets.xcassets/NussbaumScrubs.imageset/nb_char_16bit_scrubs.png",
+      "role": "Hatched Dr. Nussbaum scrubs sprite",
+      "dimensions": {
+        "width": 489,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_call_bg_ring.png",
+      "original_path": "SurgeryDashboard/Assets.xcassets/NussbaumCallRing.imageset/nb_call_bg_ring.png",
+      "role": "Full-screen fake call ringing background",
+      "dimensions": {
+        "width": 1320,
+        "height": 2868
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_call_bg_answered.png",
+      "original_path": "SurgeryDashboard/Assets.xcassets/NussbaumCallAnswered.imageset/nb_call_bg_answered.png",
+      "role": "Full-screen fake call answered background",
+      "dimensions": {
+        "width": 1320,
+        "height": 2868
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_call_background.unused-reference.png",
+      "original_path": "SurgeryDashboard/Assets.xcassets/NussbaumCallBackground.imageset/nb_call_background.png",
+      "role": "Nearby source art retained as an unused reference",
+      "dimensions": {
+        "width": 1320,
+        "height": 2868
+      },
+      "used_by_current_runtime": false
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "screenshots/nussbaum-easter-egg.png",
+      "role": "Visual reference for default hidden-feature screen",
+      "dimensions": {
+        "width": 1206,
+        "height": 2622
+      }
+    },
+    {
+      "path": "screenshots/nussbaum-buttons-scrubs.png",
+      "role": "Visual reference for hatched scrubs state and buttons",
+      "dimensions": {
+        "width": 1206,
+        "height": 2622
+      }
+    }
+  ],
+  "audio": {
+    "first_words": "audio/nb-first.mp3",
+    "ring_loop": "audio/ring.mp3",
+    "call": "audio/nussbaum_call.mp3",
+    "random_phrase_directory": "audio/RandomPhrases",
+    "random_phrases": [
+      "nb-altemeier-procedure.mp3",
+      "nb-altmier.mp3",
+      "nb-cbd-incision.mp3",
+      "nb-cholangiogram-side.mp3",
+      "nb-debakey.mp3",
+      "nb-favorite.mp3",
+      "nb-first.mp3",
+      "nb-fistula.mp3",
+      "nb-giant-duodenal-ulcer-2.mp3",
+      "nb-giant-duodenal-ulcer.mp3",
+      "nb-halsted.mp3",
+      "nb-iknowwhatiwoulddo-1.mp3",
+      "nb-iknowwhatiwoulddo-2.mp3",
+      "nb-iknowwhatiwoulddo-3.mp3",
+      "nb-lap-us.mp3",
+      "nb-ng-suction.mp3",
+      "nb-pyloric-channel-ulcer.mp3",
+      "nb-retention-sutures.mp3",
+      "nb-robert-cade.mp3",
+      "nb-saline-drop-test.mp3",
+      "nb-seprafilm-2.mp3",
+      "nb-seprafilm-ostomy.mp3",
+      "nb-seprafilm.mp3",
+      "nb-shouldice.mp3",
+      "nb-why-ct.mp3"
+    ],
+    "top_level_audio_files_copied": [
+      "nb-altmier.mp3",
+      "nb-first.mp3",
+      "nb-fistula.mp3",
+      "nb-giant-duodenal-ulcer.mp3",
+      "nb-proud-1.mp3",
+      "nb-proud-2.mp3",
+      "nb-why-ct.mp3",
+      "nussbaum_call.mp3",
+      "ring.mp3"
+    ]
+  },
+  "layout": {
+    "device": {
+      "width": 708,
+      "height": 1258,
+      "max_rendered_width": 380
+    },
+    "lcd_rect": {
+      "x": 130,
+      "y": 530,
+      "width": 450,
+      "height": 420
+    },
+    "button_radius": 80,
+    "button_centers": {
+      "left": {
+        "x": 216,
+        "y": 1140
+      },
+      "middle": {
+        "x": 356,
+        "y": 1170
+      },
+      "right": {
+        "x": 500,
+        "y": 1138
+      }
+    },
+    "call_image": {
+      "width": 1320,
+      "height": 2868,
+      "timer_y_range": {
+        "min": 564,
+        "max": 620
+      }
+    }
+  }
+}

@@ -42,6 +42,7 @@ import {
   updateEntity
 } from "./api";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
+import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import { canEditScheduleForSelectedService, getNavigationTabs, type Tab } from "./navigation";
 import { formatMonthLabel, getMonthFromDate, isCallDate } from "../shared/coverage";
@@ -137,6 +138,7 @@ export function App() {
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
   const [printSnapshot, setPrintSnapshot] = useState<BoardPrintSnapshot | undefined>();
+  const [isTamagotchiOpen, setIsTamagotchiOpen] = useState(false);
   const stateVersionRef = useRef<number | undefined>();
 
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
@@ -386,11 +388,15 @@ export function App() {
     }
   }, [activeTab, canEditSelectedService]);
 
+  if (isTamagotchiOpen) {
+    return <NussbaumTamagotchi onExit={() => setIsTamagotchiOpen(false)} />;
+  }
+
   if (!session) {
     if (showLoggedOut) {
       return <LoggedOutScreen onReturn={() => setShowLoggedOut(false)} />;
     }
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} onOpenTamagotchi={() => setIsTamagotchiOpen(true)} />;
   }
 
   if (session.mustChangePassword) {
@@ -551,6 +557,7 @@ export function App() {
           username={session.username}
           onToast={(message) => setToast(message)}
           onPasswordChanged={handlePasswordChanged}
+          onOpenTamagotchi={() => setIsTamagotchiOpen(true)}
         >
           {linkedResident && (
             <ResidentProfileRequestPanel
@@ -568,13 +575,24 @@ export function App() {
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (session: PlannerSession) => void }) {
+function LoginScreen({
+  onLogin,
+  onOpenTamagotchi
+}: {
+  onLogin: (session: PlannerSession) => void;
+  onOpenTamagotchi: () => void;
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | undefined>();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (username.trim().toLowerCase() === "nussbaum" && password === "") {
+      setError(undefined);
+      onOpenTamagotchi();
+      return;
+    }
     try {
       const session = await login(username, password);
       onLogin(session);

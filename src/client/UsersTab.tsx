@@ -465,16 +465,31 @@ export function AccountTab({
   username,
   onToast,
   onPasswordChanged,
+  onOpenTamagotchi,
   children
 }: {
   token: string;
   username: string;
   onToast: (message: string) => void;
   onPasswordChanged?: (user: PasswordChangeResponse) => void;
+  onOpenTamagotchi?: () => void;
   children?: ReactNode;
 }) {
   return (
     <section className="account-panel">
+      {onOpenTamagotchi && (
+        <div className="account-easter-egg-row">
+          <button
+            type="button"
+            className="icon-button account-easter-egg-button"
+            title="Dr. Nussbaum"
+            aria-label="Open Dr. Nussbaum"
+            onClick={onOpenTamagotchi}
+          >
+            🥚
+          </button>
+        </div>
+      )}
       {children}
       <PasswordChangeForm
         token={token}
