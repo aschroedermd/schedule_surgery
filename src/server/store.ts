@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { buildResidentUsername, isPlaceholderResidentUsername } from "../shared/id";
 import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
-import { Attending, ClinicSession, PlannerState, Resident } from "../shared/types";
+import { ActivityEvent, ActivityEventType, Attending, ClinicSession, GoldStarAward, PlannerState, Resident } from "../shared/types";
 import { createInitialState, createSeedCoverageEntries } from "./sampleData";
 import { createRotationResidents, getRotationResidentMatchNames, getSeedMigrationBlockNumbers } from "./residentRotationSeed";
 
@@ -59,7 +59,7 @@ export class PostgresStateStore implements StateStore {
 
   async load(): Promise<PlannerState> {
     await this.ensureInitialized();
-    const result = await this.pool.query<{ data: PlannerState; version: string; updated_at: Date }>(
+    const result = await this.pool.query<{ data: PlannerState; version: string; updated_at: Date ;}>(
       "select data, version, updated_at from planner_state where id = $1",
       ["main"]
     );
@@ -79,7 +79,7 @@ export class PostgresStateStore implements StateStore {
     await this.ensureInitialized();
     const normalized = normalizePlannerState(state);
     const expectedVersion = options.expectedVersion ?? normalized.version;
-    const result = await this.pool.query<{ version: string; updated_at: Date }>(
+    const result = await this.pool.query<{ version: string; updated_at: Date ;}>(
       `update planner_state
        set data = $2, version = version + 1, updated_at = now()
        where id = $1 and version = $3
@@ -88,7 +88,7 @@ export class PostgresStateStore implements StateStore {
     );
     const row = result.rows[0];
     if (!row) {
-      const current = await this.pool.query<{ version: string }>("select version from planner_state where id = $1", ["main"]);
+      const current = await this.pool.query<{ version: string ;}>("select version from planner_state where id = $1", ["main"]);
       const currentVersion = Number(current.rows[0]?.version ?? 0);
       throw new StateConflictError("Planner state changed; refresh and retry", currentVersion);
     }
@@ -121,7 +121,7 @@ export class PostgresStateStore implements StateStore {
       version: 1,
       updatedAt: new Date().toISOString()
     });
-    const result = await this.pool.query<{ version: string; updated_at: Date }>(
+    const result = await this.pool.query<{ version: string; updated_at: Date ;}>(
       `insert into planner_state (id, data, version, updated_at)
        values ($1, $2, 1, now())
        on conflict (id) do nothing
@@ -173,9 +173,49 @@ export function normalizePlannerState(
     assignments: partial.assignments ?? [],
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
     coverageRequests: partial.coverageRequests ?? [],
-    activityEvents: partial.activityEvents ?? []
+    goldStarAwards: normalizeGoldStarAwards(partial.goldStarAwards ?? []),
+    activityEvents: normalizeActivityEvents(partial.activityEvents ?? [])
   };
   return removeDanglingReferences(base);
+}
+
+function normalizeActivityEvents(activityEvents: ActivityEvent[]): ActivityEvent[] {
+  return activityEvents.map((event) => ({
+    ...event,
+    activityType: normalizeActivityEventType(event.activityType, event),
+    actorUsername: normalizeOptionalString(event.actorUsername),
+    actorName: normalizeOptionalString(event.actorName)
+  }));
+}
+
+function normalizeActivityEventType(value: unknown, event: Partial<ActivityEvent>): ActivityEventType {
+  if (value === "login" || value === "assignment" || value === "calendar" || value === "account" || value === "resident") return value;
+  const action = event.action?.toLowerCase() ?? "";
+  const entityType = event.entityType?.toLowerCase() ?? "";
+  if (action.includes("login") || action.includes("logged in")) return "login";
+  if (action.includes("account") || action.includes("password") || action.includes("profile") || entityType === "user") return "account";
+  if (action.includes("resident") || action.includes("star") || entityType === "goldstaraward") return "resident";
+  if (action.includes("calendar") || action.includes("call trade") || entityType === "coverageentry" || entityType === "coveragerequest") {
+    return "calendar";
+  }
+  return "assignment";
+}
+
+function normalizeGoldStarAwards(goldStarAwards: GoldStarAward[]): GoldStarAward[] {
+  return goldStarAwards
+    .map((award) => {
+      const createdAt = normalizeOptionalString(award.createdAt) ?? new Date().toISOString();
+      return {
+        ...award,
+        id: normalizeOptionalString(award.id) ?? "star_legacy",
+        weekStartDate: normalizeOptionalString(award.weekStartDate) ?? "",
+        giverResidentId: normalizeOptionalString(award.giverResidentId),
+        recipientResidentId: normalizeOptionalString(award.recipientResidentId) ?? "",
+        createdAt,
+        updatedAt: normalizeOptionalString(award.updatedAt) ?? createdAt
+      };
+    })
+    .filter((award) => award.weekStartDate && award.recipientResidentId);
 }
 
 function normalizeResidents(residents: Resident[]): Resident[] {
@@ -183,7 +223,7 @@ function normalizeResidents(residents: Resident[]): Resident[] {
 }
 
 function normalizeResident(resident: Resident): Resident {
-  const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" };
+  const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" ;};
   const sourceProgramAbbreviation = normalizeOptionalString(resident.sourceProgramAbbreviation);
   const sourceProgram = normalizeOptionalString(resident.sourceProgram);
   const tags = resident.tags ?? [];
@@ -456,6 +496,13 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
       if (request.requestedResidentProfile?.residentId && !residentIds.has(request.requestedResidentProfile.residentId)) return false;
       if (request.entryId && !state.coverageEntries.some((entry) => entry.id === request.entryId)) return false;
       return true;
-    })
+    }),
+    goldStarAwards: state.goldStarAwards.filter(
+      (award) =>
+        Boolean(award.giverResidentId) &&
+        residentIds.has(award.giverResidentId ?? "") &&
+        residentIds.has(award.recipientResidentId) &&
+        award.giverResidentId !== award.recipientResidentId
+    )
   };
 }

@@ -3,9 +3,11 @@ import express from "express";
 import path from "node:path";
 import { URL } from "node:url";
 import { isCoverageKindAllowedOnDate } from "../shared/coverage";
-import { addDays, minutesToTime, timeToMinutes } from "../shared/date";
+import { addDays, getCurrentMonday, minutesToTime, timeToMinutes } from "../shared/date";
 import { createId } from "../shared/id";
 import {
+  type ActivityActor,
+  type ActivityInput,
   addActivity,
   applyClaim,
   applySuggestion,
@@ -27,9 +29,11 @@ import {
   CoverageEntry,
   CoverageKind,
   CoverageRequestAction,
+  GoldStarAward,
   PlannerState,
   Resident,
   ResidentProfileChange,
+  Role,
   SessionUser,
   SurgeryCase
 } from "../shared/types";
@@ -126,6 +130,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         res.status(401).json({ error: "Invalid username or password" });
         return;
       }
+      await recordActivity({
+        ...userActivityActor(user),
+        activityType: "login",
+        action: "logged in",
+        details: `${user.displayName || user.username} logged in`,
+        entityType: "user",
+        entityId: user.username
+      });
       res.json({ token: createToken(user), ...user });
     } catch (error) {
       next(error);
@@ -166,6 +178,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   app.post("/api/users", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const created = await userStore.createUser(req.body);
+      await recordActivity({
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "created account",
+        details: `Created account for ${formatUserSummary(created.user)}`,
+        entityType: "user",
+        entityId: created.user.username
+      });
       res.status(201).json({ ...created, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -176,6 +196,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     try {
       const users = Array.isArray(req.body.users) ? req.body.users : [];
       const created = await userStore.createUsers(users);
+      await recordActivity({
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "created accounts",
+        details: `Created accounts for ${created.map((item) => formatUserSummary(item.user)).join(", ")}`,
+        entityType: "user",
+        entityId: created.map((item) => item.user.username).join(",")
+      });
       res.status(201).json({ created, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -189,6 +217,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         role: req.body.role === "admin" ? "admin" : req.body.role === "viewer" ? "viewer" : undefined,
         servicePrivileges: req.body.servicePrivileges
       });
+      await recordActivity({
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "updated account",
+        details: `Updated account for ${formatUserSummary(user)}`,
+        entityType: "user",
+        entityId: user.username
+      });
       res.json({ user, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -198,6 +234,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   app.patch("/api/users/:username/password", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const reset = await userStore.resetPassword(getParam(req.params.username));
+      await recordActivity({
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "reset password",
+        details: `Reset password for ${formatUserSummary(reset.user)}`,
+        entityType: "user",
+        entityId: reset.user.username
+      });
       res.json({ ...reset, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -206,7 +250,16 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
 
   app.delete("/api/users/:username", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      await userStore.deleteUser(getParam(req.params.username));
+      const username = getParam(req.params.username);
+      await userStore.deleteUser(username);
+      await recordActivity({
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "deleted account",
+        details: `Deleted account ${username}`,
+        entityType: "user",
+        entityId: username
+      });
       res.json({ users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -224,6 +277,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         String(req.body.currentPassword ?? ""),
         String(req.body.nextPassword ?? "")
       );
+      await recordActivity({
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "changed password",
+        details: `${formatUserSummary(user)} changed password`,
+        entityType: "user",
+        entityId: user.username
+      });
       res.json({ token: createToken(user), ...user });
     } catch (error) {
       next(error);
@@ -293,7 +354,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const nextState = applySuggestion(
         state,
         getParam(req.params.weekId),
-        req.user?.role ?? "admin",
+        requestActivityActor(req),
         readOptionalString(req.query.service)
       );
       res.json(await commitState(req, nextState));
@@ -313,7 +374,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         ...state,
         [collection]: [...state[collection], entity]
       } as PlannerState;
-      const withActivity = addActivity(nextState, req.user?.role ?? "admin", "created item", `Created ${collection}`, collection, entity.id);
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: collectionActivityType(collection),
+        action: "created item",
+        details: `Created ${collection}`,
+        entityType: collection,
+        entityId: entity.id
+      });
       res.status(201).json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -333,7 +401,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         ...state,
         [collection]: state[collection].map((entity) => (entity.id === id ? { ...entity, ...req.body, id } : entity))
       } as PlannerState;
-      const withActivity = addActivity(nextState, req.user?.role ?? "admin", "updated item", `Updated ${collection}`, collection, id);
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: collectionActivityType(collection),
+        action: "updated item",
+        details: `Updated ${collection}`,
+        entityType: collection,
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -347,7 +422,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const state = await store.load();
       if (!requireEntityWriteAccess(req, res, state, collection, findEntity(state, collection, id))) return;
       const nextState = collection === "weeks" ? deleteWeek(state, id) : deleteEntityFromCollection(state, collection, id);
-      const withActivity = addActivity(nextState, req.user?.role ?? "admin", "deleted item", `Deleted ${collection}`, collection, id);
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: collectionActivityType(collection),
+        action: "deleted item",
+        details: `Deleted ${collection}`,
+        entityType: collection,
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -381,15 +463,22 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         assignment.kind === "case" || assignment.kind === "clinic"
           ? state.assignments
           : state.assignments.filter((candidate) => {
-              if (candidate.kind === assignment.kind && candidate.targetId === assignment.targetId) return false;
-              if (assignment.kind === "block" && candidate.kind === "case" && caseIdsInAssignedBlock.has(candidate.targetId)) return false;
-              return true;
-            });
+            if (candidate.kind === assignment.kind && candidate.targetId === assignment.targetId) return false;
+            if (assignment.kind === "block" && candidate.kind === "case" && caseIdsInAssignedBlock.has(candidate.targetId)) return false;
+            return true;
+          });
       const nextState = {
         ...state,
         assignments: [...replacedAssignments, assignment]
       };
-      const withActivity = addActivity(nextState, req.user?.role ?? "admin", "assigned resident", "Manual assignment updated", assignment.kind, assignment.targetId);
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "assignment",
+        action: "assigned resident",
+        details: "Manual assignment updated",
+        entityType: assignment.kind,
+        entityId: assignment.targetId
+      });
       res.status(201).json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -426,7 +515,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
           assignment.id === id ? { ...assignment, ...req.body, id: assignment.id, updatedAt: new Date().toISOString() } : assignment
         )
       };
-      const withActivity = addActivity(nextState, req.user?.role ?? "admin", "updated assignment", "Assignment lock or resident changed", "assignment", id);
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "assignment",
+        action: "updated assignment",
+        details: "Assignment lock or resident changed",
+        entityType: "assignment",
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -445,7 +541,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         ...state,
         assignments: state.assignments.filter((assignment) => assignment.id !== id)
       };
-      const withActivity = addActivity(nextState, req.user?.role ?? "admin", "removed assignment", "Assignment cleared", "assignment", id);
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "assignment",
+        action: "removed assignment",
+        details: "Assignment cleared",
+        entityType: "assignment",
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -459,14 +562,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       if (!requireServiceEdit(req, res, serviceLine)) return;
       const entry = buildCoverageEntry(state, req.body);
       const nextState = upsertCoverageEntry(state, entry);
-      const withActivity = addActivity(
-        nextState,
-        req.user?.role ?? "admin",
-        "updated call calendar",
-        `Set ${describeCoverageEntry(nextState, entry)}`,
-        "coverageEntry",
-        entry.id
-      );
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "calendar",
+        action: "updated call calendar",
+        details: `Set ${describeCoverageEntry(nextState, entry)}`,
+        entityType: "coverageEntry",
+        entityId: entry.id
+      });
       res.status(201).json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -482,14 +585,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const existing = requireCoverageEntry(state, id);
       const entry = buildCoverageEntry(state, { ...existing, ...req.body, id }, existing);
       const nextState = upsertCoverageEntry(state, entry);
-      const withActivity = addActivity(
-        nextState,
-        req.user?.role ?? "admin",
-        "updated call calendar",
-        `Updated ${describeCoverageEntry(nextState, entry)}`,
-        "coverageEntry",
-        entry.id
-      );
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "calendar",
+        action: "updated call calendar",
+        details: `Updated ${describeCoverageEntry(nextState, entry)}`,
+        entityType: "coverageEntry",
+        entityId: entry.id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -507,14 +610,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         ...state,
         coverageEntries: state.coverageEntries.filter((entry) => entry.id !== id)
       };
-      const withActivity = addActivity(
-        nextState,
-        req.user?.role ?? "admin",
-        "updated call calendar",
-        `Cleared ${describeCoverageEntry(state, existing)}`,
-        "coverageEntry",
-        id
-      );
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "calendar",
+        action: "updated call calendar",
+        details: `Cleared ${describeCoverageEntry(state, existing)}`,
+        entityType: "coverageEntry",
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -537,18 +640,18 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         ...state,
         coverageRequests: [coverageRequest, ...state.coverageRequests]
       };
-      const withActivity = addActivity(
-        nextState,
-        req.user?.role ?? "viewer",
-        isResidentTrade
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req, "viewer"),
+        activityType: isResidentProfile ? "account" : "calendar",
+        action: isResidentTrade
           ? "submitted resident call trade"
           : isResidentProfile
             ? "submitted resident profile request"
             : "submitted call calendar request",
-        describeCoverageRequest(nextState, coverageRequest),
-        "coverageRequest",
-        coverageRequest.id
-      );
+        details: describeCoverageRequest(nextState, coverageRequest),
+        entityType: "coverageRequest",
+        entityId: coverageRequest.id
+      });
       res.status(201).json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -579,14 +682,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
             : requestItem
         )
       };
-      const withActivity = addActivity(
-        nextState,
-        req.user?.role ?? "admin",
-        getApprovedCoverageRequestActivity(coverageRequest),
-        describeCoverageRequest(nextState, coverageRequest),
-        "coverageRequest",
-        id
-      );
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: isResidentProfileRequest(coverageRequest) ? "account" : "calendar",
+        action: getApprovedCoverageRequestActivity(coverageRequest),
+        details: describeCoverageRequest(nextState, coverageRequest),
+        entityType: "coverageRequest",
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -616,14 +719,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
             : requestItem
         )
       };
-      const withActivity = addActivity(
-        nextState,
-        req.user?.role ?? "admin",
-        getDeniedCoverageRequestActivity(coverageRequest),
-        describeCoverageRequest(nextState, coverageRequest),
-        "coverageRequest",
-        id
-      );
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: isResidentProfileRequest(coverageRequest) ? "account" : "calendar",
+        action: getDeniedCoverageRequestActivity(coverageRequest),
+        details: describeCoverageRequest(nextState, coverageRequest),
+        entityType: "coverageRequest",
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -639,14 +742,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         ...state,
         coverageRequests: state.coverageRequests.filter((requestItem) => requestItem.id !== id)
       };
-      const withActivity = addActivity(
-        nextState,
-        req.user?.role ?? "admin",
-        "removed coverage request",
-        describeCoverageRequest(state, coverageRequest),
-        "coverageRequest",
-        id
-      );
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: isResidentProfileRequest(coverageRequest) ? "account" : "calendar",
+        action: "removed coverage request",
+        details: describeCoverageRequest(state, coverageRequest),
+        entityType: "coverageRequest",
+        entityId: id
+      });
       res.json(await commitState(req, withActivity));
     } catch (error) {
       next(error);
@@ -664,8 +767,31 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const serviceLine = getAssignmentTargetServiceLine(state, claim.scope, claim.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
       requireResident(state, claim.residentId);
-      const nextState = applyClaim(state, claim);
+      const nextState = applyClaim(state, claim, requestActivityActor(req, "viewer"));
       res.status(201).json(await commitState(req, nextState));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/gold-stars", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const { award, giver, recipient } = buildGoldStarAward(state, req.user, req.body);
+      const nextState: PlannerState = {
+        ...state,
+        goldStarAwards: [award, ...state.goldStarAwards]
+      };
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req, "viewer"),
+        activityType: "resident",
+        action: "awarded gold star",
+        details: `${giver.name} awarded a star to ${recipient.name}`,
+        entityType: "goldStarAward",
+        entityId: award.id
+      });
+      const saved = await commitState(req, withActivity);
+      res.status(201).json(filterStateForUser(saved, req.user));
     } catch (error) {
       next(error);
     }
@@ -682,6 +808,20 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     const saved = await store.save(state, { expectedVersion: readExpectedVersion(req, state.version) });
     broadcastStateEvent(stateSubscribers, saved);
     return saved;
+  }
+
+  async function recordActivity(activity: ActivityInput): Promise<PlannerState> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const state = await store.load();
+        const saved = await store.save(addActivity(state, activity));
+        broadcastStateEvent(stateSubscribers, saved);
+        return saved;
+      } catch (error) {
+        if (!(error instanceof StateConflictError) || attempt === 2) throw error;
+      }
+    }
+    throw new Error("Unable to record activity");
   }
 
   const clientDist = path.resolve(process.cwd(), "dist/client");
@@ -711,6 +851,26 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   });
 
   return app;
+}
+
+function requestActivityActor(req: AuthenticatedRequest, fallbackRole: Role = "admin"): ActivityActor {
+  return req.user ? userActivityActor(req.user) : { actorRole: fallbackRole };
+}
+
+function userActivityActor(user: Pick<SessionUser, "role" | "username" | "displayName">): ActivityActor {
+  return {
+    actorRole: user.role,
+    actorUsername: user.username,
+    actorName: user.displayName
+  };
+}
+
+function formatUserSummary(user: Pick<SessionUser, "username" | "displayName">): string {
+  return user.displayName && user.displayName !== user.username ? `${user.displayName} (${user.username})` : user.username;
+}
+
+function collectionActivityType(_collection: CollectionName): ActivityInput["activityType"] {
+  return "assignment";
 }
 
 class HttpError extends Error {
@@ -942,6 +1102,40 @@ function residentMatchesUser(resident: Resident, user: SessionUser | undefined):
 
 function findResidentForUser(state: PlannerState, user: SessionUser | undefined): Resident | undefined {
   return state.residents.find((resident) => residentMatchesUser(resident, user));
+}
+
+function buildGoldStarAward(
+  state: PlannerState,
+  user: SessionUser | undefined,
+  input: { recipientResidentId?: unknown; residentId?: unknown } | undefined
+): { award: GoldStarAward; giver: Resident; recipient: Resident } {
+  const giver = findResidentForUser(state, user);
+  if (!giver) throw new HttpError(403, "Linked resident profile required to award a star");
+  const body = input ?? {};
+  const recipientResidentId = readOptionalString(body.recipientResidentId) ?? readOptionalString(body.residentId);
+  if (!recipientResidentId) throw new HttpError(400, "Choose a resident to receive your star");
+  const recipient = state.residents.find((resident) => resident.id === recipientResidentId);
+  if (!recipient) throw new HttpError(400, `Unknown resident: ${recipientResidentId}`);
+  if (recipient.id === giver.id) throw new HttpError(400, "Choose another resident for your star");
+
+  const weekStartDate = getCurrentMonday();
+  if (state.goldStarAwards.some((award) => award.weekStartDate === weekStartDate && award.giverResidentId === giver.id)) {
+    throw new HttpError(400, "You already awarded your star this week");
+  }
+
+  const now = new Date().toISOString();
+  return {
+    giver,
+    recipient,
+    award: {
+      id: createId("star"),
+      weekStartDate,
+      giverResidentId: giver.id,
+      recipientResidentId: recipient.id,
+      createdAt: now,
+      updatedAt: now
+    }
+  };
 }
 
 function normalizeUsername(value: string): string {
@@ -1231,10 +1425,10 @@ function buildResidentTradeRequest(
   );
   const swapRequestedEntry = swapEntry
     ? buildCoverageEntry(
-        state,
-        { ...swapEntry, residentId: requesterResident.id, id: swapEntry.id, createdAt: swapEntry.createdAt },
-        swapEntry
-      )
+      state,
+      { ...swapEntry, residentId: requesterResident.id, id: swapEntry.id, createdAt: swapEntry.createdAt },
+      swapEntry
+    )
     : undefined;
 
   return {
@@ -1365,10 +1559,10 @@ function applyResidentProfileRequest(state: PlannerState, coverageRequest: Cover
     residents: state.residents.map((resident) =>
       resident.id === residentId
         ? {
-            ...resident,
-            name: requestedProfile.name ?? resident.name,
-            aliases: requestedProfile.aliases ?? resident.aliases ?? []
-          }
+          ...resident,
+          name: requestedProfile.name ?? resident.name,
+          aliases: requestedProfile.aliases ?? resident.aliases ?? []
+        }
         : resident
     )
   };
@@ -1697,9 +1891,14 @@ function capitalize(value: string): string {
 
 function filterStateForUser(state: PlannerState, user: SessionUser | undefined): PlannerState {
   if (!user || user.role === "admin") return state;
+  const linkedResident = findResidentForUser(state, user);
   return {
     ...state,
-    coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest))
+    coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest)),
+    goldStarAwards: state.goldStarAwards.map((award) =>
+      award.giverResidentId === linkedResident?.id ? award : { ...award, giverResidentId: undefined }
+    ),
+    activityEvents: []
   };
 }
 
@@ -1756,11 +1955,11 @@ function coverageRequestInvolvesUserResident(
   const resident = findResidentForUser(state, user);
   return Boolean(
     resident &&
-      (coverageRequest.requesterResidentId === resident.id ||
-        coverageRequest.targetResidentId === resident.id ||
-        coverageRequest.requestedResidentProfile?.residentId === resident.id ||
-        coverageRequest.requestedEntry?.residentId === resident.id ||
-        coverageRequest.swapRequestedEntry?.residentId === resident.id)
+    (coverageRequest.requesterResidentId === resident.id ||
+      coverageRequest.targetResidentId === resident.id ||
+      coverageRequest.requestedResidentProfile?.residentId === resident.id ||
+      coverageRequest.requestedEntry?.residentId === resident.id ||
+      coverageRequest.swapRequestedEntry?.residentId === resident.id)
   );
 }
 

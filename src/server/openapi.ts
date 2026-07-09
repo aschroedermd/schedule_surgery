@@ -134,6 +134,13 @@ export function getOpenApiDocument() {
             residentId: { type: "string" }
           }
         },
+        GoldStarInput: {
+          type: "object",
+          required: ["recipientResidentId"],
+          properties: {
+            recipientResidentId: { type: "string", description: "Resident receiving this week's gold star." }
+          }
+        },
         CoverageEntryInput: {
           type: "object",
           required: ["date", "kind"],
@@ -572,6 +579,26 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" }
+          }
+        }
+      },
+      "/api/gold-stars": {
+        post: {
+          summary: "Award this week's Gold Star Chart star",
+          description:
+            "Requires a logged-in browser user linked to a resident profile. Each linked resident can award one star per Monday-starting week, and cannot award it to themselves. State responses support anonymous weekly chart counts.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/GoldStarInput" }
+              }
+            }
+          },
+          responses: {
+            "201": { description: "Updated PlannerState" },
+            "400": { description: "Invalid recipient, self-award, or weekly star already used" },
+            "403": { description: "Linked resident profile required" }
           }
         }
       },

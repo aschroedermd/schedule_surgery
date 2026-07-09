@@ -1,6 +1,6 @@
 import type { ServicePrivilege } from "../shared/types";
 
-export type Tab = "board" | "my" | "calendar" | "call" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "account";
+export type Tab = "board" | "my" | "residents" | "calendar" | "call" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "account";
 export type NavigationTab = readonly [Tab, string];
 
 export function getNavigationTabs({
@@ -19,8 +19,8 @@ export function getNavigationTabs({
     ["call", "CALL 📟"],
     ["schedule", "Blocks ⏹️"],
     ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests 📤 (${pendingCoverageRequestCount})` : "Requests 📤"]] as const : []),
-    ...(isAdmin ? [["roster", "Residents"], ["defaults", "Setup"], ["users", "Users"]] as const : []),
-    ["activity", "Activity 🛒"],
+    ...(isAdmin ? [["roster", "Roster"], ["defaults", "Setup"], ["users", "Users"], ["activity", "Activity 🛒"]] as const : []),
+    ["residents", "Residents ✨"],
     ["account", "Account 🛠️"]
   ];
 }

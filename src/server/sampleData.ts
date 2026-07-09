@@ -156,11 +156,15 @@ export function createInitialState(): PlannerState {
     assignments: [],
     coverageEntries: createSeedCoverageEntries(),
     coverageRequests: [],
+    goldStarAwards: [],
     activityEvents: [
       {
         id: "evt_seed",
         createdAt: new Date().toISOString(),
         actorRole: "admin",
+        actorUsername: "admin",
+        actorName: "admin",
+        activityType: "assignment",
         action: "created planner",
         details: "Started with no-PHI sample schedule data",
         entityType: "week",

@@ -103,6 +103,14 @@ The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, 
 
 Calendar `call` entries are shared across all services. Surgery call uses one `residentId` from `state.residents` for each `callPosition`: `senior`, `mid-level`, and `intern`. The one SCC/ICU resident is an additional call entry with `note: "SCC"` or `note: "ICU"` and no `callPosition`. Call `note` must otherwise be blank; do not store role labels, source text, or pasted names there. Calendar `rounding` entries are service-specific and can have multiple residents on the same Saturday-Sunday date; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. Create additional call or rounding entries with `POST /api/coverage-entries`; patch or delete a specific `coverageEntries[].id` to change an existing person.
 
+## Gold Star Chart
+
+```text
+POST /api/gold-stars
+```
+
+Linked resident browser users can award one weekly star to another resident. The server computes the current Monday-starting week, rejects self-awards, and rejects a second award from the same linked resident in that week. User-facing tools should display weekly recipient counts and should not surface giver identity.
+
 ## Calendar Requests, Trades, and Profile Requests
 
 ```text

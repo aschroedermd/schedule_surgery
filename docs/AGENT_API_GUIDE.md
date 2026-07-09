@@ -58,6 +58,7 @@ The database stores one JSON planner state. Important collections:
 - `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
 - `assignments`: resident coverage of a whole block, individual case, or clinic.
 - `activityEvents`: audit trail of changes.
+- `goldStarAwards`: weekly Gold Star Chart awards for the resident-facing Residents tab.
 
 Cases do not have independent start times. To change timing, patch the block `firstCaseStartTime`, or patch case `durationMinutes` / `order`. Sequential cases include `settings.turnoverMinutes` between cases.
 
@@ -130,6 +131,7 @@ POST   /api/coverage-entries
 PATCH  /api/coverage-entries/{id}
 DELETE /api/coverage-entries/{id}
 POST   /api/claims
+POST   /api/gold-stars
 POST   /api/weeks/{weekId}/suggest
 POST   /api/weeks/{weekId}/suggest?service=Davies
 POST   /api/coverage-requests
@@ -207,6 +209,18 @@ For a true swap, include `swapEntryId`. The swap entry must belong to `targetRes
 ```
 
 Accepting a resident trade applies the handoff or swap immediately and marks the request `approved`; browser UI labels this as accepted for resident trades. Denying leaves the calendar unchanged and marks the request `denied`. After acceptance, verify by reading `GET /api/state` and checking both affected `coverageEntries[]`.
+
+## Gold Star Chart
+
+Linked resident browser users can award one weekly star from the Residents tab. The server computes the current Monday-starting week, rejects self-awards, and rejects a second award from the same linked resident in that week.
+
+```json
+{
+  "recipientResidentId": "res_fellow"
+}
+```
+
+Use `POST /api/gold-stars` with a browser bearer token. Do not use API keys or unlinked admin sessions for this workflow. User-facing tools should display weekly recipient counts only and should not surface giver identity.
 
 ## Resident Profile Requests
 

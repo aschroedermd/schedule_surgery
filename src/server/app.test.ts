@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { createInitialState } from "./sampleData";
 import { MemoryStateStore, normalizePlannerState } from "./store";
+import { getCurrentMonday } from "../shared/date";
 import { ServicePrivilege } from "../shared/types";
 
 const TEST_SEED_USER_PASSWORD = "resident-dev-password";
@@ -80,6 +81,86 @@ describe("planner API", () => {
       .set("x-api-key", "test-admin-api-key")
       .send({ id: "hosp_api", name: "API Hospital", shortName: "API", color: "#333333" })
       .expect(201);
+  });
+
+  it("records login activity with user names and hides activity from non-admin state", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const viewerToken = await loginOnApp(app, "cblue");
+
+    const adminState = await request(app).get("/api/state").set("authorization", `Bearer ${adminToken}`).expect(200);
+    expect(adminState.body.activityEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          activityType: "login",
+          actorRole: "viewer",
+          actorUsername: "cblue",
+          actorName: "Christian Blue",
+          action: "logged in"
+        })
+      ])
+    );
+
+    const viewerState = await request(app).get("/api/state").set("authorization", `Bearer ${viewerToken}`).expect(200);
+    expect(viewerState.body.activityEvents).toEqual([]);
+  });
+
+  it("lets linked residents award one weekly gold star without exposing other givers to viewers", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const giverToken = await loginOnApp(app, "cblue");
+    const viewerToken = await loginOnApp(app, "tcao");
+
+    await request(app)
+      .post("/api/gold-stars")
+      .set("authorization", `Bearer ${giverToken}`)
+      .send({ recipientResidentId: "res_blue" })
+      .expect(400);
+
+    const awardResponse = await request(app)
+      .post("/api/gold-stars")
+      .set("authorization", `Bearer ${giverToken}`)
+      .send({ recipientResidentId: "res_fellow" })
+      .expect(201);
+
+    expect(awardResponse.body.goldStarAwards).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          weekStartDate: getCurrentMonday(),
+          giverResidentId: "res_blue",
+          recipientResidentId: "res_fellow"
+        })
+      ])
+    );
+
+    await request(app)
+      .post("/api/gold-stars")
+      .set("authorization", `Bearer ${giverToken}`)
+      .send({ recipientResidentId: "res_chief" })
+      .expect(400);
+
+    const viewerState = await request(app).get("/api/state").set("authorization", `Bearer ${viewerToken}`).expect(200);
+    expect(viewerState.body.goldStarAwards[0]).toEqual(
+      expect.objectContaining({
+        weekStartDate: getCurrentMonday(),
+        recipientResidentId: "res_fellow"
+      })
+    );
+    expect(viewerState.body.goldStarAwards[0].giverResidentId).toBeUndefined();
+
+    const adminState = await request(app).get("/api/state").set("authorization", `Bearer ${adminToken}`).expect(200);
+    expect(adminState.body.goldStarAwards[0]).toEqual(
+      expect.objectContaining({
+        giverResidentId: "res_blue",
+        recipientResidentId: "res_fellow"
+      })
+    );
+    expect(adminState.body.activityEvents[0]).toEqual(
+      expect.objectContaining({
+        activityType: "resident",
+        action: "awarded gold star"
+      })
+    );
   });
 
   it("seeds user accounts and lets admin manage privileges", async () => {
@@ -300,7 +381,7 @@ describe("planner API", () => {
         })
       ])
     );
-    const alayna = response.body.residents.find((resident: { id: string }) => resident.id === "res_external_alayna_arnholt");
+    const alayna = response.body.residents.find((resident: { id: string ;}) => resident.id === "res_external_alayna_arnholt");
     expect(alayna.username).toBeUndefined();
     expect(response.body.residents).toHaveLength(103);
     expect(response.body.attendings).toEqual(
@@ -517,8 +598,8 @@ describe("planner API", () => {
   it("lets admins update a resident rotation name while keeping block dates", async () => {
     const { app, token } = await loginAs("admin");
     const stateResponse = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
-    const adeleke = stateResponse.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
-    const nextSchedule = adeleke.rotationSchedule.map((rotation: { blockNumber: number }) =>
+    const adeleke = stateResponse.body.residents.find((resident: { id: string ;}) => resident.id === "res_fellow");
+    const nextSchedule = adeleke.rotationSchedule.map((rotation: { blockNumber: number ;}) =>
       rotation.blockNumber === 3 ? { ...rotation, service: "Davies" } : rotation
     );
 
@@ -527,7 +608,7 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${token}`)
       .send({ rotationSchedule: nextSchedule })
       .expect(200);
-    const updated = updateResponse.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
+    const updated = updateResponse.body.residents.find((resident: { id: string ;}) => resident.id === "res_fellow");
 
     expect(updated.rotationSchedule).toEqual(
       expect.arrayContaining([
@@ -606,7 +687,7 @@ describe("planner API", () => {
     expect(approvalResponse.body.coverageEntries).toEqual(
       expect.arrayContaining([expect.objectContaining({ date: "2026-07-03", kind: "call", residentId: "res_fellow" })])
     );
-    expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === requestId)).toEqual(
+    expect(approvalResponse.body.coverageRequests.find((item: { id: string ;}) => item.id === requestId)).toEqual(
       expect.objectContaining({ status: "approved" })
     );
   });
@@ -705,7 +786,7 @@ describe("planner API", () => {
       .delete("/api/entities/attendingBlocks/block_editor_davies")
       .set("authorization", `Bearer ${editorToken}`)
       .expect(200);
-    expect(deleteBlock.body.attendingBlocks.map((block: { id: string }) => block.id)).not.toContain(daviesBlock.id);
+    expect(deleteBlock.body.attendingBlocks.map((block: { id: string ;}) => block.id)).not.toContain(daviesBlock.id);
   });
 
   it("keeps multiple same-day call entries for the shared call team", async () => {
@@ -861,7 +942,7 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${adminToken}`)
       .expect(200);
 
-    expect(deleteResponse.body.coverageRequests.map((item: { id: string }) => item.id)).not.toContain(requestId);
+    expect(deleteResponse.body.coverageRequests.map((item: { id: string ;}) => item.id)).not.toContain(requestId);
     expect(deleteResponse.body.activityEvents[0]).toEqual(
       expect.objectContaining({
         actorRole: "admin",
@@ -915,8 +996,8 @@ describe("planner API", () => {
     const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
     const targetState = await request(app).get("/api/state").set("authorization", `Bearer ${targetToken}`).expect(200);
     const unrelatedState = await request(app).get("/api/state").set("authorization", `Bearer ${unrelatedToken}`).expect(200);
-    expect(requesterState.body.coverageRequests.map((item: { id: string }) => item.id)).toContain(tradeRequest.id);
-    expect(targetState.body.coverageRequests.map((item: { id: string }) => item.id)).toContain(tradeRequest.id);
+    expect(requesterState.body.coverageRequests.map((item: { id: string ;}) => item.id)).toContain(tradeRequest.id);
+    expect(targetState.body.coverageRequests.map((item: { id: string ;}) => item.id)).toContain(tradeRequest.id);
     expect(unrelatedState.body.coverageRequests).toEqual([]);
 
     const approvalResponse = await request(app)
@@ -930,7 +1011,7 @@ describe("planner API", () => {
         expect.objectContaining({ id: "cover_2026_07_11_adeleke_call", residentId: "res_chief" })
       ])
     );
-    expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === tradeRequest.id)).toEqual(
+    expect(approvalResponse.body.coverageRequests.find((item: { id: string ;}) => item.id === tradeRequest.id)).toEqual(
       expect.objectContaining({ status: "approved" })
     );
   });
@@ -943,7 +1024,7 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${token}`)
       .send({ aliases: ["Dayo", " A Adeleke ", "Dayo"] })
       .expect(200);
-    const broden = response.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
+    const broden = response.body.residents.find((resident: { id: string ;}) => resident.id === "res_fellow");
 
     expect(broden).toEqual(expect.objectContaining({ aliases: ["Dayo", "A Adeleke"] }));
   });
@@ -1002,7 +1083,7 @@ describe("planner API", () => {
     );
 
     const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
-    expect(requesterState.body.coverageRequests.map((item: { id: string }) => item.id)).toContain(profileRequest.id);
+    expect(requesterState.body.coverageRequests.map((item: { id: string ;}) => item.id)).toContain(profileRequest.id);
 
     await request(app)
       .post(`/api/coverage-requests/${profileRequest.id}/approve`)
@@ -1013,7 +1094,7 @@ describe("planner API", () => {
       .post(`/api/coverage-requests/${profileRequest.id}/approve`)
       .set("authorization", `Bearer ${adminToken}`)
       .expect(200);
-    const updatedResident = approvalResponse.body.residents.find((resident: { id: string }) => resident.id === "res_fellow");
+    const updatedResident = approvalResponse.body.residents.find((resident: { id: string ;}) => resident.id === "res_fellow");
 
     expect(updatedResident).toEqual(
       expect.objectContaining({
@@ -1021,7 +1102,7 @@ describe("planner API", () => {
         aliases: ["Adedayo Adeleke", "A Adeleke"]
       })
     );
-    expect(approvalResponse.body.coverageRequests.find((item: { id: string }) => item.id === profileRequest.id)).toEqual(
+    expect(approvalResponse.body.coverageRequests.find((item: { id: string ;}) => item.id === profileRequest.id)).toEqual(
       expect.objectContaining({ status: "approved" })
     );
   });
@@ -1080,8 +1161,8 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${token}`)
       .expect(200);
 
-    expect(daviesResponse.body.days.flatMap((day: { blocks: unknown[] }) => day.blocks)).toHaveLength(3);
-    expect(berryResponse.body.days.flatMap((day: { blocks: unknown[] }) => day.blocks)).toHaveLength(0);
+    expect(daviesResponse.body.days.flatMap((day: { blocks: unknown[] ;}) => day.blocks)).toHaveLength(3);
+    expect(berryResponse.body.days.flatMap((day: { blocks: unknown[] ;}) => day.blocks)).toHaveLength(0);
   });
 
   it("promotes individual case assignments to a block assignment without retaining same-block case assignments", async () => {
@@ -1113,7 +1194,7 @@ describe("planner API", () => {
       ])
     );
     const lingeringCaseAssignments = blockResponse.body.assignments.filter(
-      (assignment: { kind: string; targetId: string }) =>
+      (assignment: { kind: string; targetId: string ;}) =>
         assignment.kind === "case" && ["case_chen_whipple", "case_chen_chole"].includes(assignment.targetId)
     );
     expect(lingeringCaseAssignments).toEqual([]);
@@ -1134,7 +1215,7 @@ describe("planner API", () => {
       .expect(201);
 
     const caseAssignments = secondResponse.body.assignments.filter(
-      (assignment: { kind: string; targetId: string }) => assignment.kind === "case" && assignment.targetId === "case_chen_whipple"
+      (assignment: { kind: string; targetId: string ;}) => assignment.kind === "case" && assignment.targetId === "case_chen_whipple"
     );
     expect(caseAssignments).toEqual(
       expect.arrayContaining([
@@ -1148,10 +1229,10 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${token}`)
       .expect(200);
     const scheduledCase = scheduleResponse.body.days
-      .flatMap((day: { blocks: { cases: unknown[] }[] }) => day.blocks)
-      .flatMap((block: { cases: { id: string; assignments: { residentId: string }[] }[] }) => block.cases)
-      .find((surgeryCase: { id: string }) => surgeryCase.id === "case_chen_whipple");
-    expect(scheduledCase.assignments.map((assignment: { residentId: string }) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
+      .flatMap((day: { blocks: { cases: unknown[] ;}[] ;}) => day.blocks)
+      .flatMap((block: { cases: { id: string; assignments: { residentId: string ;}[] ;}[] ;}) => block.cases)
+      .find((surgeryCase: { id: string ;}) => surgeryCase.id === "case_chen_whipple");
+    expect(scheduledCase.assignments.map((assignment: { residentId: string ;}) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
 
     await request(app)
       .post("/api/assignments")
@@ -1179,11 +1260,11 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${token}`)
       .expect(200);
     const scheduledCase = scheduleResponse.body.days
-      .flatMap((day: { blocks: { cases: unknown[] }[] }) => day.blocks)
-      .flatMap((block: { cases: { id: string; assignments: { residentId: string }[] }[] }) => block.cases)
-      .find((surgeryCase: { id: string }) => surgeryCase.id === "case_chen_whipple");
+      .flatMap((day: { blocks: { cases: unknown[] ;}[] ;}) => day.blocks)
+      .flatMap((block: { cases: { id: string; assignments: { residentId: string ;}[] ;}[] ;}) => block.cases)
+      .find((surgeryCase: { id: string ;}) => surgeryCase.id === "case_chen_whipple");
 
-    expect(scheduledCase.assignments.map((assignment: { residentId: string }) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
+    expect(scheduledCase.assignments.map((assignment: { residentId: string ;}) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
   });
 
   it("stores multiple weeks and cascades week deletes", async () => {
@@ -1252,19 +1333,19 @@ describe("planner API", () => {
       .get("/api/weeks/week_next/schedule")
       .set("authorization", `Bearer ${token}`)
       .expect(200);
-    expect(nextSchedule.body.days.flatMap((day: { blocks: unknown[] }) => day.blocks)).toHaveLength(1);
+    expect(nextSchedule.body.days.flatMap((day: { blocks: unknown[] ;}) => day.blocks)).toHaveLength(1);
 
     const deleteResponse = await request(app)
       .delete("/api/entities/weeks/week_next")
       .set("authorization", `Bearer ${token}`)
       .expect(200);
 
-    expect(deleteResponse.body.weeks.map((week: { id: string }) => week.id)).toContain("week_current");
-    expect(deleteResponse.body.weeks.map((week: { id: string }) => week.id)).not.toContain("week_next");
-    expect(deleteResponse.body.attendingBlocks.map((block: { id: string }) => block.id)).not.toContain("block_next");
-    expect(deleteResponse.body.cases.map((surgeryCase: { id: string }) => surgeryCase.id)).not.toContain("case_next");
-    expect(deleteResponse.body.clinicSessions.map((clinic: { id: string }) => clinic.id)).not.toContain("clinic_next");
-    expect(deleteResponse.body.assignments.map((assignment: { targetId: string }) => assignment.targetId)).not.toEqual(
+    expect(deleteResponse.body.weeks.map((week: { id: string ;}) => week.id)).toContain("week_current");
+    expect(deleteResponse.body.weeks.map((week: { id: string ;}) => week.id)).not.toContain("week_next");
+    expect(deleteResponse.body.attendingBlocks.map((block: { id: string ;}) => block.id)).not.toContain("block_next");
+    expect(deleteResponse.body.cases.map((surgeryCase: { id: string ;}) => surgeryCase.id)).not.toContain("case_next");
+    expect(deleteResponse.body.clinicSessions.map((clinic: { id: string ;}) => clinic.id)).not.toContain("clinic_next");
+    expect(deleteResponse.body.assignments.map((assignment: { targetId: string ;}) => assignment.targetId)).not.toEqual(
       expect.arrayContaining(["case_next", "clinic_next"])
     );
   });

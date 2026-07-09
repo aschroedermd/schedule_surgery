@@ -190,10 +190,24 @@ export interface CoverageChangeRequest {
   resolvedAt?: string;
 }
 
+export interface GoldStarAward {
+  id: string;
+  weekStartDate: string;
+  giverResidentId?: string;
+  recipientResidentId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ActivityEventType = "login" | "assignment" | "calendar" | "account" | "resident";
+
 export interface ActivityEvent {
   id: string;
   createdAt: string;
   actorRole: Role;
+  actorUsername?: string;
+  actorName?: string;
+  activityType: ActivityEventType;
   action: string;
   details: string;
   entityType?: string;
@@ -215,6 +229,7 @@ export interface PlannerState {
   assignments: Assignment[];
   coverageEntries: CoverageEntry[];
   coverageRequests: CoverageChangeRequest[];
+  goldStarAwards: GoldStarAward[];
   activityEvents: ActivityEvent[];
 }
 

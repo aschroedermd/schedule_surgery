@@ -12,7 +12,10 @@ import {
   Save,
   Scissors,
   Send,
+  Sparkles,
+  Star,
   Trash2,
+  Trophy,
   Unlock,
   UserPlus,
   Wand2
@@ -20,6 +23,7 @@ import {
 import type { CSSProperties, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
+  awardGoldStar,
   claimCoverage,
   ConflictError,
   createAssignment,
@@ -50,6 +54,8 @@ import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWee
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
 import {
   Assignment,
+  ActivityEvent,
+  ActivityEventType,
   Attending,
   AttendingBlock,
   CALL_POSITIONS,
@@ -57,6 +63,7 @@ import {
   ClinicSession,
   CollectionName,
   CoverageEntry,
+  GoldStarAward,
   Hospital,
   PlannerState,
   ProcedureDefault,
@@ -373,7 +380,7 @@ export function App() {
 
   useEffect(() => {
     if (!session) return;
-    if ((activeTab === "users" || activeTab === "roster" || activeTab === "defaults") && !isAdmin) {
+    if ((activeTab === "users" || activeTab === "roster" || activeTab === "defaults" || activeTab === "activity") && !isAdmin) {
       setActiveTab("board");
       return;
     }
@@ -515,6 +522,14 @@ export function App() {
           selectedService={selectedService}
         />
       )}
+      {activeTab === "residents" && (
+        <GoldStarChartTab
+          state={state}
+          session={session}
+          token={session.token}
+          onMutate={runMutation}
+        />
+      )}
       {activeTab === "calendar" && (
         <CalendarTab
           state={state}
@@ -547,7 +562,7 @@ export function App() {
       {activeTab === "defaults" && (
         <DefaultsTab state={state} token={session.token} selectedService={selectedService} disabled={!isAdmin} onMutate={runMutation} />
       )}
-      {activeTab === "activity" && <ActivityTab state={state} />}
+      {activeTab === "activity" && isAdmin && <ActivityTab state={state} />}
       {activeTab === "users" && isAdmin && (
         <UsersTab token={session.token} serviceLines={serviceLines} onToast={(message) => setToast(message)} />
       )}
@@ -1099,6 +1114,148 @@ function MyScheduleTab({
                 </div>
               ))}
             </div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function GoldStarChartTab({
+  state,
+  session,
+  token,
+  onMutate
+}: {
+  state: PlannerState;
+  session: PlannerSession;
+  token: string;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const weekStartDate = getMondayForDate(getTodayDate());
+  const eligibleResidents = getGoldStarResidents(state);
+  const eligibleResidentIds = new Set(eligibleResidents.map((resident) => resident.id));
+  const weeklyAwards = state.goldStarAwards.filter(
+    (award) => award.weekStartDate === weekStartDate && eligibleResidentIds.has(award.recipientResidentId)
+  );
+  const linkedResident = findResidentForSession(state, session);
+  const myAward = linkedResident ? weeklyAwards.find((award) => award.giverResidentId === linkedResident.id) : undefined;
+  const myRecipient = myAward ? state.residents.find((resident) => resident.id === myAward.recipientResidentId) : undefined;
+  const leaderboard = getGoldStarLeaderboard(eligibleResidents, weeklyAwards).slice(0, 5);
+  const [sparkleResidentId, setSparkleResidentId] = useState<string | undefined>();
+  const sparkleTimerRef = useRef<number | undefined>();
+
+  useEffect(() => {
+    return () => {
+      if (sparkleTimerRef.current) window.clearTimeout(sparkleTimerRef.current);
+    };
+  }, []);
+
+  function celebrateResident(residentId: string) {
+    if (sparkleTimerRef.current) window.clearTimeout(sparkleTimerRef.current);
+    setSparkleResidentId(residentId);
+    sparkleTimerRef.current = window.setTimeout(() => setSparkleResidentId(undefined), 1600);
+  }
+
+  function submitStar(recipientResidentId: string) {
+    void onMutate(async () => {
+      const nextState = await awardGoldStar(token, recipientResidentId);
+      celebrateResident(recipientResidentId);
+      return nextState;
+    }, "Star awarded");
+  }
+
+  return (
+    <section className="gold-star-page">
+      <div className="gold-star-header">
+        <div>
+          <p className="eyebrow">Gold Star Chart</p>
+          <h2>Top 5 residents this week</h2>
+        </div>
+        <span className="gold-star-week">Week of {displayDate(weekStartDate)}</span>
+      </div>
+
+      <section className="gold-star-rules" aria-label="Gold Star Chart rules">
+        <span>One star each week.</span>
+        <span>Refreshes every Monday.</span>
+        <span>Give it to another resident.</span>
+        <span>Awards are anonymous.</span>
+      </section>
+
+      <div className="gold-star-layout">
+        <section className="editor-panel gold-star-board">
+          <div className="gold-star-panel-heading">
+            <Trophy size={18} />
+            <h2>Leaderboard</h2>
+          </div>
+          {leaderboard.length === 0 ? (
+            <div className="gold-star-empty">
+              <Star size={20} />
+              <strong>No stars yet this week.</strong>
+            </div>
+          ) : (
+            <ol className="gold-star-leaderboard">
+              {leaderboard.map(({ resident, count }, index) => (
+                <li key={resident.id}>
+                  <span className="gold-star-rank">{index + 1}</span>
+                  <div>
+                    <strong>{formatResidentName(resident)}</strong>
+                    <span>{resident.trainingLevel}</span>
+                  </div>
+                  <strong className="gold-star-count">{formatStarCount(count)}</strong>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+
+        <section className="editor-panel gold-star-awards">
+          <div className="gold-star-panel-heading">
+            <Sparkles size={18} />
+            <h2>Award a star</h2>
+          </div>
+          {!linkedResident ? (
+            <p className="muted-copy">A linked resident profile is required to award a star.</p>
+          ) : (
+            <>
+              {myAward ? (
+                <p className="gold-star-spent">
+                  This week's star went to {myRecipient ? formatResidentName(myRecipient) : "another resident"}.
+                </p>
+              ) : (
+                <p className="muted-copy">Choose one resident for this week's star.</p>
+              )}
+              <div className="gold-star-resident-list">
+                {eligibleResidents.map((resident) => {
+                  const isSelf = resident.id === linkedResident.id;
+                  const isChosen = myAward?.recipientResidentId === resident.id;
+                  const canAward = !isSelf && !myAward;
+                  return (
+                    <div key={resident.id} className={`gold-star-resident${sparkleResidentId === resident.id ? " celebrating" : ""}`}>
+                      <div>
+                        <strong>{formatResidentName(resident)}</strong>
+                        <span>{formatResidentRosterSummary(resident, weekStartDate)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        data-testid={`gold-star-award-${resident.id}`}
+                        className={isChosen ? "primary-button gold-star-award-button" : "secondary-button gold-star-award-button"}
+                        disabled={!canAward}
+                        onClick={() => submitStar(resident.id)}
+                      >
+                        <Star size={16} />
+                        {getGoldStarButtonLabel({ isSelf, isChosen, hasAward: Boolean(myAward) })}
+                      </button>
+                      {sparkleResidentId === resident.id && (
+                        <span className="gold-star-burst" aria-hidden="true">
+                          ⭐️ ✨ ⭐️
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
       </div>
@@ -2507,18 +2664,66 @@ function SetupList({
   );
 }
 
+const activityTypeOptions: Array<{ type: ActivityEventType; label: string }> = [
+  { type: "login", label: "Login" },
+  { type: "assignment", label: "Assignment" },
+  { type: "calendar", label: "Calendar" },
+  { type: "account", label: "Account" },
+  { type: "resident", label: "Resident" }
+];
+
 function ActivityTab({ state }: { state: PlannerState }) {
+  const [selectedTypes, setSelectedTypes] = useState<Record<ActivityEventType, boolean>>({
+    login: true,
+    assignment: true,
+    calendar: true,
+    account: true,
+    resident: true
+  });
+  const visibleEvents = state.activityEvents.filter((event) => selectedTypes[event.activityType]);
+
   return (
-    <section className="activity-list">
-      {state.activityEvents.map((event) => (
-        <article key={event.id} className="activity-item">
-          <span>{new Date(event.createdAt).toLocaleString()}</span>
-          <strong>{event.action}</strong>
-          <p>{event.details}</p>
-        </article>
-      ))}
+    <section className="activity-page">
+      <div className="activity-filter-bar" aria-label="Activity filters">
+        {activityTypeOptions.map((option) => (
+          <label key={option.type} className="activity-filter-option">
+            <input
+              type="checkbox"
+              checked={selectedTypes[option.type]}
+              onChange={(event) => setSelectedTypes((current) => ({ ...current, [option.type]: event.target.checked }))}
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+      <div className="activity-list">
+        {visibleEvents.map((event) => (
+          <article key={event.id} className="activity-item">
+            <div className="activity-meta">
+              <span>{new Date(event.createdAt).toLocaleString()}</span>
+              <span>{formatActivityType(event.activityType)}</span>
+              <span>{formatActivityActor(event)}</span>
+            </div>
+            <strong>{event.action}</strong>
+            <p>{event.details}</p>
+          </article>
+        ))}
+        {visibleEvents.length === 0 && <p className="muted-copy">No activity for the selected filters.</p>}
+      </div>
     </section>
   );
+}
+
+function formatActivityType(activityType: ActivityEventType): string {
+  return activityTypeOptions.find((option) => option.type === activityType)?.label ?? activityType;
+}
+
+function formatActivityActor(event: ActivityEvent): string {
+  const actor = event.actorName || event.actorUsername || (event.actorRole === "admin" ? "admin" : "user");
+  if (event.actorName && event.actorUsername && event.actorName !== event.actorUsername) {
+    return `${event.actorName} (${event.actorUsername})`;
+  }
+  return actor;
 }
 
 function CompactEntity({
@@ -2625,6 +2830,45 @@ function shouldUpdateResidentUsernameFromName(resident: Resident): boolean {
 
 function serviceLineOptions(state: PlannerState): { id: string; name: string }[] {
   return getStateServiceLines(state).map((serviceLine) => ({ id: serviceLine, name: serviceLine }));
+}
+
+function getGoldStarResidents(state: PlannerState): Resident[] {
+  return state.residents
+    .filter((resident) => resident.accountEligible !== false)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getGoldStarLeaderboard(
+  residents: Resident[],
+  weeklyAwards: Pick<GoldStarAward, "recipientResidentId">[]
+): Array<{ resident: Resident; count: number }> {
+  const counts = new Map<string, number>();
+  for (const award of weeklyAwards) {
+    counts.set(award.recipientResidentId, (counts.get(award.recipientResidentId) ?? 0) + 1);
+  }
+  return residents
+    .map((resident) => ({ resident, count: counts.get(resident.id) ?? 0 }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count || a.resident.name.localeCompare(b.resident.name));
+}
+
+function formatStarCount(count: number): string {
+  return `${count} ${count === 1 ? "⭐️" : "⭐️"}`;
+}
+
+function getGoldStarButtonLabel({
+  isSelf,
+  isChosen,
+  hasAward
+}: {
+  isSelf: boolean;
+  isChosen: boolean;
+  hasAward: boolean;
+}): string {
+  if (isSelf) return "You";
+  if (isChosen) return "Given";
+  if (hasAward) return "Used";
+  return "Award";
 }
 
 function formatResidentOption(resident: Resident, selectedService: string, date?: string): string {
@@ -3010,6 +3254,8 @@ function getTabTitle(tab: Tab): string {
       return "OR / Clinic 🔪";
     case "my":
       return "My Schedule ☁️";
+    case "residents":
+      return "Residents ✨";
     case "calendar":
       return "Calendar 🗓️";
     case "call":
@@ -3019,7 +3265,7 @@ function getTabTitle(tab: Tab): string {
     case "requests":
       return "Requests 📤";
     case "roster":
-      return "Residents";
+      return "Roster";
     case "defaults":
       return "Setup";
     case "activity":

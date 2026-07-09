@@ -1,4 +1,5 @@
 import {
+  ActivityEventType,
   Assignment,
   Attending,
   AttendingBlock,
@@ -8,6 +9,7 @@ import {
   Hospital,
   PlannerState,
   Resident,
+  Role,
   ScheduledBlock,
   ScheduledCase,
   ScheduledClinicSession,
@@ -32,9 +34,23 @@ interface Interval {
 }
 
 type AssignmentTarget =
-  | { kind: "case"; case: ScheduledCase }
-  | { kind: "block"; block: ScheduledBlock }
-  | { kind: "clinic"; clinic: ScheduledClinicSession };
+  | { kind: "case"; case: ScheduledCase ;}
+  | { kind: "block"; block: ScheduledBlock ;}
+  | { kind: "clinic"; clinic: ScheduledClinicSession ;};
+
+export interface ActivityActor {
+  actorRole: Role;
+  actorUsername?: string;
+  actorName?: string;
+}
+
+export interface ActivityInput extends ActivityActor {
+  activityType: ActivityEventType;
+  action: string;
+  details: string;
+  entityType?: string;
+  entityId?: string;
+}
 
 export function buildWeekSchedule(state: PlannerState, weekId: string, serviceLine?: string): WeekSchedule {
   const week = requireWeek(state, weekId);
@@ -270,7 +286,7 @@ export function collectWarnings(state: PlannerState, weekId: string, serviceLine
 export function applySuggestion(
   state: PlannerState,
   weekId: string,
-  actorRole: "admin" | "viewer" = "admin",
+  actor: ActivityActor = { actorRole: "admin" },
   serviceLine?: string
 ): PlannerState {
   const weekCases = computeScheduledCases(state, weekId, serviceLine);
@@ -322,10 +338,17 @@ export function applySuggestion(
     }
   }
 
-  return addActivity(draft, actorRole, "suggested schedule", "Auto-suggestion refreshed unlocked OR and clinic assignments", "week", weekId);
+  return addActivity(draft, {
+    ...actor,
+    activityType: "assignment",
+    action: "suggested schedule",
+    details: "Auto-suggestion refreshed unlocked OR and clinic assignments",
+    entityType: "week",
+    entityId: weekId
+  });
 }
 
-export function applyClaim(state: PlannerState, claim: ClaimRequest): PlannerState {
+export function applyClaim(state: PlannerState, claim: ClaimRequest, actor: ActivityActor = { actorRole: "viewer" }): PlannerState {
   const source: Assignment["source"] = "viewer-claim";
   const kind = claim.scope === "block" ? "block" : "case";
   const nextAssignment = makeAssignment(kind, claim.targetId, claim.residentId, source, false);
@@ -338,7 +361,14 @@ export function applyClaim(state: PlannerState, claim: ClaimRequest): PlannerSta
   };
   const residentName = state.residents.find((resident) => resident.id === claim.residentId)?.name ?? "Unknown resident";
   const targetLabel = describeTarget(nextState, kind, claim.targetId);
-  return addActivity(nextState, "viewer", "claimed coverage", `${residentName} claimed ${targetLabel}`, kind, claim.targetId);
+  return addActivity(nextState, {
+    ...actor,
+    activityType: "assignment",
+    action: "claimed coverage",
+    details: `${residentName} claimed ${targetLabel}`,
+    entityType: kind,
+    entityId: claim.targetId
+  });
 }
 
 export function makeAssignment(
@@ -363,11 +393,7 @@ export function makeAssignment(
 
 export function addActivity(
   state: PlannerState,
-  actorRole: "admin" | "viewer",
-  action: string,
-  details: string,
-  entityType?: string,
-  entityId?: string
+  activity: ActivityInput
 ): PlannerState {
   return {
     ...state,
@@ -375,11 +401,14 @@ export function addActivity(
       {
         id: createId("evt"),
         createdAt: new Date().toISOString(),
-        actorRole,
-        action,
-        details,
-        entityType,
-        entityId
+        actorRole: activity.actorRole,
+        actorUsername: activity.actorUsername,
+        actorName: activity.actorName,
+        activityType: activity.activityType,
+        action: activity.action,
+        details: activity.details,
+        entityType: activity.entityType,
+        entityId: activity.entityId
       },
       ...state.activityEvents
     ].slice(0, 200)
@@ -413,7 +442,7 @@ export function buildUncoveredMessage(state: PlannerState, weekId: string, date?
 }
 
 export function formatClinicLabel(
-  clinic: Pick<ClinicSession, "service" | "isProcedure"> & { attending?: Pick<Attending, "name"> }
+  clinic: Pick<ClinicSession, "service" | "isProcedure"> & { attending?: Pick<Attending, "name"> ;}
 ): string {
   const surgeonName = clinic.attending?.name?.trim() || clinic.service;
   return `${surgeonName} ${clinic.isProcedure ? "procedure clinic" : "clinic"}`;
@@ -553,7 +582,7 @@ function chooseResidentForTarget(
   });
 
   return candidates
-    .filter((candidate): candidate is { resident: Resident; score: number } => Boolean(candidate))
+    .filter((candidate): candidate is { resident: Resident; score: number ;} => Boolean(candidate))
     .sort((a, b) => b.score - a.score)[0]?.resident;
 }
 
@@ -704,7 +733,7 @@ function getConsecutiveCaseRuns(cases: ScheduledCase[]): ScheduledCase[][] {
   return runs;
 }
 
-function availabilityIncludesDate(block: { date: string; endDate?: string }, date: string): boolean {
+function availabilityIncludesDate(block: { date: string; endDate?: string ;}, date: string): boolean {
   if (block.endDate) {
     return block.date <= date && date <= block.endDate;
   }

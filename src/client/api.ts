@@ -203,6 +203,14 @@ export async function claimCoverage(token: string, claim: ClaimRequest): Promise
   });
 }
 
+export async function awardGoldStar(token: string, recipientResidentId: string): Promise<PlannerState> {
+  return request<PlannerState>("/api/gold-stars", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ recipientResidentId })
+  });
+}
+
 export async function getUncoveredMessage(token: string, weekId: string, date?: string, serviceLine?: string): Promise<string> {
   const query = buildQuery({ date, service: serviceLine });
   const result = await request<{ message: string }>(`/api/weeks/${weekId}/uncovered-message${query}`, { token });
