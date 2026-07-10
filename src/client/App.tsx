@@ -3,6 +3,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCopy,
+  Ellipsis,
+  LoaderCircle,
   Lock,
   LogIn,
   LogOut,
@@ -18,7 +20,8 @@ import {
   Trophy,
   Unlock,
   UserPlus,
-  Wand2
+  Wand2,
+  X
 } from "lucide-react";
 import type { CSSProperties, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -48,7 +51,14 @@ import {
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
-import { canEditScheduleForSelectedService, getNavigationTabs, type Tab } from "./navigation";
+import {
+  canEditScheduleForSelectedService,
+  getNavigationTabs,
+  isAdminNavigationTab,
+  isMobilePrimaryTab,
+  type NavigationTab,
+  type Tab
+} from "./navigation";
 import { formatMonthLabel, getMonthFromDate, isCallDate } from "../shared/coverage";
 import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
@@ -144,9 +154,11 @@ export function App() {
   const [isScheduleEditorOpen, setIsScheduleEditorOpen] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
+  const [pendingAction, setPendingAction] = useState<string | undefined>();
   const [printSnapshot, setPrintSnapshot] = useState<BoardPrintSnapshot | undefined>();
   const [isTamagotchiOpen, setIsTamagotchiOpen] = useState(false);
   const stateVersionRef = useRef<number | undefined>();
+  const pendingActionRef = useRef(false);
 
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
@@ -226,6 +238,19 @@ export function App() {
     }
   }
 
+  async function runPending<T>(label: string, action: () => Promise<T>): Promise<T | undefined> {
+    if (pendingActionRef.current) return undefined;
+    pendingActionRef.current = true;
+    setPendingAction(label);
+    setToast(undefined);
+    try {
+      return await action();
+    } finally {
+      pendingActionRef.current = false;
+      setPendingAction(undefined);
+    }
+  }
+
   async function runMutation(action: () => Promise<PlannerState | void>, message?: string, preferredWeekId?: string) {
     if (!session) return;
     async function runOnce(version: number | undefined) {
@@ -236,41 +261,45 @@ export function App() {
         setExpectedStateVersion(undefined);
       }
     }
-    try {
-      setError(undefined);
-      const result = await runOnce(state?.version);
-      await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
-      if (message) setToast(message);
-    } catch (mutationError) {
-      if (handleExpiredSession(mutationError)) return;
-      if (mutationError instanceof ConflictError) {
-        try {
-          const latest = await fetchState(session.token);
-          stateVersionRef.current = latest.version;
-          const result = await runOnce(latest.version);
-          await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
-          setToast(message ? `${message} after refresh` : "Saved after refresh");
-          return;
-        } catch (retryError) {
-          if (handleExpiredSession(retryError)) return;
-          setError(retryError instanceof Error ? retryError.message : "Planner changed; refresh and retry");
-          return;
+    await runPending("Saving changes…", async () => {
+      try {
+        setError(undefined);
+        const result = await runOnce(state?.version);
+        await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
+        if (message) setToast(message);
+      } catch (mutationError) {
+        if (handleExpiredSession(mutationError)) return;
+        if (mutationError instanceof ConflictError) {
+          try {
+            const latest = await fetchState(session.token);
+            stateVersionRef.current = latest.version;
+            const result = await runOnce(latest.version);
+            await refresh(result || undefined, preferredWeekId ?? selectedWeekId);
+            setToast(message ? `${message} after refresh` : "Saved after refresh");
+            return;
+          } catch (retryError) {
+            if (handleExpiredSession(retryError)) return;
+            setError(retryError instanceof Error ? retryError.message : "Planner changed; refresh and retry");
+            return;
+          }
         }
+        setError(mutationError instanceof Error ? mutationError.message : "Something went wrong");
       }
-      setError(mutationError instanceof Error ? mutationError.message : "Something went wrong");
-    }
+    });
   }
 
   async function selectWeek(weekId: string) {
     if (!session || !weekId || weekId === selectedWeekId) return;
-    try {
-      setError(undefined);
-      setSelectedWeekId(weekId);
-      setSchedule(await fetchSchedule(session.token, weekId, selectedService));
-    } catch (loadError) {
-      if (handleExpiredSession(loadError)) return;
-      setError(loadError instanceof Error ? loadError.message : "Unable to load week");
-    }
+    await runPending("Loading week…", async () => {
+      try {
+        setError(undefined);
+        setSelectedWeekId(weekId);
+        setSchedule(await fetchSchedule(session.token, weekId, selectedService));
+      } catch (loadError) {
+        if (handleExpiredSession(loadError)) return;
+        setError(loadError instanceof Error ? loadError.message : "Unable to load week");
+      }
+    });
   }
 
   async function navigateToWeekForDate(date: string) {
@@ -299,13 +328,35 @@ export function App() {
     setSelectedService(serviceLine);
     storeSelectedServiceLine(session?.username, serviceLine);
     if (!session || !selectedWeekId) return;
-    try {
-      setError(undefined);
-      setSchedule(await fetchSchedule(session.token, selectedWeekId, serviceLine));
-    } catch (loadError) {
-      if (handleExpiredSession(loadError)) return;
-      setError(loadError instanceof Error ? loadError.message : "Unable to load service");
-    }
+    await runPending("Loading service…", async () => {
+      try {
+        setError(undefined);
+        setSchedule(await fetchSchedule(session.token, selectedWeekId, serviceLine));
+      } catch (loadError) {
+        if (handleExpiredSession(loadError)) return;
+        setError(loadError instanceof Error ? loadError.message : "Unable to load service");
+      }
+    });
+  }
+
+  async function handleManualRefresh() {
+    await runPending("Refreshing schedule…", async () => {
+      try {
+        setError(undefined);
+        await refresh(undefined, selectedWeekId, selectedService);
+        setToast("Schedule refreshed");
+      } catch (refreshError) {
+        if (handleExpiredSession(refreshError)) return;
+        setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
+      }
+    });
+  }
+
+  async function handleCopyWeek() {
+    if (!session) return;
+    const message = await getUncoveredMessage(session.token, selectedWeekId, undefined, selectedService);
+    await navigator.clipboard.writeText(message);
+    setToast("Uncovered message copied");
   }
 
   function handlePrintBoard() {
@@ -316,6 +367,11 @@ export function App() {
       serviceLine: selectedService,
       weekRange: formatWeekRange(schedule.week, state.settings.weekdayOnly)
     });
+  }
+
+  function handleSelectTab(tab: Tab) {
+    setActiveTab(tab);
+    window.scrollTo({ top: 0, behavior: "auto" });
   }
 
   useEffect(() => {
@@ -379,6 +435,12 @@ export function App() {
   }, [printSnapshot]);
 
   useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(undefined), 4200);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  useEffect(() => {
     if (!session) return;
     if ((activeTab === "users" || activeTab === "roster" || activeTab === "defaults" || activeTab === "activity") && !isAdmin) {
       setActiveTab("board");
@@ -417,11 +479,30 @@ export function App() {
   }
 
   if (!state || !schedule || !selectedWeek || !selectedWeekId) {
-    return <Shell role={session.role} onLogout={handleLogout} error={error}>Loading planner...</Shell>;
+    return (
+      <Shell
+        role={session.role}
+        onLogout={handleLogout}
+        error={error}
+        pendingAction="Loading planner…"
+        onDismissError={() => setError(undefined)}
+      >
+        <PlannerSkeleton />
+      </Shell>
+    );
   }
 
   return (
-    <Shell role={session.role} onLogout={handleLogout} error={error} toast={toast} printMode={Boolean(printSnapshot)}>
+    <Shell
+      role={session.role}
+      onLogout={handleLogout}
+      error={error}
+      toast={toast}
+      pendingAction={pendingAction}
+      printMode={Boolean(printSnapshot)}
+      onDismissError={() => setError(undefined)}
+      onDismissToast={() => setToast(undefined)}
+    >
       <header className="planner-header">
         <div>
           <ServiceLinePicker
@@ -444,24 +525,22 @@ export function App() {
             />
             <button
               title="Refresh"
-              className="icon-button"
-              onClick={() =>
-                refresh(undefined, selectedWeekId, selectedService).catch((refreshError) => {
-                  if (handleExpiredSession(refreshError)) return;
-                  setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
-                })
-              }
+              aria-label="Refresh schedule"
+              className="icon-button desktop-board-utility"
+              disabled={Boolean(pendingAction)}
+              onClick={handleManualRefresh}
             >
-              <RefreshCw size={18} />
+              <RefreshCw className={pendingAction === "Refreshing schedule…" ? "is-spinning" : ""} size={18} />
             </button>
             {isAdmin && (
               <button
                 title="Suggest schedule"
                 className="primary-button"
+                disabled={Boolean(pendingAction)}
                 onClick={() => runMutation(() => runSuggestion(session.token, selectedWeekId, selectedService), "Suggestion refreshed")}
               >
-                <Wand2 size={18} />
-                Suggest
+                {pendingAction ? <LoaderCircle className="is-spinning" size={18} /> : <Wand2 size={18} />}
+                {pendingAction ? "Working…" : "Suggest"}
               </button>
             )}
             {canEditSelectedService && (
@@ -476,31 +555,31 @@ export function App() {
             )}
             <button
               title="Copy uncovered week"
-              className="secondary-button"
-              onClick={async () => {
-                const message = await getUncoveredMessage(session.token, selectedWeekId, undefined, selectedService);
-                await navigator.clipboard.writeText(message);
-                setToast("Uncovered message copied");
-              }}
+              className="secondary-button desktop-board-utility"
+              onClick={handleCopyWeek}
             >
               <ClipboardCopy size={18} />
               Copy Week
             </button>
-            <button title="Print board" className="secondary-button" onClick={handlePrintBoard}>
+            <button title="Print board" className="secondary-button desktop-board-utility" onClick={handlePrintBoard}>
               <Printer size={18} />
               Print
             </button>
+            <BoardUtilityMenu
+              disabled={Boolean(pendingAction)}
+              onRefresh={handleManualRefresh}
+              onCopy={handleCopyWeek}
+              onPrint={handlePrintBoard}
+            />
           </div>
         )}
       </header>
 
-      <nav className="tabs" aria-label="Planner sections">
-        {getNavigationTabs({ canUseRequests, pendingCoverageRequestCount, isAdmin }).map(([tab, label]) => (
-          <button key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
-            {label}
-          </button>
-        ))}
-      </nav>
+      <PlannerNavigation
+        tabs={getNavigationTabs({ canUseRequests, pendingCoverageRequestCount, isAdmin })}
+        activeTab={activeTab}
+        onSelect={handleSelectTab}
+      />
 
       {activeTab === "board" && (
         <BoardTab
@@ -661,6 +740,9 @@ function Shell({
   onLogout,
   error,
   toast,
+  pendingAction,
+  onDismissError,
+  onDismissToast,
   printMode = false
 }: {
   role: Role;
@@ -668,6 +750,9 @@ function Shell({
   onLogout: () => void;
   error?: string;
   toast?: string;
+  pendingAction?: string;
+  onDismissError?: () => void;
+  onDismissToast?: () => void;
   printMode?: boolean;
 }) {
   const responsiveMode = useResponsiveMode();
@@ -677,17 +762,195 @@ function Shell({
       className={`app-shell${printMode ? " is-printing-board" : ""}`}
       data-layout-mode={responsiveMode.layoutMode}
       data-input-mode={responsiveMode.inputMode}
+      aria-busy={Boolean(pendingAction)}
     >
+      {pendingAction && (
+        <div className="app-progress" role="status" aria-live="polite">
+          <LoaderCircle className="is-spinning" size={16} aria-hidden="true" />
+          <span>{pendingAction}</span>
+        </div>
+      )}
       <div className="top-strip">
         <span>{roleLabel(role)}</span>
-        <button title="Log out" className="icon-button" onClick={onLogout}>
+        <button title="Log out" aria-label="Log out" className="icon-button" onClick={onLogout}>
           <LogOut size={18} />
         </button>
       </div>
-      {error && <div className="alert danger">{error}</div>}
-      {toast && <div className="alert success">{toast}</div>}
+      {error && (
+        <div className="alert danger dismissible-alert" role="alert">
+          <span>{error}</span>
+          {onDismissError && (
+            <button type="button" aria-label="Dismiss error" className="alert-dismiss" onClick={onDismissError}>
+              <X size={16} />
+            </button>
+          )}
+        </div>
+      )}
+      {toast && (
+        <div className="toast-region" role="status" aria-live="polite">
+          <div className="alert success dismissible-alert">
+            <span>{toast}</span>
+            {onDismissToast && (
+              <button type="button" aria-label="Dismiss notification" className="alert-dismiss" onClick={onDismissToast}>
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {children}
     </main>
+  );
+}
+
+function PlannerNavigation({
+  tabs,
+  activeTab,
+  onSelect
+}: {
+  tabs: NavigationTab[];
+  activeTab: Tab;
+  onSelect: (tab: Tab) => void;
+}) {
+  const desktopTabs = tabs.filter(([tab]) => !isAdminNavigationTab(tab));
+  const adminTabs = tabs.filter(([tab]) => isAdminNavigationTab(tab));
+  const mobilePrimaryTabs = tabs.filter(([tab]) => isMobilePrimaryTab(tab));
+  const mobileMoreTabs = tabs.filter(([tab]) => !isMobilePrimaryTab(tab));
+  const adminIsActive = adminTabs.some(([tab]) => tab === activeTab);
+  const mobileMoreIsActive = mobileMoreTabs.some(([tab]) => tab === activeTab);
+  const adminInsertIndex = Math.max(0, desktopTabs.findIndex(([tab]) => tab === "residents"));
+  const desktopBeforeAdmin = desktopTabs.slice(0, adminInsertIndex);
+  const desktopAfterAdmin = desktopTabs.slice(adminInsertIndex);
+
+  function selectFromMenu(event: React.MouseEvent<HTMLButtonElement>, tab: Tab) {
+    onSelect(tab);
+    event.currentTarget.closest("details")?.removeAttribute("open");
+  }
+
+  function renderTab([tab, label]: NavigationTab, className = "") {
+    return (
+      <button
+        key={tab}
+        type="button"
+        className={`${className}${activeTab === tab ? " active" : ""}`.trim()}
+        aria-current={activeTab === tab ? "page" : undefined}
+        onClick={(event) => {
+          onSelect(tab);
+          event.currentTarget.closest("nav")?.querySelectorAll("details[open]").forEach((details) => details.removeAttribute("open"));
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <nav className="tabs desktop-tabs" aria-label="Planner sections">
+        {desktopBeforeAdmin.map((tab) => renderTab(tab))}
+        {adminTabs.length > 0 && (
+          <details className={`nav-menu desktop-admin-menu${adminIsActive ? " active" : ""}`}>
+            <summary role="button" aria-label="Open admin sections">Admin <ChevronRight size={14} aria-hidden="true" /></summary>
+            <div className="nav-menu-popover">
+              {adminTabs.map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={activeTab === tab ? "active" : ""}
+                  aria-current={activeTab === tab ? "page" : undefined}
+                  onClick={(event) => selectFromMenu(event, tab)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
+        {desktopAfterAdmin.map((tab) => renderTab(tab))}
+      </nav>
+
+      <nav className="mobile-bottom-nav" aria-label="Planner sections">
+        {mobilePrimaryTabs.map((tab) => renderTab(tab, "mobile-nav-item"))}
+        <details className={`mobile-more-menu${mobileMoreIsActive ? " active" : ""}`}>
+          <summary role="button" aria-label="Open more planner sections">
+            <Ellipsis size={20} aria-hidden="true" />
+            <span>More</span>
+          </summary>
+          <div className="mobile-more-popover">
+            <p className="eyebrow">More sections</p>
+            <div className="mobile-more-grid">
+              {mobileMoreTabs.map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={activeTab === tab ? "active" : ""}
+                  aria-current={activeTab === tab ? "page" : undefined}
+                  onClick={(event) => selectFromMenu(event, tab)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </details>
+      </nav>
+    </>
+  );
+}
+
+function BoardUtilityMenu({
+  disabled,
+  onRefresh,
+  onCopy,
+  onPrint
+}: {
+  disabled: boolean;
+  onRefresh: () => Promise<void>;
+  onCopy: () => Promise<void>;
+  onPrint: () => void;
+}) {
+  function closeMenu(event: React.MouseEvent<HTMLButtonElement>) {
+    event.currentTarget.closest("details")?.removeAttribute("open");
+  }
+
+  return (
+    <details className="board-utility-menu">
+      <summary role="button" className="secondary-button" aria-label="Open board actions">
+        <Ellipsis size={18} aria-hidden="true" />
+        More
+      </summary>
+      <div className="board-utility-popover">
+        <button type="button" disabled={disabled} onClick={(event) => { closeMenu(event); void onRefresh(); }}>
+          <RefreshCw size={17} /> Refresh
+        </button>
+        <button type="button" onClick={(event) => { closeMenu(event); void onCopy(); }}>
+          <ClipboardCopy size={17} /> Copy Week
+        </button>
+        <button type="button" onClick={(event) => { closeMenu(event); onPrint(); }}>
+          <Printer size={17} /> Print
+        </button>
+      </div>
+    </details>
+  );
+}
+
+function PlannerSkeleton() {
+  return (
+    <section className="planner-skeleton" aria-label="Loading planner">
+      <div className="skeleton-line skeleton-title" />
+      <div className="skeleton-line skeleton-subtitle" />
+      <div className="skeleton-tabs" />
+      <div className="skeleton-board">
+        {Array.from({ length: 5 }, (_, index) => (
+          <div className="skeleton-card" key={index}>
+            <div className="skeleton-line" />
+            <div className="skeleton-block" />
+            <div className="skeleton-block short" />
+          </div>
+        ))}
+      </div>
+      <span className="sr-only">Loading planner…</span>
+    </section>
   );
 }
 
@@ -831,6 +1094,14 @@ function BoardTab({
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
   onCopied: (message: string) => void;
 }) {
+  const [activeDayIdx, setActiveDayIdx] = useState<number>(() => getPreferredMobileDayIndex(schedule));
+
+  const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+  useEffect(() => {
+    setActiveDayIdx(getPreferredMobileDayIndex(schedule));
+  }, [schedule.week.id, selectedService]);
+
   return (
     <>
       {showScheduleEditor && (
@@ -845,9 +1116,44 @@ function BoardTab({
           />
         </section>
       )}
+
+      <div className="mobile-day-selector" role="tablist" aria-label="Select day of week">
+        {dayNames.map((name, idx) => {
+          const day = schedule.days[idx];
+          const uncoveredCount = day ? day.uncoveredCases.length : 0;
+          return (
+            <button
+              key={name}
+              role="tab"
+              aria-selected={activeDayIdx === idx}
+              className={`day-selector-btn${activeDayIdx === idx ? " active" : ""}`}
+              onClick={() => setActiveDayIdx(idx)}
+            >
+              <span className="day-name-short">{name}</span>
+              {uncoveredCount > 0 && (
+                <span className="uncovered-badge" title={`${uncoveredCount} uncovered cases`}>
+                  {uncoveredCount}
+                </span>
+              )}
+            </button>
+          );
+        })}
+        <button
+          role="tab"
+          aria-selected={activeDayIdx === -1}
+          className={`day-selector-btn${activeDayIdx === -1 ? " active" : ""}`}
+          onClick={() => setActiveDayIdx(-1)}
+        >
+          All
+        </button>
+      </div>
+
       <section className="board-grid">
-        {schedule.days.map((day) => (
-          <article key={day.date} className="day-column">
+        {schedule.days.map((day, idx) => (
+          <article
+            key={day.date}
+            className={`day-column${activeDayIdx !== -1 && activeDayIdx !== idx ? " hidden-on-mobile" : ""}`}
+          >
             <header className="day-header">
               <div>
                 <h2>{displayDate(day.date)}</h2>
@@ -894,6 +1200,22 @@ function BoardTab({
       </section>
     </>
   );
+}
+
+function getPreferredMobileDayIndex(schedule: WeekSchedule): number {
+  const todayIndex = schedule.days.findIndex((day) => day.date === getTodayDate());
+  if (todayIndex >= 0) {
+    const today = schedule.days[todayIndex];
+    if (today.blocks.length > 0 || today.clinics.length > 0 || today.uncoveredCases.length > 0) return todayIndex;
+  }
+
+  const uncoveredIndex = schedule.days.findIndex((day) => day.uncoveredCases.length > 0);
+  if (uncoveredIndex >= 0) return uncoveredIndex;
+
+  const scheduledIndex = schedule.days.findIndex((day) => day.blocks.length > 0 || day.clinics.length > 0);
+  if (scheduledIndex >= 0) return scheduledIndex;
+
+  return todayIndex >= 0 ? todayIndex : 0;
 }
 
 function BoardPrintout({ snapshot }: { snapshot: BoardPrintSnapshot }) {
@@ -3356,24 +3678,24 @@ function getHospitalTone(hospital: Hospital) {
   const key = `${hospital.shortName} ${hospital.name}`.toLowerCase();
   if (key.includes("rmh") || key.includes("roanoke")) {
     return {
-      border: "#4f88c7",
-      background: "#eef6ff",
-      caseBackground: "#f7fbff"
+      border: "var(--border-hospital-rmh)",
+      background: "var(--bg-hospital-rmh)",
+      caseBackground: "var(--bg-case-rmh)"
     };
   }
 
   if (key.includes("ccasc") || key.includes("ambulatory")) {
     return {
-      border: "#d2a833",
-      background: "#fff7dd",
-      caseBackground: "#fffdf2"
+      border: "var(--border-hospital-ccasc)",
+      background: "var(--bg-hospital-ccasc)",
+      caseBackground: "var(--bg-case-ccasc)"
     };
   }
 
   return {
-    border: hospital.color,
-    background: "#ffffff",
-    caseBackground: "#fcfdff"
+    border: hospital.color || "var(--border-hospital-default)",
+    background: "var(--bg-hospital-default)",
+    caseBackground: "var(--bg-case-default)"
   };
 }
 

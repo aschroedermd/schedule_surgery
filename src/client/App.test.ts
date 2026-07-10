@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canEditScheduleForSelectedService, getNavigationTabs, type Tab } from "./navigation";
+import {
+  canEditScheduleForSelectedService,
+  getNavigationTabs,
+  isAdminNavigationTab,
+  isMobilePrimaryTab,
+  type Tab
+} from "./navigation";
 
 function tabIds(tabs: ReadonlyArray<readonly [Tab, string]>): string[] {
   return tabs.map(([tab]) => tab);
@@ -46,6 +52,13 @@ describe("planner navigation", () => {
 
     expect(tabIds(adminTabs)).toContain("activity");
     expect(tabIds(userTabs)).not.toContain("activity");
+  });
+
+  it("keeps the responsive navigation groups presentation-only", () => {
+    expect(["roster", "defaults", "users", "activity"].every((tab) => isAdminNavigationTab(tab as Tab))).toBe(true);
+    expect(isAdminNavigationTab("account")).toBe(false);
+    expect(["board", "my", "calendar", "call"].every((tab) => isMobilePrimaryTab(tab as Tab))).toBe(true);
+    expect(isMobilePrimaryTab("residents")).toBe(false);
   });
 
   it("shows schedule editing only to admins or selected-service editors", () => {
