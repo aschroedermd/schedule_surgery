@@ -163,6 +163,7 @@ export function App() {
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
   const isAdmin = session?.role === "admin";
+  const isAttending = session?.role === "attending";
   const selectedPrivilege = session ? getSessionPrivilege(session, selectedService) : "view";
   const canEditSelectedService = Boolean(session && canEditScheduleForSelectedService(isAdmin, selectedPrivilege));
   const canRequestSelectedService = Boolean(session && (canEditSelectedService || selectedPrivilege === "request"));
@@ -452,10 +453,10 @@ export function App() {
   }, [activeTab, canUseRequests, isAdmin, session?.username]);
 
   useEffect(() => {
-    if (activeTab !== "board" || !canEditSelectedService) {
+    if (activeTab !== "board" || (!canEditSelectedService && !isAttending)) {
       setIsScheduleEditorOpen(false);
     }
-  }, [activeTab, canEditSelectedService]);
+  }, [activeTab, canEditSelectedService, isAttending]);
 
   if (isTamagotchiOpen) {
     return <NussbaumTamagotchi onExit={() => setIsTamagotchiOpen(false)} />;
@@ -543,7 +544,7 @@ export function App() {
                 {pendingAction ? "Working…" : "Suggest"}
               </button>
             )}
-            {canEditSelectedService && (
+            {(canEditSelectedService || isAttending) && (
               <button
                 title={isScheduleEditorOpen ? "Close schedule editor" : "Edit schedule"}
                 className={isScheduleEditorOpen ? "primary-button" : "secondary-button"}
@@ -588,6 +589,7 @@ export function App() {
           token={session.token}
           selectedService={selectedService}
           canEdit={canEditSelectedService}
+          editableAttendingId={isAttending ? session.attendingId : undefined}
           showScheduleEditor={isScheduleEditorOpen}
           onMutate={runMutation}
           onCopied={(message) => setToast(message)}
@@ -643,7 +645,7 @@ export function App() {
       )}
       {activeTab === "activity" && isAdmin && <ActivityTab state={state} />}
       {activeTab === "users" && isAdmin && (
-        <UsersTab token={session.token} serviceLines={serviceLines} onToast={(message) => setToast(message)} />
+        <UsersTab token={session.token} serviceLines={serviceLines} attendings={state.attendings} onToast={(message) => setToast(message)} />
       )}
       {activeTab === "account" && (
         <AccountTab
@@ -1081,6 +1083,7 @@ function BoardTab({
   token,
   selectedService,
   canEdit,
+  editableAttendingId,
   showScheduleEditor,
   onMutate,
   onCopied
@@ -1090,6 +1093,7 @@ function BoardTab({
   token: string;
   selectedService: string;
   canEdit: boolean;
+  editableAttendingId?: string;
   showScheduleEditor: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
   onCopied: (message: string) => void;
@@ -1111,7 +1115,8 @@ function BoardTab({
             week={schedule.week}
             token={token}
             selectedService={selectedService}
-            disabled={!canEdit}
+            editableAttendingId={editableAttendingId}
+            disabled={!canEdit && !editableAttendingId}
             onMutate={onMutate}
           />
         </section>
@@ -1318,6 +1323,35 @@ function MyScheduleTab({
   selectedService: string;
 }) {
   const resident = findResidentForSession(state, session);
+  const attending = session.role === "attending" && session.attendingId
+    ? state.attendings.find((candidate) => candidate.id === session.attendingId)
+    : undefined;
+  if (attending) {
+    const cases = schedule.days.flatMap((day) => day.blocks.flatMap((block) =>
+      block.attending.id === attending.id ? block.cases : []
+    ));
+    return (
+      <section className="my-schedule-page">
+        <div className="my-schedule-header">
+          <div><p className="eyebrow">Attending schedule</p><h2>{attending.name}</h2></div>
+          <span className="service-line-chip">{attending.service}</span>
+        </div>
+        <section className="editor-panel">
+          <h2>My O.R. cases</h2>
+          {cases.length === 0 ? <p className="muted-copy">No O.R. cases this week.</p> : (
+            <div className="entity-list">
+              {cases.map((surgeryCase) => (
+                <div key={surgeryCase.id} className="compact-entity"><div>
+                  <strong>{surgeryCase.procedureLabel}</strong>
+                  <span>{displayDate(surgeryCase.date)} · {surgeryCase.startTime}-{surgeryCase.endTime} · {surgeryCase.durationMinutes} min</span>
+                </div></div>
+              ))}
+            </div>
+          )}
+        </section>
+      </section>
+    );
+  }
   if (!resident) {
     return (
       <section className="my-schedule-empty">
@@ -1461,7 +1495,11 @@ function GoldStarChartTab({
     (award) => award.weekStartDate === weekStartDate && eligibleResidentIds.has(award.recipientResidentId)
   );
   const linkedResident = findResidentForSession(state, session);
-  const myAward = linkedResident ? weeklyAwards.find((award) => award.giverResidentId === linkedResident.id) : undefined;
+  const linkedAttending = session.role === "attending" && session.attendingId
+    ? state.attendings.find((attending) => attending.id === session.attendingId)
+    : undefined;
+  const canGiveStar = Boolean(linkedResident || linkedAttending);
+  const myAward = weeklyAwards.find((award) => award.giverUsername === session.username || award.giverResidentId === linkedResident?.id);
   const myRecipient = myAward ? state.residents.find((resident) => resident.id === myAward.recipientResidentId) : undefined;
   const leaderboard = getGoldStarLeaderboard(eligibleResidents, weeklyAwards).slice(0, 5);
   const [sparkleResidentId, setSparkleResidentId] = useState<string | undefined>();
@@ -1536,8 +1574,8 @@ function GoldStarChartTab({
             <Sparkles size={18} />
             <h2>Award a star</h2>
           </div>
-          {!linkedResident ? (
-            <p className="muted-copy">A linked resident profile is required to award a star.</p>
+          {!canGiveStar ? (
+            <p className="muted-copy">A linked resident or attending profile is required to award a star.</p>
           ) : (
             <>
               {myAward ? (
@@ -1549,7 +1587,7 @@ function GoldStarChartTab({
               )}
               <div className="gold-star-resident-list">
                 {eligibleResidents.map((resident) => {
-                  const isSelf = resident.id === linkedResident.id;
+                  const isSelf = resident.id === linkedResident?.id;
                   const isChosen = myAward?.recipientResidentId === resident.id;
                   const canAward = !isSelf && !myAward;
                   return (
@@ -2117,6 +2155,7 @@ function ScheduleEditor({
   week,
   token,
   selectedService,
+  editableAttendingId,
   disabled,
   onMutate
 }: {
@@ -2124,11 +2163,15 @@ function ScheduleEditor({
   week: Week;
   token: string;
   selectedService: string;
+  editableAttendingId?: string;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const serviceAttendings = getAttendingsForService(state.attendings, selectedService);
-  const attendingOptions = serviceAttendings;
+  const editableAttendings = editableAttendingId
+    ? serviceAttendings.filter((attending) => attending.id === editableAttendingId)
+    : serviceAttendings;
+  const attendingOptions = editableAttendings;
   const [blockForm, setBlockForm] = useState({
     date: week.startDate,
     attendingId: attendingOptions[0]?.id ?? "",
@@ -2149,7 +2192,7 @@ function ScheduleEditor({
   const weekBlocks = state.attendingBlocks.filter(
     (block) =>
       block.weekId === week.id &&
-      getAttendingsForService(state.attendings, selectedService).some((attending) => attending.id === block.attendingId)
+      editableAttendings.some((attending) => attending.id === block.attendingId)
   );
   const weekClinics = state.clinicSessions.filter((clinic) => clinic.weekId === week.id && clinicMatchesService(clinic, selectedService));
 
@@ -2201,7 +2244,7 @@ function ScheduleEditor({
         </div>
       </form>
 
-      <form
+      {!editableAttendingId && <form
         className="editor-panel"
         onSubmit={(event) => {
           event.preventDefault();
@@ -2244,7 +2287,7 @@ function ScheduleEditor({
             />
           ))}
         </div>
-      </form>
+      </form>}
     </section>
   );
 }
@@ -3714,7 +3757,7 @@ function clampPriority(value: number): 1 | 2 | 3 | 4 | 5 {
 }
 
 function roleLabel(role: Role): string {
-  return role === "admin" ? "admin" : "user";
+  return role;
 }
 
 function getStoredSession(): PlannerSession | undefined {
@@ -3726,8 +3769,9 @@ function getStoredSession(): PlannerSession | undefined {
   const servicePrivileges = parseStoredPrivileges(localStorage.getItem("plannerServicePrivileges"));
   const mustChangePassword = localStorage.getItem("plannerMustChangePassword") === "true";
   const temporaryPasswordExpiresAt = localStorage.getItem("plannerTemporaryPasswordExpiresAt") ?? undefined;
+  const attendingId = localStorage.getItem("plannerAttendingId") ?? undefined;
   return token && username && displayName && passwordUpdatedAt && isRole(role)
-    ? { token, role, username, displayName, passwordUpdatedAt, servicePrivileges, mustChangePassword, temporaryPasswordExpiresAt }
+    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, mustChangePassword, temporaryPasswordExpiresAt }
     : undefined;
 }
 
@@ -3736,6 +3780,8 @@ function storeSession(session: PlannerSession) {
   localStorage.setItem("plannerRole", session.role);
   localStorage.setItem("plannerUsername", session.username);
   localStorage.setItem("plannerDisplayName", session.displayName);
+  if (session.attendingId) localStorage.setItem("plannerAttendingId", session.attendingId);
+  else localStorage.removeItem("plannerAttendingId");
   localStorage.setItem("plannerPasswordUpdatedAt", session.passwordUpdatedAt);
   localStorage.setItem("plannerServicePrivileges", JSON.stringify(session.servicePrivileges));
   localStorage.setItem("plannerMustChangePassword", String(session.mustChangePassword));
@@ -3749,6 +3795,7 @@ function storeSession(session: PlannerSession) {
 function resolveSessionServiceLine(state: PlannerState, session: PlannerSession, fallback: string): string {
   return (
     getSessionResidentServiceLine(state, session) ??
+    (session.attendingId ? state.attendings.find((attending) => attending.id === session.attendingId)?.service : undefined) ??
     getStoredServiceLine(session.username) ??
     getStoredServiceLine() ??
     fallback ??
@@ -3788,7 +3835,7 @@ function isKnownServiceLine(serviceLine: string | null | undefined): serviceLine
 }
 
 function isRole(role: string | null): role is Role {
-  return role === "admin" || role === "viewer";
+  return role === "admin" || role === "attending" || role === "viewer";
 }
 
 function parseStoredPrivileges(value: string | null): PlannerSession["servicePrivileges"] {
@@ -3815,6 +3862,7 @@ function clearStoredSession() {
   localStorage.removeItem("plannerRole");
   localStorage.removeItem("plannerUsername");
   localStorage.removeItem("plannerDisplayName");
+  localStorage.removeItem("plannerAttendingId");
   localStorage.removeItem("plannerPasswordUpdatedAt");
   localStorage.removeItem("plannerServicePrivileges");
   localStorage.removeItem("plannerMustChangePassword");

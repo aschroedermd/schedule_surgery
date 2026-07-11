@@ -210,6 +210,7 @@ function normalizeGoldStarAwards(goldStarAwards: GoldStarAward[]): GoldStarAward
         id: normalizeOptionalString(award.id) ?? "star_legacy",
         weekStartDate: normalizeOptionalString(award.weekStartDate) ?? "",
         giverResidentId: normalizeOptionalString(award.giverResidentId),
+        giverUsername: normalizeOptionalString(award.giverUsername),
         recipientResidentId: normalizeOptionalString(award.recipientResidentId) ?? "",
         createdAt,
         updatedAt: normalizeOptionalString(award.updatedAt) ?? createdAt

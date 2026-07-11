@@ -8,8 +8,8 @@ Live app/API base URL: `http://159.89.226.139`. Set `BASE_URL=http://159.89.226.
 
 - Store no PHI. Never send patient names, MRNs, DOBs, room numbers tied to patients, or identifiers. Use procedure labels such as `EGD`, `Lap chole`, or `Open ventral hernia`.
 - Use exact ISO dates (`YYYY-MM-DD`) and 24-hour times (`HH:MM`). Validate weekday/date pairs before writing; for example, in 2026, `2026-07-29` is Wednesday, not Monday.
-- Always fetch `GET /api/state` before mutating. Resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state.
-- Include `X-State-Version: state.version` on every mutating request. On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate.
+- Before a planner-state mutation, fetch `GET /api/state` and resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state. Browser-account endpoints are a separate user store and do not use `state.version`.
+- Include `X-State-Version: state.version` on planner-state mutations (`/api/entities`, assignments, coverage entries/requests, claims, Gold Stars, and suggestions). On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate. Do not send this header to login, password, or browser-user management endpoints.
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
 - If API keys are configured, use the admin API key only for intentional writes and the viewer API key for read-only tools. Otherwise use browser-session bearer tokens.
 - After writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings.
@@ -22,10 +22,13 @@ External tools can pass an API key when one is configured:
 curl -H "X-API-Key: $ADMIN_API_KEY" "$BASE_URL/api/state"
 ```
 
-Roles:
+Authentication roles:
 
-- `admin`: read/write access, including rosters, cases, clinics, assignments, suggestions, and deletes.
-- `viewer`: read access for API-key tools.
+- `admin`: full planner access. A browser-session admin can also manage browser users; an admin API key cannot.
+- `attending`: browser-session account linked to exactly one existing `attendings[]` record. It can create, update, and delete that attending's OR blocks and cases without a service edit grant. It cannot use that ownership exception for clinics, resident assignments, coverage entries, suggestions, or account management; those require the normal service privilege or admin role.
+- `viewer`: read access unless a browser user has explicit per-service `request` or `edit` privileges.
+
+`attending` is a browser-user role, not an API-key role. An API-key tool is authenticated as `admin` or `viewer` only. Send browser tokens as `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=<token>` for `EventSource`). A temporary-password session may log in but receives `403 Password change required` from planner endpoints until it calls `PATCH /api/me/password`.
 
 Browser sessions use username/password login, not the API-key role names:
 
@@ -35,7 +38,21 @@ curl -X POST "$BASE_URL/api/auth/login" \
   -d '{"username":"admin","password":"..."}'
 ```
 
-Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests. Logged-in admin browser sessions can use `POST /api/users` or `POST /api/users/bulk` to create accounts; omit `password` so the server returns one-time temporary passwords and forces first-login password changes. Admin API keys do not manage browser-user accounts.
+Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
+
+Only a logged-in admin browser session can call `GET/POST /api/users`, `POST /api/users/bulk`, `PATCH/DELETE /api/users/{username}`, or `PATCH /api/users/{username}/password`; API keys cannot manage browser users. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive a generated temporary password exactly once. Both temporary modes force a first-login password change. An `attending` account must include an `attendingId` that exists in the current planner state.
+
+Example attending account creation (with an admin browser bearer token):
+
+```json
+{
+  "username": "rkatz",
+  "displayName": "Dr. Katz",
+  "role": "attending",
+  "attendingId": "att_katz",
+  "temporaryPassword": "ChangeMeSafely123"
+}
+```
 
 The live OpenAPI document is at:
 
@@ -59,6 +76,8 @@ The database stores one JSON planner state. Important collections:
 - `assignments`: resident coverage of a whole block, individual case, or clinic.
 - `activityEvents`: audit trail of changes.
 - `goldStarAwards`: weekly Gold Star Chart awards for the resident-facing Residents tab.
+
+Browser-user records live in a separate protected user store, not in `PlannerState`. An attending account's `attendingId` is the explicit link to its planner `attendings[]` record; do not infer that link from a display name.
 
 Cases do not have independent start times. To change timing, patch the block `firstCaseStartTime`, or patch case `durationMinutes` / `order`. Sequential cases include `settings.turnoverMinutes` between cases.
 
@@ -113,6 +132,17 @@ If a week-scoped endpoint receives an unknown `weekId`, the scheduler returns an
 ## High-Value Endpoints
 
 ```text
+GET    /api/healthz
+GET    /api/openapi.json
+GET    /api/session
+GET    /api/events?token=<browser-token>
+GET    /api/users                         (admin browser session only)
+POST   /api/users                         (admin browser session only)
+POST   /api/users/bulk                    (admin browser session only)
+PATCH  /api/users/{username}              (admin browser session only)
+PATCH  /api/users/{username}/password     (admin browser session only)
+DELETE /api/users/{username}              (admin browser session only)
+PATCH  /api/me/password
 GET    /api/state
 GET    /api/weeks/{weekId}/schedule
 GET    /api/weeks/{weekId}/schedule?service=Davies
@@ -132,6 +162,7 @@ PATCH  /api/coverage-entries/{id}
 DELETE /api/coverage-entries/{id}
 POST   /api/claims
 POST   /api/gold-stars
+POST   /api/import/preview                 (admin only; currently returns a not-configured response)
 POST   /api/weeks/{weekId}/suggest
 POST   /api/weeks/{weekId}/suggest?service=Davies
 POST   /api/coverage-requests
@@ -162,6 +193,8 @@ hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cas
    - individual case: `POST /api/assignments` with `kind: "case"`
    - clinic: `POST /api/assignments` with `kind: "clinic"`
 7. Verify by reading the computed weekly schedule and warnings for the same `weekId`.
+
+For an attending-session write, first call `GET /api/session` and use its `attendingId`. Only create or modify an `attendingBlock` whose `attendingId` exactly matches that value, and only create or modify a `case` whose existing `blockId` belongs to that attending. Do not attempt to assign residents, change clinics, or edit another attending's block unless the account also has the required service privilege.
 
 Calendar `call` entries are global across services. For each Friday-Sunday surgery call date, create one `coverageEntries[]` item for each position: `callPosition: "senior"`, `callPosition: "mid-level"`, and `callPosition: "intern"`, with `residentId` resolved from `state.residents`. Do not put role labels, source text, imported PDF labels, or names in `note`; those positions belong in `callPosition`. For the one SCC/ICU call resident, create one additional `kind: "call"` entry and either leave `note` blank when the resident's rotation is already SCC/ICU or set `note` to exactly `SCC` or `ICU`; omit `callPosition` for SCC/ICU. The API rejects duplicate same-day call residents, duplicate surgery call positions, missing `callPosition` on surgery call entries, more than one SCC/ICU call resident, and free-text call notes. The Calendar and CALL tab use `callPosition` for senior/mid-level/intern ordering but display compact last names only.
 
@@ -212,7 +245,7 @@ Accepting a resident trade applies the handoff or swap immediately and marks the
 
 ## Gold Star Chart
 
-Linked resident browser users can award one weekly star from the Residents tab. The server computes the current Monday-starting week, rejects self-awards, and rejects a second award from the same linked resident in that week.
+Linked resident browser users and linked attending browser users can award one weekly star from the Residents tab. The server computes the current Monday-starting week, rejects resident self-awards, and rejects a second award from the same authenticated username in that week. An attending can award a resident but cannot use this endpoint without a valid `attendingId` link.
 
 ```json
 {
@@ -220,7 +253,7 @@ Linked resident browser users can award one weekly star from the Residents tab. 
 }
 ```
 
-Use `POST /api/gold-stars` with a browser bearer token. Do not use API keys or unlinked admin sessions for this workflow. User-facing tools should display weekly recipient counts only and should not surface giver identity.
+Use `POST /api/gold-stars` with a browser bearer token. Do not use API keys or an unlinked admin session for this workflow. User-facing tools should display weekly recipient counts only and should not surface giver identity; filtered state hides other users' giver identifiers.
 
 ## Resident Profile Requests
 
@@ -329,6 +362,8 @@ Assign Adeleke to that case:
 - When a user says “Katz at RMH,” resolve Katz from `attendings` and RMH from `hospitals.shortName`.
 - When a user says “Bower clinic,” resolve Bower from `attendings`, set `clinicSessions.attendingId`, and use the attending's service unless the user explicitly chose another service line.
 - When a user says “Bower procedure clinic,” create or patch a `clinicSessions` row with `isProcedure: true`; do not model that as an OR `case`.
+- When creating an attending browser account, resolve the exact `attendingId` from `state.attendings`; never create an account based only on an attending name. Give the user the returned/generated temporary password once, through an approved private channel, and do not store it in planner notes or agent logs.
+- When acting as an attending, keep writes to that account's own blocks and cases. Use the account's `attendingId`, not the selected service line or a name match, as the ownership check.
 - When a user names a date or says "next week", resolve the target Monday, match or create a `weeks` row, and keep that `weekId` through the whole operation.
 - If the user gives a weekday and date that conflict, ask before leaving persistent changes. For temporary smoke tests, create and delete test data in the same run.
 - Use deterministic ids for scripted writes, such as `block_YYYY_MM_DD_katz_rmh`, `case_YYYY_MM_DD_katz_egd_1`, or `clinic_YYYY_MM_DD_katz`, but check for existing ids first.

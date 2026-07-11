@@ -20,6 +20,7 @@ import {
 import { isResidentOnService } from "../shared/services";
 import {
   CALL_POSITIONS,
+  Attending,
   AttendingBlock,
   CallPosition,
   ClaimRequest,
@@ -177,6 +178,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
 
   app.post("/api/users", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
+      assertAttendingAccountLinks(await store.load(), [req.body]);
       const created = await userStore.createUser(req.body);
       await recordActivity({
         ...requestActivityActor(req),
@@ -195,6 +197,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   app.post("/api/users/bulk", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const users = Array.isArray(req.body.users) ? req.body.users : [];
+      assertAttendingAccountLinks(await store.load(), users);
       const created = await userStore.createUsers(users);
       await recordActivity({
         ...requestActivityActor(req),
@@ -212,9 +215,17 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
 
   app.patch("/api/users/:username", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      const user = await userStore.updateUser(getParam(req.params.username), {
+      const username = getParam(req.params.username);
+      const existing = await userStore.getUser(username);
+      if (!existing) throw new HttpError(404, "User not found");
+      assertAttendingAccountLinks(await store.load(), [{
+        role: req.body.role ?? existing.role,
+        attendingId: req.body.attendingId ?? existing.attendingId
+      }]);
+      const user = await userStore.updateUser(username, {
         displayName: readOptionalString(req.body.displayName),
-        role: req.body.role === "admin" ? "admin" : req.body.role === "viewer" ? "viewer" : undefined,
+        role: req.body.role === "admin" || req.body.role === "attending" || req.body.role === "viewer" ? req.body.role : undefined,
+        attendingId: readOptionalString(req.body.attendingId),
         servicePrivileges: req.body.servicePrivileges
       });
       await recordActivity({
@@ -1108,34 +1119,51 @@ function buildGoldStarAward(
   state: PlannerState,
   user: SessionUser | undefined,
   input: { recipientResidentId?: unknown; residentId?: unknown } | undefined
-): { award: GoldStarAward; giver: Resident; recipient: Resident } {
+): { award: GoldStarAward; giver: Resident | Attending; recipient: Resident } {
   const giver = findResidentForUser(state, user);
-  if (!giver) throw new HttpError(403, "Linked resident profile required to award a star");
+  const attendingGiver = user?.role === "attending" ? findAttendingForUser(state, user) : undefined;
+  const starGiver = giver ?? attendingGiver;
+  if (!starGiver) throw new HttpError(403, "A linked resident or attending profile is required to award a star");
   const body = input ?? {};
   const recipientResidentId = readOptionalString(body.recipientResidentId) ?? readOptionalString(body.residentId);
   if (!recipientResidentId) throw new HttpError(400, "Choose a resident to receive your star");
   const recipient = state.residents.find((resident) => resident.id === recipientResidentId);
   if (!recipient) throw new HttpError(400, `Unknown resident: ${recipientResidentId}`);
-  if (recipient.id === giver.id) throw new HttpError(400, "Choose another resident for your star");
+  if (giver && recipient.id === giver.id) throw new HttpError(400, "Choose another resident for your star");
 
   const weekStartDate = getCurrentMonday();
-  if (state.goldStarAwards.some((award) => award.weekStartDate === weekStartDate && award.giverResidentId === giver.id)) {
+  if (state.goldStarAwards.some((award) => award.weekStartDate === weekStartDate && award.giverUsername === user?.username)) {
     throw new HttpError(400, "You already awarded your star this week");
   }
 
   const now = new Date().toISOString();
   return {
-    giver,
+    giver: starGiver,
     recipient,
     award: {
       id: createId("star"),
       weekStartDate,
-      giverResidentId: giver.id,
+      giverResidentId: giver?.id,
+      giverUsername: user?.username,
       recipientResidentId: recipient.id,
       createdAt: now,
       updatedAt: now
     }
   };
+}
+
+function findAttendingForUser(state: PlannerState, user: SessionUser | undefined): Attending | undefined {
+  return user?.attendingId ? state.attendings.find((attending) => attending.id === user.attendingId) : undefined;
+}
+
+function assertAttendingAccountLinks(state: PlannerState, inputs: Array<{ role?: unknown; attendingId?: unknown }>): void {
+  for (const input of inputs) {
+    if (input.role !== "attending") continue;
+    const attendingId = readOptionalString(input.attendingId);
+    if (!attendingId || !state.attendings.some((attending) => attending.id === attendingId)) {
+      throw new HttpError(400, "Choose an existing attending for an attending account");
+    }
+  }
 }
 
 function normalizeUsername(value: string): string {
@@ -1176,6 +1204,10 @@ function requireEntityWriteAccess(
     throw new HttpError(404, `${collection} item not found`);
   }
 
+  if (req.user?.role === "attending" && entities.every((entity) => entityBelongsToAttending(state, collection, entity, req.user?.attendingId))) {
+    return true;
+  }
+
   for (const serviceLine of new Set(entities.map((entity) => getScheduleEntityServiceLine(state, collection, entity)))) {
     if (!hasServicePrivilege(req.user, serviceLine, "edit")) {
       res.status(403).json({ error: "Edit privilege required for this service" });
@@ -1183,6 +1215,21 @@ function requireEntityWriteAccess(
     }
   }
   return true;
+}
+
+function entityBelongsToAttending(
+  state: PlannerState,
+  collection: CollectionName,
+  entity: unknown,
+  attendingId: string | undefined
+): boolean {
+  if (!attendingId || !entity || typeof entity !== "object") return false;
+  if (collection === "attendingBlocks") return (entity as Partial<AttendingBlock>).attendingId === attendingId;
+  if (collection === "cases") {
+    const blockId = (entity as Partial<SurgeryCase>).blockId;
+    return typeof blockId === "string" && state.attendingBlocks.some((block) => block.id === blockId && block.attendingId === attendingId);
+  }
+  return false;
 }
 
 function getScheduleEntityServiceLine(state: PlannerState, collection: ScheduleEditableCollection, entity: unknown): string {
@@ -1896,7 +1943,9 @@ function filterStateForUser(state: PlannerState, user: SessionUser | undefined):
     ...state,
     coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest)),
     goldStarAwards: state.goldStarAwards.map((award) =>
-      award.giverResidentId === linkedResident?.id ? award : { ...award, giverResidentId: undefined }
+      award.giverUsername === user.username || award.giverResidentId === linkedResident?.id
+        ? award
+        : { ...award, giverResidentId: undefined, giverUsername: undefined }
     ),
     activityEvents: []
   };

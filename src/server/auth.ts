@@ -36,6 +36,7 @@ export async function validateLogin(userStore: UserStore, username: string, pass
         username: user.username,
         displayName: user.displayName,
         role: user.role,
+        attendingId: user.attendingId,
         servicePrivileges: user.servicePrivileges,
         passwordUpdatedAt: user.passwordUpdatedAt,
         mustChangePassword: user.mustChangePassword,
@@ -63,7 +64,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     pwd?: string;
     exp?: number;
   };
-  if (!parsed.username || !parsed.role || !["admin", "viewer"].includes(parsed.role)) return undefined;
+  if (!parsed.username || !parsed.role || !["admin", "attending", "viewer"].includes(parsed.role)) return undefined;
   if (!parsed.exp || parsed.exp < Math.floor(Date.now() / 1000)) return undefined;
 
   const user = await userStore.getUser(parsed.username);
@@ -73,6 +74,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     username: user.username,
     displayName: user.displayName,
     role: user.role,
+    attendingId: user.attendingId,
     servicePrivileges: user.servicePrivileges,
     passwordUpdatedAt: user.passwordUpdatedAt,
     mustChangePassword: user.mustChangePassword,

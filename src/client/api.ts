@@ -224,7 +224,15 @@ export async function fetchUsers(token: string): Promise<UserSummary[]> {
 
 export async function createUser(
   token: string,
-  payload: { username: string; displayName?: string; role?: Role; password?: string; servicePrivileges?: ServicePrivileges }
+  payload: {
+    username: string;
+    displayName?: string;
+    role?: Role;
+    attendingId?: string;
+    password?: string;
+    temporaryPassword?: string;
+    servicePrivileges?: ServicePrivileges;
+  }
 ): Promise<UserCreateResponse> {
   return request<UserCreateResponse>("/api/users", {
     method: "POST",
@@ -235,7 +243,15 @@ export async function createUser(
 
 export async function createUsers(
   token: string,
-  users: Array<{ username: string; displayName?: string; role?: Role; password?: string; servicePrivileges?: ServicePrivileges }>
+  users: Array<{
+    username: string;
+    displayName?: string;
+    role?: Role;
+    attendingId?: string;
+    password?: string;
+    temporaryPassword?: string;
+    servicePrivileges?: ServicePrivileges;
+  }>
 ): Promise<BulkUserCreateResponse> {
   return request<BulkUserCreateResponse>("/api/users/bulk", {
     method: "POST",
@@ -247,7 +263,7 @@ export async function createUsers(
 export async function updateUser(
   token: string,
   username: string,
-  patch: { displayName?: string; role?: Role; servicePrivileges?: ServicePrivileges }
+  patch: { displayName?: string; role?: Role; attendingId?: string; servicePrivileges?: ServicePrivileges }
 ): Promise<UserSummary[]> {
   const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}`, {
     method: "PATCH",

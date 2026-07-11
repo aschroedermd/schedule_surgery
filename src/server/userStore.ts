@@ -26,7 +26,9 @@ export interface UpsertUserInput {
   username: string;
   displayName?: string;
   role?: Role;
+  attendingId?: string;
   password?: string;
+  temporaryPassword?: string;
   servicePrivileges?: ServicePrivileges;
 }
 
@@ -46,7 +48,7 @@ export interface UserStore {
   listUsers(): Promise<UserSummary[]>;
   createUser(input: UpsertUserInput): Promise<UserCreationResult>;
   createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]>;
-  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "servicePrivileges">>): Promise<UserSummary>;
+  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges">>): Promise<UserSummary>;
   deleteUser(username: string): Promise<void>;
   resetPassword(username: string): Promise<PasswordResetResult>;
   changePassword(username: string, currentPassword: string, nextPassword: string): Promise<UserSummary>;
@@ -103,12 +105,14 @@ export class FileUserStore implements UserStore {
 
   async updateUser(
     username: string,
-    patch: Partial<Pick<UserSummary, "displayName" | "role" | "servicePrivileges">>
+    patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges">>
   ): Promise<UserSummary> {
     const data = await this.load();
     const user = requireStoredUser(data, username);
     user.displayName = readOptionalString(patch.displayName) ?? user.displayName;
-    user.role = user.username === "admin" ? "admin" : patch.role ?? user.role;
+    user.role = user.username === "admin" ? "admin" : normalizeRole(patch.role ?? user.role);
+    user.attendingId = user.role === "attending" ? readOptionalString(patch.attendingId) ?? user.attendingId : undefined;
+    if (user.role === "attending" && !user.attendingId) throw new Error("Attending accounts must be linked to an attending");
     if (patch.servicePrivileges) user.servicePrivileges = normalizePrivileges(patch.servicePrivileges);
     user.updatedAt = new Date().toISOString();
     await this.save(data);
@@ -206,7 +210,8 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       ...user,
       username,
       displayName: readOptionalString(user.displayName) ?? username,
-      role: username === "admin" ? "admin" : user.role === "admin" ? "admin" : "viewer",
+      role: username === "admin" ? "admin" : normalizeRole(user.role),
+      attendingId: normalizeRole(user.role) === "attending" ? readOptionalString(user.attendingId) : undefined,
       servicePrivileges: normalizePrivileges(user.servicePrivileges),
       createdAt: user.createdAt ?? now,
       updatedAt: user.updatedAt ?? now,
@@ -270,9 +275,17 @@ function makeSeedUser(
 
 function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredUser; temporaryPassword?: string } {
   const username = normalizeUsername(input.username);
-  const role: Role = username === "admin" ? "admin" : input.role === "admin" ? "admin" : "viewer";
+  const role: Role = username === "admin" ? "admin" : normalizeRole(input.role);
+  const attendingId = role === "attending" ? readOptionalString(input.attendingId) : undefined;
+  if (role === "attending" && !attendingId) throw new Error("Attending accounts must be linked to an attending");
   const providedPassword = readOptionalString(input.password);
-  const temporaryPassword = providedPassword ? undefined : generateTemporaryPassword();
+  const providedTemporaryPassword = readOptionalString(input.temporaryPassword);
+  if (providedPassword && providedTemporaryPassword) {
+    throw new Error("Provide either a password or a temporary password, not both");
+  }
+  if (providedPassword) assertUsableSecret(providedPassword, "Password");
+  if (providedTemporaryPassword) assertUsableSecret(providedTemporaryPassword, "Temporary password");
+  const temporaryPassword = providedTemporaryPassword ?? (providedPassword ? undefined : generateTemporaryPassword());
   const password = providedPassword ?? temporaryPassword ?? generateTemporaryPassword();
   const temporaryPasswordExpiresAt = temporaryPassword
     ? new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString()
@@ -283,6 +296,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
       username,
       displayName: readOptionalString(input.displayName) ?? username,
       role,
+      attendingId,
       servicePrivileges: normalizePrivileges(
         role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : input.servicePrivileges
       ),
@@ -325,6 +339,7 @@ function toSummary(user: StoredUser): UserSummary {
     username: user.username,
     displayName: user.displayName,
     role: user.role,
+    attendingId: user.attendingId,
     servicePrivileges: { ...user.servicePrivileges },
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -332,6 +347,10 @@ function toSummary(user: StoredUser): UserSummary {
     mustChangePassword: user.mustChangePassword,
     temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
   };
+}
+
+function normalizeRole(role: unknown): Role {
+  return role === "admin" || role === "attending" ? role : "viewer";
 }
 
 function hashSecret(secret: string): PasswordHash {

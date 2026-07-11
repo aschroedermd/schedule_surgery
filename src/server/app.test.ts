@@ -210,6 +210,20 @@ describe("planner API", () => {
       })
     );
 
+    const chosenTemporaryPassword = "Welcome-2026";
+    const chosenPasswordResponse = await request(app)
+      .post("/api/users")
+      .set("authorization", `Bearer ${token}`)
+      .send({ username: "tempuser", temporaryPassword: chosenTemporaryPassword })
+      .expect(201);
+    expect(chosenPasswordResponse.body).toEqual(
+      expect.objectContaining({ temporaryPassword: chosenTemporaryPassword, user: expect.objectContaining({ mustChangePassword: true }) })
+    );
+    await request(app)
+      .post("/api/auth/login")
+      .send({ username: "tempuser", password: chosenTemporaryPassword })
+      .expect(200);
+
     const bulkResponse = await request(app)
       .post("/api/users/bulk")
       .set("authorization", `Bearer ${token}`)
@@ -277,6 +291,50 @@ describe("planner API", () => {
       .send({ currentPassword: resetResponse.body.temporaryPassword, nextPassword: "new-pass" })
       .expect(200);
     expect(changeResponse.body.mustChangePassword).toBe(false);
+  });
+
+  it("lets a linked attending manage only their own cases and award a resident star", async () => {
+    const { app, token: adminToken } = await loginAs("admin");
+    await request(app)
+      .post("/api/users")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({
+        username: "drchen",
+        displayName: "Dr. Chen",
+        role: "attending",
+        attendingId: "att_chen",
+        password: "attending-password"
+      })
+      .expect(201);
+
+    const attendingLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "drchen", password: "attending-password" })
+      .expect(200);
+    expect(attendingLogin.body).toEqual(expect.objectContaining({ role: "attending", attendingId: "att_chen" }));
+    const attendingToken = attendingLogin.body.token as string;
+
+    await request(app)
+      .patch("/api/entities/attendingBlocks/block_chen_mon")
+      .set("authorization", `Bearer ${attendingToken}`)
+      .send({ firstCaseStartTime: "08:00" })
+      .expect(200);
+    await request(app)
+      .patch("/api/entities/cases/case_chen_whipple")
+      .set("authorization", `Bearer ${attendingToken}`)
+      .send({ durationMinutes: 150 })
+      .expect(200);
+    await request(app)
+      .patch("/api/entities/cases/case_patel_bypass")
+      .set("authorization", `Bearer ${attendingToken}`)
+      .send({ durationMinutes: 150 })
+      .expect(403);
+
+    await request(app)
+      .post("/api/gold-stars")
+      .set("authorization", `Bearer ${attendingToken}`)
+      .send({ recipientResidentId: "res_fellow" })
+      .expect(201);
   });
 
   it("migrates legacy placeholder resident usernames to name-based seeded usernames", async () => {

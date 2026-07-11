@@ -1,4 +1,4 @@
-export type Role = "admin" | "viewer";
+export type Role = "admin" | "attending" | "viewer";
 
 export type ServicePrivilege = "view" | "request" | "edit";
 
@@ -194,6 +194,7 @@ export interface GoldStarAward {
   id: string;
   weekStartDate: string;
   giverResidentId?: string;
+  giverUsername?: string;
   recipientResidentId: string;
   createdAt: string;
   updatedAt: string;
@@ -287,6 +288,7 @@ export interface UserSummary {
   username: string;
   displayName: string;
   role: Role;
+  attendingId?: string;
   servicePrivileges: ServicePrivileges;
   createdAt: string;
   updatedAt: string;
@@ -299,6 +301,7 @@ export interface SessionUser {
   username: string;
   displayName: string;
   role: Role;
+  attendingId?: string;
   servicePrivileges: ServicePrivileges;
   passwordUpdatedAt: string;
   mustChangePassword: boolean;

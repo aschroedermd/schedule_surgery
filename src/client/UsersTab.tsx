@@ -11,17 +11,19 @@ import {
   updateUser
 } from "./api";
 import type { PasswordChangeResponse } from "./api";
-import { Role, ServicePrivilege, ServicePrivileges, UserSummary } from "../shared/types";
+import { Attending, Role, ServicePrivilege, ServicePrivileges, UserSummary } from "../shared/types";
 
 type AddPrivilegePreset = "view" | "request" | "edit" | "custom" | "clone";
 
 export function UsersTab({
   token,
   serviceLines,
+  attendings,
   onToast
 }: {
   token: string;
   serviceLines: string[];
+  attendings: Attending[];
   onToast: (message: string) => void;
 }) {
   const [users, setUsers] = useState<UserSummary[]>([]);
@@ -30,12 +32,16 @@ export function UsersTab({
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [addDraft, setAddDraft] = useState<{
     entries: string;
+    temporaryPassword: string;
+    attendingId: string;
     role: Role;
     preset: AddPrivilegePreset;
     cloneFrom: string;
     servicePrivileges: ServicePrivileges;
   }>({
     entries: "",
+    temporaryPassword: "",
+    attendingId: "",
     role: "viewer",
     preset: "view",
     cloneFrom: "",
@@ -82,6 +88,8 @@ export function UsersTab({
       const payload = entries.map((entry) => ({
         ...entry,
         role: addDraft.role,
+        attendingId: addDraft.role === "attending" ? addDraft.attendingId : undefined,
+        temporaryPassword: addDraft.temporaryPassword.trim() || undefined,
         servicePrivileges
       }));
       const result =
@@ -98,7 +106,7 @@ export function UsersTab({
             .map((creation) => [creation.user.username, creation.temporaryPassword as string])
         )
       }));
-      setAddDraft((current) => ({ ...current, entries: "" }));
+      setAddDraft((current) => ({ ...current, entries: "", temporaryPassword: "" }));
       onToast(`${created.length} user${created.length === 1 ? "" : "s"} added`);
     });
   }
@@ -111,6 +119,7 @@ export function UsersTab({
         await updateUser(token, username, {
           displayName: draft.displayName,
           role: draft.role,
+          attendingId: draft.attendingId,
           servicePrivileges: draft.servicePrivileges
         })
       );
@@ -214,8 +223,33 @@ export function UsersTab({
             onChange={(event) => setAddDraft({ ...addDraft, role: event.target.value as Role })}
           >
             <option value="viewer">user</option>
+            <option value="attending">attending</option>
             <option value="admin">admin</option>
           </select>
+        </label>
+        {addDraft.role === "attending" && (
+          <label>
+            Attending
+            <select
+              aria-label="Linked attending"
+              value={addDraft.attendingId}
+              required
+              onChange={(event) => setAddDraft({ ...addDraft, attendingId: event.target.value })}
+            >
+              <option value="">Choose attending</option>
+              {attendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
+            </select>
+          </label>
+        )}
+        <label>
+          Temporary password
+          <input
+            aria-label="Temporary password"
+            type="password"
+            value={addDraft.temporaryPassword}
+            placeholder="Leave blank to generate"
+            onChange={(event) => setAddDraft({ ...addDraft, temporaryPassword: event.target.value })}
+          />
         </label>
         <label>
           Privileges
@@ -307,9 +341,23 @@ export function UsersTab({
                   onChange={(event) => updateDraft(user.username, { role: event.target.value as Role })}
                 >
                   <option value="viewer">user</option>
+                  <option value="attending">attending</option>
                   <option value="admin">admin</option>
                 </select>
               </label>
+              {draft.role === "attending" && (
+                <label className="user-role-field">
+                  <span>Attending</span>
+                  <select
+                    aria-label={`${user.username} linked attending`}
+                    value={draft.attendingId ?? ""}
+                    onChange={(event) => updateDraft(user.username, { attendingId: event.target.value || undefined })}
+                  >
+                    <option value="">Choose attending</option>
+                    {attendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
+                  </select>
+                </label>
+              )}
               <div className="user-privileges">
                 <div className="privilege-presets" aria-label={`${user.username} bulk privileges`}>
                   <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "edit")}>

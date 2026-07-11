@@ -51,7 +51,8 @@ export function getOpenApiDocument() {
             token: { type: "string" },
             username: { type: "string" },
             displayName: { type: "string" },
-            role: { type: "string", enum: ["admin", "viewer"] },
+            role: { type: "string", enum: ["admin", "attending", "viewer"] },
+            attendingId: { type: "string", description: "Required for attending accounts; links the account to an attending record." },
             servicePrivileges: {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
@@ -66,7 +67,8 @@ export function getOpenApiDocument() {
           properties: {
             username: { type: "string" },
             displayName: { type: "string" },
-            role: { type: "string", enum: ["admin", "viewer"] },
+            role: { type: "string", enum: ["admin", "attending", "viewer"] },
+            attendingId: { type: "string" },
             servicePrivileges: {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
@@ -84,8 +86,13 @@ export function getOpenApiDocument() {
           properties: {
             username: { type: "string" },
             displayName: { type: "string" },
-            role: { type: "string", enum: ["admin", "viewer"] },
-            password: { type: "string", description: "Optional. Omit to generate a one-time temporary password." },
+            role: { type: "string", enum: ["admin", "attending", "viewer"] },
+            attendingId: { type: "string", description: "Required when role is attending." },
+            password: { type: "string", description: "Optional permanent password. Cannot be combined with temporaryPassword." },
+            temporaryPassword: {
+              type: "string",
+              description: "Optional temporary password chosen by the admin. Requires a password change on first login; omit it to generate one."
+            },
             servicePrivileges: {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
@@ -277,7 +284,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create browser user",
           description:
-            "Requires a logged-in admin browser session. API keys are not accepted for browser-user management. Omit password to generate a temporary password returned once and force a password change on next login.",
+            "Requires a logged-in admin browser session. API keys are not accepted for browser-user management. Set temporaryPassword to choose a first-login password, or omit both password fields to generate one. Temporary passwords force a password change on next login.",
           requestBody: {
             required: true,
             content: {
