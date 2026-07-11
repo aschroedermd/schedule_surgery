@@ -2996,7 +2996,7 @@ h2 {
 }
 
 .gold-star-leaderboard span,
-.gold-star-resident span:not(.gold-star-burst) {
+.gold-star-resident span {
   color: var(--text-muted);
   font-size: 0.76rem;
   font-weight: 700;
@@ -3048,11 +3048,6 @@ h2 {
   padding: 9px;
 }
 
-.gold-star-resident.celebrating {
-  border-left-color: #d4a33c;
-  animation: gold-star-pulse 780ms ease-out;
-}
-
 .gold-star-award-button {
   width: 96px;
   padding-right: 8px;
@@ -3063,40 +3058,297 @@ h2 {
   fill: currentColor;
 }
 
-.gold-star-burst {
+.gold-star-celebration {
+  position: fixed;
+  z-index: 140;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 50% 45%, rgba(255, 228, 83, 0.45), transparent 25rem),
+    radial-gradient(circle at 18% 15%, rgba(255, 89, 130, 0.52), transparent 27rem),
+    radial-gradient(circle at 85% 80%, rgba(43, 192, 255, 0.46), transparent 28rem),
+    rgba(19, 20, 53, 0.86);
+  backdrop-filter: blur(10px) saturate(1.2);
+  animation: gold-star-overlay-enter 240ms ease-out both;
+}
+
+.gold-star-celebration::before,
+.gold-star-celebration::after {
   position: absolute;
-  right: 88px;
-  top: 50%;
-  z-index: 2;
+  content: "";
   pointer-events: none;
-  color: #9f6b00;
-  font-size: 1.2rem;
+}
+
+.gold-star-celebration::before {
+  width: min(78vw, 840px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 247, 168, 0.38);
+  box-shadow: 0 0 0 22px rgba(255, 222, 63, 0.07), 0 0 0 70px rgba(255, 222, 63, 0.05), 0 0 100px rgba(255, 218, 46, 0.48);
+  animation: gold-star-ring-expand 1600ms ease-out infinite;
+}
+
+.gold-star-celebration::after {
+  inset: 0;
+  opacity: 0.3;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.8) 1px, transparent 1.5px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, transparent, black 16%, black 84%, transparent);
+}
+
+.gold-star-confetti {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gold-star-confetti-piece {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 20px;
+  border: 2px solid rgba(49, 24, 79, 0.45);
+  border-radius: 2px;
+  background: #ffec5a;
+  box-shadow: 0 2px 0 rgba(255, 255, 255, 0.45) inset;
+  animation: gold-star-confetti-pop 1400ms cubic-bezier(0.08, 0.72, 0.22, 1) var(--gold-star-confetti-delay) both;
+}
+
+.gold-star-confetti-piece.piece-1 {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff6aa7;
+}
+
+.gold-star-confetti-piece.piece-2 {
+  width: 10px;
+  height: 18px;
+  border-radius: 6px;
+  background: #70e5ff;
+}
+
+.gold-star-confetti-piece.piece-3 {
+  width: 14px;
+  height: 8px;
+  background: #9df56d;
+}
+
+.gold-star-celebration-card {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  width: min(700px, 100%);
+  min-height: min(670px, calc(100svh - 40px));
+  overflow: hidden;
+  border: 5px solid #fff5b7;
+  border-radius: 34px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent 30%),
+    linear-gradient(180deg, #5734b5 0%, #272176 55%, #151444 100%);
+  padding: clamp(20px, 4vw, 34px) clamp(20px, 6vw, 52px) clamp(26px, 5vw, 42px);
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 0 0 7px #ffbf2e, 0 0 0 13px #7e41cb, 0 26px 70px rgba(0, 0, 0, 0.56), 0 0 90px rgba(255, 227, 60, 0.56);
+  animation: gold-star-card-pop 520ms cubic-bezier(0.2, 1.35, 0.5, 1) both;
+}
+
+.gold-star-celebration-card::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  content: "";
+  opacity: 0.22;
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.3) 1px, transparent 1px), linear-gradient(rgba(255, 255, 255, 0.3) 1px, transparent 1px);
+  background-size: 15px 15px;
+  mask-image: linear-gradient(to bottom, black, transparent 75%);
+}
+
+.gold-star-celebration-topline {
+  display: flex;
+  width: min(280px, 72%);
+  justify-content: space-between;
+  color: #ffec5a;
+  font-size: 1.5rem;
+  line-height: 1;
+  text-shadow: 0 0 16px #fff8b0;
+}
+
+.gold-star-celebration-topline span {
+  animation: gold-star-twinkle 800ms steps(2, end) infinite alternate;
+}
+
+.gold-star-celebration-topline span:nth-child(2) {
+  animation-delay: 190ms;
+}
+
+.gold-star-celebration-topline span:nth-child(3) {
+  animation-delay: 410ms;
+}
+
+.gold-star-celebration-stage {
+  position: relative;
+  display: grid;
+  min-height: clamp(270px, 38vw, 360px);
+  width: min(460px, 96vw);
+  place-items: center;
+  isolation: isolate;
+}
+
+.gold-star-celebration-radiance {
+  position: absolute;
+  width: min(100%, 410px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(255, 254, 216, 0.98) 0 9%, rgba(255, 221, 49, 0.76) 18%, rgba(255, 168, 19, 0.28) 46%, transparent 70%),
+    conic-gradient(from 15deg, transparent 0 8deg, rgba(255, 245, 157, 0.82) 9deg 17deg, transparent 18deg 36deg, rgba(255, 245, 157, 0.82) 37deg 45deg, transparent 46deg 64deg, rgba(255, 245, 157, 0.82) 65deg 73deg, transparent 74deg 92deg, rgba(255, 245, 157, 0.82) 93deg 101deg, transparent 102deg 120deg, rgba(255, 245, 157, 0.82) 121deg 129deg, transparent 130deg 148deg, rgba(255, 245, 157, 0.82) 149deg 157deg, transparent 158deg 176deg, rgba(255, 245, 157, 0.82) 177deg 185deg, transparent 186deg 204deg, rgba(255, 245, 157, 0.82) 205deg 213deg, transparent 214deg 232deg, rgba(255, 245, 157, 0.82) 233deg 241deg, transparent 242deg 260deg, rgba(255, 245, 157, 0.82) 261deg 269deg, transparent 270deg 288deg, rgba(255, 245, 157, 0.82) 289deg 297deg, transparent 298deg 316deg, rgba(255, 245, 157, 0.82) 317deg 325deg, transparent 326deg 344deg, rgba(255, 245, 157, 0.82) 345deg 353deg, transparent 354deg);
+  filter: blur(1px);
+  animation: gold-star-radiance-spin 10s linear infinite;
+}
+
+.gold-star-game-icon {
+  position: relative;
+  z-index: 2;
+  width: min(284px, 58vw);
+  filter: drop-shadow(0 14px 0 rgba(69, 31, 9, 0.44)) drop-shadow(0 0 26px rgba(255, 241, 102, 0.92));
+  animation: gold-star-hero-bounce 1900ms cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+
+.gold-star-orbit {
+  position: absolute;
+  z-index: 3;
+  color: #fff7a7;
+  font-size: clamp(1.4rem, 3vw, 2.25rem);
+  line-height: 1;
+  text-shadow: 0 0 13px #fff5a8;
+  animation: gold-star-orbit-float 1500ms ease-in-out infinite alternate;
+}
+
+.gold-star-orbit.orbit-one {
+  top: 20%;
+  left: 12%;
+}
+
+.gold-star-orbit.orbit-two {
+  right: 8%;
+  bottom: 22%;
+  color: #77eaff;
+  animation-delay: 380ms;
+}
+
+.gold-star-orbit.orbit-three {
+  top: 10%;
+  right: 20%;
+  color: #ff8ec0;
+  font-size: 1.3rem;
+  animation-delay: 740ms;
+}
+
+.gold-star-celebration-kicker {
+  margin: -10px 0 4px;
+  color: #ffec5a;
+  font-size: clamp(0.72rem, 2.2vw, 0.9rem);
   font-weight: 950;
-  white-space: nowrap;
-  transform: translateY(-50%);
-  animation: gold-star-burst 1400ms ease-out forwards;
+  letter-spacing: 0.15em;
+  text-shadow: 0 2px 0 #5a2085;
 }
 
-@keyframes gold-star-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(212, 163, 60, 0.32);
-  }
-  100% {
-    box-shadow: 0 0 0 12px rgba(212, 163, 60, 0);
-  }
+.gold-star-celebration-card h2 {
+  max-width: 600px;
+  margin: 0;
+  color: #fffdf4;
+  font-size: clamp(1.7rem, 5vw, 3.1rem);
+  font-weight: 950;
+  letter-spacing: 0.025em;
+  line-height: 0.98;
+  text-shadow: 0 4px 0 #4e237b, 0 0 24px rgba(255, 244, 124, 0.68);
 }
 
-@keyframes gold-star-burst {
-  0% {
-    opacity: 0;
-    transform: translate(-8px, -50%) scale(0.75);
-  }
-  18% {
-    opacity: 1;
-  }
+.gold-star-celebration-message {
+  max-width: 440px;
+  margin: 14px 0 20px;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: clamp(0.98rem, 2.6vw, 1.16rem);
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.gold-star-celebration-dismiss {
+  display: inline-flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 3px solid #fff7bf;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffdc39, #ff9c1d);
+  padding: 10px 24px;
+  color: #54250b;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 0 #a64c11, 0 9px 18px rgba(0, 0, 0, 0.35);
+  transition: transform 130ms ease, box-shadow 130ms ease, filter 130ms ease;
+}
+
+.gold-star-celebration-dismiss:hover {
+  filter: brightness(1.09) saturate(1.06);
+  transform: translateY(-2px) scale(1.025);
+}
+
+.gold-star-celebration-dismiss:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #a64c11, 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes gold-star-overlay-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes gold-star-card-pop {
+  from { opacity: 0; transform: translateY(20px) scale(0.72) rotate(-2deg); }
+  to { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
+}
+
+@keyframes gold-star-hero-bounce {
+  0%, 100% { transform: translateY(3px) rotate(-1.5deg) scale(1); }
+  40% { transform: translateY(-11px) rotate(2deg) scale(1.055); }
+  68% { transform: translateY(1px) rotate(-1deg) scale(0.985); }
+}
+
+@keyframes gold-star-radiance-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes gold-star-ring-expand {
+  0% { opacity: 0.9; transform: scale(0.78); }
+  100% { opacity: 0; transform: scale(1.08); }
+}
+
+@keyframes gold-star-twinkle {
+  from { opacity: 0.4; transform: scale(0.72) rotate(0); }
+  to { opacity: 1; transform: scale(1.2) rotate(45deg); }
+}
+
+@keyframes gold-star-orbit-float {
+  from { transform: translate(0, 4px) rotate(-12deg) scale(0.8); }
+  to { transform: translate(4px, -8px) rotate(12deg) scale(1.22); }
+}
+
+@keyframes gold-star-confetti-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(0) scale(0); }
+  12% { opacity: 1; transform: translate(-50%, -50%) rotate(20deg) scale(1.1); }
+  72% { opacity: 1; }
   100% {
     opacity: 0;
-    transform: translate(-54px, -94%) scale(1.18);
+    transform: translate(calc(-50% + var(--gold-star-confetti-x)), calc(-50% + var(--gold-star-confetti-y))) rotate(var(--gold-star-confetti-rotation)) scale(0.7);
   }
 }
 

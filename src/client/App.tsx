@@ -121,6 +121,9 @@ type BoardPrintSnapshot = {
   serviceLine: string;
   weekRange: string;
 };
+type GoldStarCelebrationState =
+  | { kind: "given"; recipientName: string }
+  | { kind: "received"; awardIds: string[] };
 
 const MOBILE_LAYOUT_QUERY = "(max-width: 760px), (hover: none) and (pointer: coarse) and (orientation: portrait) and (max-width: 900px)";
 const TOUCH_INPUT_QUERY = "(hover: none) and (pointer: coarse)";
@@ -157,8 +160,10 @@ export function App() {
   const [pendingAction, setPendingAction] = useState<string | undefined>();
   const [printSnapshot, setPrintSnapshot] = useState<BoardPrintSnapshot | undefined>();
   const [isTamagotchiOpen, setIsTamagotchiOpen] = useState(false);
+  const [goldStarCelebration, setGoldStarCelebration] = useState<GoldStarCelebrationState | undefined>();
   const stateVersionRef = useRef<number | undefined>();
   const pendingActionRef = useRef(false);
+  const checkedGoldStarReceiptForRef = useRef<string | undefined>();
 
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
@@ -179,6 +184,8 @@ export function App() {
     setSelectedWeekId("");
     setError(undefined);
     setToast(undefined);
+    setGoldStarCelebration(undefined);
+    checkedGoldStarReceiptForRef.current = undefined;
     setShowLoggedOut(true);
   }
 
@@ -198,7 +205,20 @@ export function App() {
     const storedServiceLine = getStoredServiceLine(nextSession.username);
     if (storedServiceLine) setSelectedService(storedServiceLine);
     setSelectedWeekId("");
+    setGoldStarCelebration(undefined);
+    checkedGoldStarReceiptForRef.current = undefined;
     setSession(nextSession);
+  }
+
+  function celebrateGoldStarDelivery(recipientName: string) {
+    setGoldStarCelebration({ kind: "given", recipientName });
+  }
+
+  function dismissGoldStarCelebration() {
+    if (goldStarCelebration?.kind === "received" && session) {
+      markGoldStarAwardsSeen(session.username, goldStarCelebration.awardIds);
+    }
+    setGoldStarCelebration(undefined);
   }
 
   function handlePasswordChanged(user: PasswordChangeResponse) {
@@ -409,6 +429,24 @@ export function App() {
   }, [state?.version]);
 
   useEffect(() => {
+    if (!session || !state || session.mustChangePassword) return;
+    const receiptCheckKey = `${normalizeUsername(session.username)}:${session.token}`;
+    if (checkedGoldStarReceiptForRef.current === receiptCheckKey) return;
+
+    checkedGoldStarReceiptForRef.current = receiptCheckKey;
+    const linkedResident = findResidentForSession(state, session);
+    if (!linkedResident) return;
+
+    const newAwardIds = state.goldStarAwards
+      .filter((award) => award.recipientResidentId === linkedResident.id)
+      .map((award) => award.id)
+      .filter((awardId) => !hasSeenGoldStarAward(session.username, awardId));
+    if (newAwardIds.length) {
+      setGoldStarCelebration({ kind: "received", awardIds: newAwardIds });
+    }
+  }, [session?.mustChangePassword, session?.token, session?.username, state]);
+
+  useEffect(() => {
     if (!session || session.mustChangePassword) return;
     return subscribeToStateEvents(
       session.token,
@@ -501,8 +539,10 @@ export function App() {
       toast={toast}
       pendingAction={pendingAction}
       printMode={Boolean(printSnapshot)}
+      goldStarCelebration={goldStarCelebration}
       onDismissError={() => setError(undefined)}
       onDismissToast={() => setToast(undefined)}
+      onDismissGoldStarCelebration={dismissGoldStarCelebration}
     >
       <header className="planner-header">
         <div>
@@ -609,6 +649,7 @@ export function App() {
           session={session}
           token={session.token}
           onMutate={runMutation}
+          onCelebrateDelivery={celebrateGoldStarDelivery}
         />
       )}
       {activeTab === "calendar" && (
@@ -743,8 +784,10 @@ function Shell({
   error,
   toast,
   pendingAction,
+  goldStarCelebration,
   onDismissError,
   onDismissToast,
+  onDismissGoldStarCelebration,
   printMode = false
 }: {
   role: Role;
@@ -753,8 +796,10 @@ function Shell({
   error?: string;
   toast?: string;
   pendingAction?: string;
+  goldStarCelebration?: GoldStarCelebrationState;
   onDismissError?: () => void;
   onDismissToast?: () => void;
+  onDismissGoldStarCelebration?: () => void;
   printMode?: boolean;
 }) {
   const responsiveMode = useResponsiveMode();
@@ -801,6 +846,9 @@ function Shell({
         </div>
       )}
       {children}
+      {goldStarCelebration && onDismissGoldStarCelebration && (
+        <GoldStarCelebration celebration={goldStarCelebration} onDismiss={onDismissGoldStarCelebration} />
+      )}
     </main>
   );
 }
@@ -1481,12 +1529,14 @@ function GoldStarChartTab({
   state,
   session,
   token,
-  onMutate
+  onMutate,
+  onCelebrateDelivery
 }: {
   state: PlannerState;
   session: PlannerSession;
   token: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+  onCelebrateDelivery: (recipientName: string) => void;
 }) {
   const weekStartDate = getMondayForDate(getTodayDate());
   const eligibleResidents = getGoldStarResidents(state);
@@ -1502,25 +1552,11 @@ function GoldStarChartTab({
   const myAward = weeklyAwards.find((award) => award.giverUsername === session.username || award.giverResidentId === linkedResident?.id);
   const myRecipient = myAward ? state.residents.find((resident) => resident.id === myAward.recipientResidentId) : undefined;
   const leaderboard = getGoldStarLeaderboard(eligibleResidents, weeklyAwards).slice(0, 5);
-  const [sparkleResidentId, setSparkleResidentId] = useState<string | undefined>();
-  const sparkleTimerRef = useRef<number | undefined>();
 
-  useEffect(() => {
-    return () => {
-      if (sparkleTimerRef.current) window.clearTimeout(sparkleTimerRef.current);
-    };
-  }, []);
-
-  function celebrateResident(residentId: string) {
-    if (sparkleTimerRef.current) window.clearTimeout(sparkleTimerRef.current);
-    setSparkleResidentId(residentId);
-    sparkleTimerRef.current = window.setTimeout(() => setSparkleResidentId(undefined), 1600);
-  }
-
-  function submitStar(recipientResidentId: string) {
+  function submitStar(recipient: Resident) {
     void onMutate(async () => {
-      const nextState = await awardGoldStar(token, recipientResidentId);
-      celebrateResident(recipientResidentId);
+      const nextState = await awardGoldStar(token, recipient.id);
+      onCelebrateDelivery(formatResidentName(recipient));
       return nextState;
     }, "Star awarded");
   }
@@ -1591,7 +1627,7 @@ function GoldStarChartTab({
                   const isChosen = myAward?.recipientResidentId === resident.id;
                   const canAward = !isSelf && !myAward;
                   return (
-                    <div key={resident.id} className={`gold-star-resident${sparkleResidentId === resident.id ? " celebrating" : ""}`}>
+                    <div key={resident.id} className="gold-star-resident">
                       <div>
                         <strong>{formatResidentName(resident)}</strong>
                         <span>{formatResidentRosterSummary(resident, weekStartDate)}</span>
@@ -1601,16 +1637,11 @@ function GoldStarChartTab({
                         data-testid={`gold-star-award-${resident.id}`}
                         className={isChosen ? "primary-button gold-star-award-button" : "secondary-button gold-star-award-button"}
                         disabled={!canAward}
-                        onClick={() => submitStar(resident.id)}
+                        onClick={() => submitStar(resident)}
                       >
                         <Star size={16} />
                         {getGoldStarButtonLabel({ isSelf, isChosen, hasAward: Boolean(myAward) })}
                       </button>
-                      {sparkleResidentId === resident.id && (
-                        <span className="gold-star-burst" aria-hidden="true">
-                          ⭐️ ✨ ⭐️
-                        </span>
-                      )}
                     </div>
                   );
                 })}
@@ -1620,6 +1651,150 @@ function GoldStarChartTab({
         </section>
       </div>
     </section>
+  );
+}
+
+function GoldStarCelebration({
+  celebration,
+  onDismiss
+}: {
+  celebration: GoldStarCelebrationState;
+  onDismiss: () => void;
+}) {
+  const dismissButtonRef = useRef<HTMLButtonElement>(null);
+  const receivedStarCount = celebration.kind === "received" ? celebration.awardIds.length : 0;
+  const received = celebration.kind === "received";
+
+  useEffect(() => {
+    dismissButtonRef.current?.focus();
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onDismiss();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onDismiss]);
+
+  const confetti = [
+    ["-44vw", "-33vh", "-220deg", "0ms"],
+    ["-30vw", "-46vh", "-120deg", "70ms"],
+    ["-12vw", "-40vh", "-180deg", "130ms"],
+    ["10vw", "-46vh", "220deg", "40ms"],
+    ["31vw", "-35vh", "150deg", "110ms"],
+    ["45vw", "-23vh", "300deg", "170ms"],
+    ["43vw", "18vh", "190deg", "60ms"],
+    ["25vw", "38vh", "120deg", "150ms"],
+    ["-5vw", "43vh", "260deg", "90ms"],
+    ["-25vw", "36vh", "-180deg", "180ms"],
+    ["-46vw", "20vh", "-260deg", "40ms"],
+    ["-36vw", "2vh", "-90deg", "125ms"]
+  ] as const;
+
+  return (
+    <div className="gold-star-celebration" role="presentation">
+      <div className="gold-star-confetti" aria-hidden="true">
+        {confetti.map(([x, y, rotation, delay], index) => (
+          <span
+            key={`${x}:${y}`}
+            className={`gold-star-confetti-piece piece-${index % 4}`}
+            style={{
+              "--gold-star-confetti-x": x,
+              "--gold-star-confetti-y": y,
+              "--gold-star-confetti-rotation": rotation,
+              "--gold-star-confetti-delay": delay
+            } as CSSProperties}
+          />
+        ))}
+      </div>
+      <section
+        className="gold-star-celebration-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="gold-star-celebration-title"
+        aria-describedby="gold-star-celebration-message"
+      >
+        <div className="gold-star-celebration-topline" aria-hidden="true">
+          <span>✦</span>
+          <span>✦</span>
+          <span>✦</span>
+        </div>
+        <div className="gold-star-celebration-stage" aria-hidden="true">
+          <div className="gold-star-celebration-radiance" />
+          <span className="gold-star-orbit orbit-one">✦</span>
+          <span className="gold-star-orbit orbit-two">✦</span>
+          <span className="gold-star-orbit orbit-three">✦</span>
+          <GoldStarGameIcon className="gold-star-game-icon" />
+        </div>
+        <p className="gold-star-celebration-kicker">{received ? "TEAM APPRECIATION UNLOCKED" : "STAR DELIVERY COMPLETE"}</p>
+        <h2 id="gold-star-celebration-title">
+          {received
+            ? receivedStarCount === 1
+              ? "YOU GOT A GOLD STAR!"
+              : `YOU GOT ${receivedStarCount} NEW GOLD STARS!`
+            : "STAR DELIVERED!"}
+        </h2>
+        <p id="gold-star-celebration-message" className="gold-star-celebration-message">
+          {received
+            ? "Someone on the team noticed your work. Keep shining."
+            : `Your gold star just landed with ${celebration.recipientName}.`}
+        </p>
+        <button ref={dismissButtonRef} type="button" className="gold-star-celebration-dismiss" onClick={onDismiss}>
+          <Sparkles size={20} aria-hidden="true" />
+          {received ? "Keep shining" : "Amazing"}
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function GoldStarGameIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 260 230" fill="none" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="gold-star-face" x1="75" y1="25" x2="192" y2="205" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFF9A8" />
+          <stop offset="0.4" stopColor="#FFD83D" />
+          <stop offset="1" stopColor="#F49A09" />
+        </linearGradient>
+        <linearGradient id="gold-star-shine" x1="104" y1="42" x2="148" y2="142" gradientUnits="userSpaceOnUse">
+          <stop stopColor="white" stopOpacity="0.92" />
+          <stop offset="1" stopColor="white" stopOpacity="0" />
+        </linearGradient>
+        <filter id="gold-star-glow" x="-35%" y="-35%" width="170%" height="170%">
+          <feGaussianBlur stdDeviation="8" result="blur" />
+          <feFlood floodColor="#FFE76A" floodOpacity="0.95" />
+          <feComposite in2="blur" operator="in" />
+          <feMerge>
+            <feMergeNode />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <path
+        d="M130 14 157 79 228 84 174 129 192 201 130 163 68 201 86 129 32 84 103 79 130 14Z"
+        fill="#663511"
+        stroke="#3E1C08"
+        strokeWidth="12"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M130 14 157 79 228 84 174 129 192 201 130 163 68 201 86 129 32 84 103 79 130 14Z"
+        fill="url(#gold-star-face)"
+        stroke="#FFEF74"
+        strokeWidth="4"
+        strokeLinejoin="round"
+        filter="url(#gold-star-glow)"
+      />
+      <path
+        d="M103 79 130 27 145 66 117 109 68 102 86 90Z"
+        fill="url(#gold-star-shine)"
+        opacity="0.92"
+      />
+      <path d="M96 116c0-10 7-18 15-18s15 8 15 18c0 14-7 28-15 28s-15-14-15-28Z" fill="#54240B" />
+      <path d="M134 116c0-10 7-18 15-18s15 8 15 18c0 14-7 28-15 28s-15-14-15-28Z" fill="#54240B" />
+      <path d="M104 106c3-5 8-7 12-5" stroke="white" strokeWidth="4" strokeLinecap="round" />
+      <path d="M142 106c3-5 8-7 12-5" stroke="white" strokeWidth="4" strokeLinecap="round" />
+      <path d="M113 159c11 9 23 9 34 0" stroke="#7A360A" strokeWidth="6" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -3828,6 +4003,30 @@ function storeSelectedServiceLine(username: string | undefined, serviceLine: str
 
 function getSelectedServiceStorageKey(username?: string): string {
   return username ? `plannerSelectedServiceLine:${normalizeUsername(username)}` : "plannerSelectedServiceLine";
+}
+
+function hasSeenGoldStarAward(username: string, awardId: string): boolean {
+  return getSeenGoldStarAwardIds(username).includes(awardId);
+}
+
+function markGoldStarAwardsSeen(username: string, awardIds: string[]) {
+  const seenAwardIds = [...new Set([...getSeenGoldStarAwardIds(username), ...awardIds])].slice(-120);
+  localStorage.setItem(getGoldStarReceiptStorageKey(username), JSON.stringify(seenAwardIds));
+}
+
+function getSeenGoldStarAwardIds(username: string): string[] {
+  const stored = localStorage.getItem(getGoldStarReceiptStorageKey(username));
+  if (!stored) return [];
+  try {
+    const awardIds = JSON.parse(stored);
+    return Array.isArray(awardIds) ? awardIds.filter((awardId): awardId is string => typeof awardId === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function getGoldStarReceiptStorageKey(username: string): string {
+  return `plannerGoldStarReceipts:${normalizeUsername(username)}`;
 }
 
 function isKnownServiceLine(serviceLine: string | null | undefined): serviceLine is (typeof SERVICE_LINES)[number] {
