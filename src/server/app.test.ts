@@ -81,6 +81,60 @@ describe("planner API", () => {
       .set("x-api-key", "test-admin-api-key")
       .send({ id: "hosp_api", name: "API Hospital", shortName: "API", color: "#333333" })
       .expect(201);
+
+    const userResponse = await request(app)
+      .post("/api/users")
+      .set("x-api-key", "test-admin-api-key")
+      .send({
+        username: "apiuser",
+        accountType: "user",
+        servicePrivileges: { Berry: "edit" }
+      })
+      .expect(201);
+    expect(userResponse.body).toEqual(
+      expect.objectContaining({
+        temporaryPassword: "schroeder1",
+        user: expect.objectContaining({
+          username: "apiuser",
+          role: "viewer",
+          mustChangePassword: true,
+          servicePrivileges: expect.objectContaining({ Berry: "edit" })
+        })
+      })
+    );
+    await request(app)
+      .post("/api/auth/login")
+      .send({ username: "apiuser", password: "schroeder1" })
+      .expect(200);
+
+    const attendingResponse = await request(app)
+      .post("/api/users")
+      .set("x-api-key", "test-admin-api-key")
+      .send({
+        username: "apiattending",
+        accountType: "attending",
+        attendingId: "att_chen",
+        temporaryPassword: "TempAccount-2026",
+        servicePrivileges: { Davies: "edit" }
+      })
+      .expect(201);
+    expect(attendingResponse.body).toEqual(
+      expect.objectContaining({
+        temporaryPassword: "TempAccount-2026",
+        user: expect.objectContaining({
+          username: "apiattending",
+          role: "attending",
+          attendingId: "att_chen",
+          servicePrivileges: expect.objectContaining({ Davies: "edit" })
+        })
+      })
+    );
+
+    await request(app)
+      .post("/api/users")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ username: "apiadmin", role: "admin" })
+      .expect(403);
   });
 
   it("records login activity with user names and hides activity from non-admin state", async () => {
@@ -201,7 +255,7 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${token}`)
       .send({ username: "jsmith", servicePrivileges: { Berry: "request" } })
       .expect(201);
-    expect(createResponse.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
+    expect(createResponse.body.temporaryPassword).toBe("schroeder1");
     expect(createResponse.body.user).toEqual(
       expect.objectContaining({
         username: "jsmith",
@@ -239,11 +293,11 @@ describe("planner API", () => {
       expect.arrayContaining([
         expect.objectContaining({
           user: expect.objectContaining({ username: "bulkone", displayName: "Bulk One" }),
-          temporaryPassword: expect.stringMatching(/^[A-Za-z0-9]{14}$/)
+          temporaryPassword: "schroeder1"
         }),
         expect.objectContaining({
           user: expect.objectContaining({ username: "bulktwo", displayName: "Bulk Two" }),
-          temporaryPassword: expect.stringMatching(/^[A-Za-z0-9]{14}$/)
+          temporaryPassword: "schroeder1"
         })
       ])
     );

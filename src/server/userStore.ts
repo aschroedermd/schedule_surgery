@@ -6,6 +6,7 @@ import { RESIDENT_USER_SEEDS } from "./residentRotationSeed";
 
 const DEFAULT_USERS = RESIDENT_USER_SEEDS;
 const TEMPORARY_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_NEW_USER_TEMPORARY_PASSWORD = "schroeder1";
 
 interface PasswordHash {
   algorithm: "scrypt";
@@ -285,8 +286,8 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
   }
   if (providedPassword) assertUsableSecret(providedPassword, "Password");
   if (providedTemporaryPassword) assertUsableSecret(providedTemporaryPassword, "Temporary password");
-  const temporaryPassword = providedTemporaryPassword ?? (providedPassword ? undefined : generateTemporaryPassword());
-  const password = providedPassword ?? temporaryPassword ?? generateTemporaryPassword();
+  const temporaryPassword = providedTemporaryPassword ?? (providedPassword ? undefined : DEFAULT_NEW_USER_TEMPORARY_PASSWORD);
+  const password = providedPassword ?? temporaryPassword ?? DEFAULT_NEW_USER_TEMPORARY_PASSWORD;
   const temporaryPasswordExpiresAt = temporaryPassword
     ? new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString()
     : undefined;

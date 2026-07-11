@@ -24,7 +24,7 @@ curl -H "X-API-Key: $ADMIN_API_KEY" "$BASE_URL/api/state"
 
 Authentication roles:
 
-- `admin`: full planner access. A browser-session admin can also manage browser users; an admin API key cannot.
+- `admin`: full planner access. A browser-session admin can manage all browser users. The admin API key can create new `user` or `attending` browser accounts, but cannot list, update, delete, or reset browser users.
 - `attending`: browser-session account linked to exactly one existing `attendings[]` record. It can create, update, and delete that attending's OR blocks and cases without a service edit grant. It cannot use that ownership exception for clinics, resident assignments, coverage entries, suggestions, or account management; those require the normal service privilege or admin role.
 - `viewer`: read access unless a browser user has explicit per-service `request` or `edit` privileges.
 
@@ -40,15 +40,15 @@ curl -X POST "$BASE_URL/api/auth/login" \
 
 Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
 
-Only a logged-in admin browser session can call `GET/POST /api/users`, `POST /api/users/bulk`, `PATCH/DELETE /api/users/{username}`, or `PATCH /api/users/{username}/password`; API keys cannot manage browser users. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive a generated temporary password exactly once. Both temporary modes force a first-login password change. An `attending` account must include an `attendingId` that exists in the current planner state.
+Only a logged-in admin browser session can call `GET /api/users`, `PATCH/DELETE /api/users/{username}`, or `PATCH /api/users/{username}/password`. An admin API key can also call `POST /api/users` and `POST /api/users/bulk` to create new accounts only. API-key creations use `accountType: "user"` or `accountType: "attending"` (`user` is stored as the browser `viewer` role), can set `servicePrivileges`, and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary passwords force a first-login password change. An `attending` account must include an `attendingId` that exists in the current planner state.
 
-Example attending account creation (with an admin browser bearer token):
+Example attending account creation (with an admin API key):
 
 ```json
 {
   "username": "rkatz",
   "displayName": "Dr. Katz",
-  "role": "attending",
+  "accountType": "attending",
   "attendingId": "att_katz",
   "temporaryPassword": "ChangeMeSafely123"
 }

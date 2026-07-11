@@ -33,8 +33,8 @@ DATABASE_URL=memory npm run dev
 
 - Username/password browser logins. Seeded account-eligible residents use first-initial-plus-last-name usernames such as `aadeleke`; off-service rotators from outside programs remain assignable-only unless `accountEligible` is enabled. Set `SEED_USER_PASSWORD` privately if those accounts should be login-ready.
 - No `guest` account is seeded. `admin` starts with the private `ADMIN_PASSWORD` configured when the user store is first created.
-- Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges.
-- New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. Server-generated temporary passwords are shown once and force the user to choose a new password.
+- Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges. The `ADMIN_API_KEY` can also create new `user` or `attending` accounts with per-service privileges.
+- New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. If neither `password` nor `temporaryPassword` is supplied, the temporary password is `schroeder1`; it is shown once and forces the user to choose a new password.
 - Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` instead of plaintext, so current passwords are not viewable; admin resets and generated new-user passwords are temporary and shown once.
 - Weekly Monday-Friday board with OR blocks, turnover-aware sequential case timing, clinic sessions, warnings, and activity feed.
 - Monthly rounding calendar with resident colors, shared Friday-Sunday call-team summaries, service-specific Saturday-Sunday rounders, weekday off/note entries, and red weekend blocks when the visible service has neither an on-service call resident nor an assigned rounder.

@@ -51,7 +51,7 @@ import {
 } from "./auth";
 import { getOpenApiDocument } from "./openapi";
 import { StateConflictError, StateStore } from "./store";
-import { UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
+import { UpsertUserInput, UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
 
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
@@ -176,10 +176,11 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.post("/api/users", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/users", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      assertAttendingAccountLinks(await store.load(), [req.body]);
-      const created = await userStore.createUser(req.body);
+      const input = normalizeUserCreationInput(req, req.body);
+      assertAttendingAccountLinks(await store.load(), [input]);
+      const created = await userStore.createUser(input);
       await recordActivity({
         ...requestActivityActor(req),
         activityType: "account",
@@ -194,9 +195,9 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.post("/api/users/bulk", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/users/bulk", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      const users = Array.isArray(req.body.users) ? req.body.users : [];
+      const users = Array.isArray(req.body.users) ? req.body.users.map((input: unknown) => normalizeUserCreationInput(req, input)) : [];
       assertAttendingAccountLinks(await store.load(), users);
       const created = await userStore.createUsers(users);
       await recordActivity({
@@ -1164,6 +1165,32 @@ function assertAttendingAccountLinks(state: PlannerState, inputs: Array<{ role?:
       throw new HttpError(400, "Choose an existing attending for an attending account");
     }
   }
+}
+
+function normalizeUserCreationInput(req: AuthenticatedRequest, input: unknown): UpsertUserInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new HttpError(400, "User input must be an object");
+  }
+  const user = input as UpsertUserInput & { accountType?: unknown };
+  const accountType = user.accountType;
+  let role = user.role;
+
+  if (accountType !== undefined) {
+    if (accountType !== "user" && accountType !== "attending") {
+      throw new HttpError(400, "Account type must be user or attending");
+    }
+    const accountRole: Role = accountType === "user" ? "viewer" : "attending";
+    if (role !== undefined && role !== accountRole) {
+      throw new HttpError(400, "accountType and role must describe the same account type");
+    }
+    role = accountRole;
+  }
+
+  if (req.user?.authType === "apiKey" && role === "admin") {
+    throw new HttpError(403, "API keys can create only user or attending accounts");
+  }
+
+  return { ...user, role };
 }
 
 function normalizeUsername(value: string): string {

@@ -12,7 +12,7 @@ curl -H "X-API-Key: $ADMIN_API_KEY" https://your-domain.example/api/state
 
 Roles:
 
-- Admin API key: full read/write access.
+- Admin API key: full read/write access, plus creation of `user` and `attending` browser accounts.
 - Viewer API key: read access.
 
 Browser logins use username/password credentials:
@@ -33,7 +33,7 @@ The admin Users tab can add/delete users one at a time or in bulk, generate temp
 - `request`: can submit coverage calendar edit requests for that service.
 - `edit`: can directly edit service assignments and coverage entries, and approve/deny requests for that service.
 
-User-management endpoints require a logged-in admin browser-session bearer token; API-key admin access does not manage browser users:
+User listing and later account changes require a logged-in admin browser-session bearer token. The admin API key may create new `user` or `attending` accounts only; it cannot list, update, delete, or reset browser users:
 
 ```text
 GET    /api/users
@@ -44,7 +44,23 @@ PATCH  /api/users/:username/password
 DELETE /api/users/:username
 ```
 
-For `POST /api/users` and `POST /api/users/bulk`, omit `password` to have the server generate a one-time temporary password. Bulk creation uses this shape:
+For `POST /api/users` and `POST /api/users/bulk`, use `accountType: "user"` or `accountType: "attending"`; `user` is stored internally as the browser `viewer` role. Set permissions with `servicePrivileges`. An `attending` account must include an existing planner `attendingId`. Set `temporaryPassword` to choose the first-login password. If both `password` and `temporaryPassword` are omitted, the temporary password is `schroeder1`, returned once, and forces a password change.
+
+Create a regular user with the admin API key:
+
+```bash
+curl -X POST https://your-domain.example/api/users \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "username":"jsmith",
+    "displayName":"Jamie Smith",
+    "accountType":"user",
+    "servicePrivileges":{"Davies":"request","Berry":"view"}
+  }'
+```
+
+Bulk creation uses this shape:
 
 ```json
 {
@@ -52,6 +68,7 @@ For `POST /api/users` and `POST /api/users/bulk`, omit `password` to have the se
     {
       "username": "jsmith",
       "displayName": "Jamie Smith",
+      "accountType": "user",
       "servicePrivileges": { "Davies": "request", "Berry": "view" }
     }
   ]
