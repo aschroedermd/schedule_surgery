@@ -231,8 +231,7 @@ export function App() {
       role: user.role,
       servicePrivileges: user.servicePrivileges,
       passwordUpdatedAt: user.passwordUpdatedAt,
-      mustChangePassword: user.mustChangePassword,
-      temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
+      mustChangePassword: user.mustChangePassword
     };
     storeSession(nextSession);
     setSession(nextSession);
@@ -513,6 +512,7 @@ export function App() {
         token={session.token}
         username={session.username}
         onPasswordChanged={handlePasswordChanged}
+        onLogout={handleLogout}
       />
     );
   }
@@ -3943,10 +3943,9 @@ function getStoredSession(): PlannerSession | undefined {
   const passwordUpdatedAt = localStorage.getItem("plannerPasswordUpdatedAt");
   const servicePrivileges = parseStoredPrivileges(localStorage.getItem("plannerServicePrivileges"));
   const mustChangePassword = localStorage.getItem("plannerMustChangePassword") === "true";
-  const temporaryPasswordExpiresAt = localStorage.getItem("plannerTemporaryPasswordExpiresAt") ?? undefined;
   const attendingId = localStorage.getItem("plannerAttendingId") ?? undefined;
   return token && username && displayName && passwordUpdatedAt && isRole(role)
-    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, mustChangePassword, temporaryPasswordExpiresAt }
+    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, mustChangePassword }
     : undefined;
 }
 
@@ -3960,11 +3959,7 @@ function storeSession(session: PlannerSession) {
   localStorage.setItem("plannerPasswordUpdatedAt", session.passwordUpdatedAt);
   localStorage.setItem("plannerServicePrivileges", JSON.stringify(session.servicePrivileges));
   localStorage.setItem("plannerMustChangePassword", String(session.mustChangePassword));
-  if (session.temporaryPasswordExpiresAt) {
-    localStorage.setItem("plannerTemporaryPasswordExpiresAt", session.temporaryPasswordExpiresAt);
-  } else {
-    localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
-  }
+  localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
 }
 
 function resolveSessionServiceLine(state: PlannerState, session: PlannerSession, fallback: string): string {

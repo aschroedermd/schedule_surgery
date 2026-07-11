@@ -265,6 +265,31 @@ h2 {
   padding: 32px;
   box-shadow: var(--shadow-xl);
 }
+
+.password-change-required-screen {
+  position: relative;
+}
+
+.password-change-required-panel {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.temporary-password-logout {
+  position: absolute;
+  top: max(18px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+}
+
+.temporary-password-reminder {
+  margin: 0;
+  text-align: center;
+}
+
+.temporary-password-skip {
+  width: 100%;
+}
 .app-shell {
   width: min(1800px, 100%);
   min-height: 100vh;

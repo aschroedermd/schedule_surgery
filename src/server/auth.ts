@@ -39,8 +39,7 @@ export async function validateLogin(userStore: UserStore, username: string, pass
         attendingId: user.attendingId,
         servicePrivileges: user.servicePrivileges,
         passwordUpdatedAt: user.passwordUpdatedAt,
-        mustChangePassword: user.mustChangePassword,
-        temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
+        mustChangePassword: user.mustChangePassword
       }
     : undefined;
 }
@@ -77,8 +76,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     attendingId: user.attendingId,
     servicePrivileges: user.servicePrivileges,
     passwordUpdatedAt: user.passwordUpdatedAt,
-    mustChangePassword: user.mustChangePassword,
-    temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
+    mustChangePassword: user.mustChangePassword
   };
 }
 
@@ -163,8 +161,7 @@ function makeApiKeyUser(username: string, displayName: string, role: Role, privi
     role,
     servicePrivileges: Object.fromEntries(SERVICE_LINES.map((service) => [service, privilege])),
     passwordUpdatedAt: new Date(0).toISOString(),
-    mustChangePassword: false,
-    temporaryPasswordExpiresAt: undefined
+    mustChangePassword: false
   };
 }
 

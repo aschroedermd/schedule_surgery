@@ -1,6 +1,6 @@
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { Copy, Eye, KeyRound, Pencil, Plus, Save, Send, Trash2, Users } from "lucide-react";
+import { Copy, Eye, KeyRound, LogOut, Pencil, Plus, Save, Send, Trash2, Users } from "lucide-react";
 import {
   changeMyPassword,
   createUser,
@@ -489,21 +489,35 @@ function parseUserEntries(entries: string): Array<{ username: string; displayNam
 export function PasswordChangeRequiredScreen({
   token,
   username,
-  onPasswordChanged
+  onPasswordChanged,
+  onLogout
 }: {
   token: string;
   username: string;
   onPasswordChanged: (user: PasswordChangeResponse) => void;
+  onLogout: () => void;
 }) {
   return (
-    <main className="login-screen">
-      <PasswordChangeForm
-        token={token}
-        username={username}
-        heading="Change Password"
-        copy="Use your temporary or current password, then choose a new one."
-        onPasswordChanged={onPasswordChanged}
-      />
+    <main className="login-screen password-change-required-screen">
+      <button className="secondary-button temporary-password-logout" type="button" onClick={onLogout}>
+        <LogOut size={16} />
+        Log out
+      </button>
+      <div className="password-change-required-panel">
+        <PasswordChangeForm
+          token={token}
+          username={username}
+          heading="Change Password"
+          copy="Use your temporary or current password, then choose a new one."
+          onPasswordChanged={onPasswordChanged}
+        />
+        <p className="muted-copy temporary-password-reminder">
+          You will see this screen again each time you sign in until you change your password.
+        </p>
+        <button className="secondary-button temporary-password-skip" type="button" onClick={onLogout}>
+          Skip for now
+        </button>
+      </div>
     </main>
   );
 }

@@ -5,7 +5,6 @@ import { Role, SERVICE_LINES, ServicePrivileges, UserSummary } from "../shared/t
 import { RESIDENT_USER_SEEDS } from "./residentRotationSeed";
 
 const DEFAULT_USERS = RESIDENT_USER_SEEDS;
-const TEMPORARY_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_NEW_USER_TEMPORARY_PASSWORD = "schroeder1";
 
 interface PasswordHash {
@@ -62,7 +61,6 @@ export class FileUserStore implements UserStore {
     const data = await this.load();
     const user = findStoredUser(data, username);
     if (!user || !verifySecret(password, user.passwordHash)) return undefined;
-    if (user.temporaryPasswordExpiresAt && Date.parse(user.temporaryPasswordExpiresAt) < Date.now()) return undefined;
     return toSummary(user);
   }
 
@@ -138,7 +136,6 @@ export class FileUserStore implements UserStore {
     user.passwordUpdatedAt = now;
     user.updatedAt = now;
     user.mustChangePassword = true;
-    user.temporaryPasswordExpiresAt = new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString();
     await this.save(data);
     return { user: toSummary(user), temporaryPassword };
   }
@@ -153,7 +150,6 @@ export class FileUserStore implements UserStore {
     user.passwordUpdatedAt = now;
     user.updatedAt = now;
     user.mustChangePassword = false;
-    user.temporaryPasswordExpiresAt = undefined;
     await this.save(data);
     return toSummary(user);
   }
@@ -217,8 +213,7 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       createdAt: user.createdAt ?? now,
       updatedAt: user.updatedAt ?? now,
       passwordUpdatedAt: user.passwordUpdatedAt ?? user.updatedAt ?? now,
-      mustChangePassword: user.mustChangePassword ?? false,
-      temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
+      mustChangePassword: user.mustChangePassword ?? false
     });
   }
 
@@ -269,8 +264,7 @@ function makeSeedUser(
     createdAt: now,
     updatedAt: now,
     passwordUpdatedAt: now,
-    mustChangePassword,
-    temporaryPasswordExpiresAt: undefined
+    mustChangePassword
   };
 }
 
@@ -288,9 +282,6 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
   if (providedTemporaryPassword) assertUsableSecret(providedTemporaryPassword, "Temporary password");
   const temporaryPassword = providedTemporaryPassword ?? (providedPassword ? undefined : DEFAULT_NEW_USER_TEMPORARY_PASSWORD);
   const password = providedPassword ?? temporaryPassword ?? DEFAULT_NEW_USER_TEMPORARY_PASSWORD;
-  const temporaryPasswordExpiresAt = temporaryPassword
-    ? new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString()
-    : undefined;
 
   return {
     stored: {
@@ -305,8 +296,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
       createdAt: now,
       updatedAt: now,
       passwordUpdatedAt: now,
-      mustChangePassword: Boolean(temporaryPassword),
-      temporaryPasswordExpiresAt
+      mustChangePassword: Boolean(temporaryPassword)
     },
     temporaryPassword
   };
@@ -345,8 +335,7 @@ function toSummary(user: StoredUser): UserSummary {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     passwordUpdatedAt: user.passwordUpdatedAt,
-    mustChangePassword: user.mustChangePassword,
-    temporaryPasswordExpiresAt: user.temporaryPasswordExpiresAt
+    mustChangePassword: user.mustChangePassword
   };
 }
 

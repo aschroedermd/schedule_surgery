@@ -58,8 +58,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             passwordUpdatedAt: { type: "string", format: "date-time" },
-            mustChangePassword: { type: "boolean" },
-            temporaryPasswordExpiresAt: { type: "string", format: "date-time" }
+            mustChangePassword: { type: "boolean" }
           }
         },
         UserSummary: {
@@ -76,8 +75,7 @@ export function getOpenApiDocument() {
             createdAt: { type: "string", format: "date-time" },
             updatedAt: { type: "string", format: "date-time" },
             passwordUpdatedAt: { type: "string", format: "date-time" },
-            mustChangePassword: { type: "boolean" },
-            temporaryPasswordExpiresAt: { type: "string", format: "date-time" }
+            mustChangePassword: { type: "boolean" }
           }
         },
         UserInput: {

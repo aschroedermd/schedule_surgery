@@ -110,7 +110,7 @@ ADMIN_API_KEY=<long random admin API key>
 VIEWER_API_KEY=<long random viewer API key>
 ```
 
-`ADMIN_PASSWORD` is only used when the persistent browser-user store is first created. `SEED_USER_PASSWORD` is only used when resident-linked seeded users are created for the first time; users must change that temporary password on first login. The production compose file stores browser users and password hashes in the `planner-users` Docker volume at `/data/users.json`, so rebuilds do not reset changed passwords or privileges.
+`ADMIN_PASSWORD` is only used when the persistent browser-user store is first created. `SEED_USER_PASSWORD` is only used when resident-linked seeded users are created for the first time; users see the password-change screen on every login with that temporary password until they change it. The production compose file stores browser users and password hashes in the `planner-users` Docker volume at `/data/users.json`, so rebuilds do not reset changed passwords or privileges.
 
 If you do not have a domain yet, change the `Caddyfile` first line from `{$APP_DOMAIN}` to `:80`, set:
 

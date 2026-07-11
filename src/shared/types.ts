@@ -294,7 +294,6 @@ export interface UserSummary {
   updatedAt: string;
   passwordUpdatedAt: string;
   mustChangePassword: boolean;
-  temporaryPasswordExpiresAt?: string;
 }
 
 export interface SessionUser {
@@ -305,7 +304,6 @@ export interface SessionUser {
   servicePrivileges: ServicePrivileges;
   passwordUpdatedAt: string;
   mustChangePassword: boolean;
-  temporaryPasswordExpiresAt?: string;
 }
 
 export type CollectionName =

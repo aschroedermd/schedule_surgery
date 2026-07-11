@@ -347,6 +347,45 @@ describe("planner API", () => {
     expect(changeResponse.body.mustChangePassword).toBe(false);
   });
 
+  it("keeps temporary-password accounts at the password-change gate after each login until the password changes", async () => {
+    const { app, token: adminToken } = await loginAs("admin");
+    const temporaryPassword = "Keep-This-Temporary-Password";
+    await request(app)
+      .post("/api/users")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ username: "skipuser", temporaryPassword })
+      .expect(201);
+
+    const firstLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "skipuser", password: temporaryPassword })
+      .expect(200);
+    expect(firstLogin.body.mustChangePassword).toBe(true);
+    await request(app).get("/api/state").set("authorization", `Bearer ${firstLogin.body.token}`).expect(403);
+
+    const secondLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "skipuser", password: temporaryPassword })
+      .expect(200);
+    expect(secondLogin.body.mustChangePassword).toBe(true);
+    await request(app).get("/api/state").set("authorization", `Bearer ${secondLogin.body.token}`).expect(403);
+
+    const changedPassword = "A-new-password-2026";
+    await request(app)
+      .patch("/api/me/password")
+      .set("authorization", `Bearer ${secondLogin.body.token}`)
+      .send({ currentPassword: temporaryPassword, nextPassword: changedPassword })
+      .expect(200)
+      .expect((response) => expect(response.body.mustChangePassword).toBe(false));
+
+    const finalLogin = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "skipuser", password: changedPassword })
+      .expect(200);
+    expect(finalLogin.body.mustChangePassword).toBe(false);
+    await request(app).get("/api/state").set("authorization", `Bearer ${finalLogin.body.token}`).expect(200);
+  });
+
   it("lets a linked attending manage only their own cases and award a resident star", async () => {
     const { app, token: adminToken } = await loginAs("admin");
     await request(app)
