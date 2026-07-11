@@ -28,7 +28,7 @@ Authentication roles:
 - `attending`: browser-session account linked to exactly one existing `attendings[]` record. It can create, update, and delete that attending's OR blocks and cases without a service edit grant. It cannot use that ownership exception for clinics, resident assignments, coverage entries, suggestions, or account management; those require the normal service privilege or admin role.
 - `viewer`: read access unless a browser user has explicit per-service `request` or `edit` privileges.
 
-`attending` is a browser-user role, not an API-key role. An API-key tool is authenticated as `admin` or `viewer` only. Send browser tokens as `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=<token>` for `EventSource`). A temporary-password session may log in but receives `403 Password change required` from planner endpoints until it calls `PATCH /api/me/password`. Logging out without changing the password leaves that gate in place for the next login.
+`attending` is a browser-user role, not an API-key role. An API-key tool is authenticated as `admin` or `viewer` only. Send browser tokens as `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=<token>` for `EventSource`). A temporary-password session may call `POST /api/me/password/skip` to use planner endpoints for that current session; the password-change gate returns on the next username/password login unless it calls `PATCH /api/me/password`.
 
 Browser sessions use username/password login, not the API-key role names:
 

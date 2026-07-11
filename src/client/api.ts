@@ -19,6 +19,10 @@ export interface PasswordChangeResponse extends UserSummary {
   token: string;
 }
 
+export interface PasswordChangeSkipResponse {
+  token: string;
+}
+
 export class UnauthorizedError extends Error {
   constructor(message = "Unauthorized") {
     super(message);
@@ -66,6 +70,13 @@ export async function login(username: string, password: string): Promise<Session
   return request<Session>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ username, password })
+  });
+}
+
+export async function skipPasswordChange(token: string): Promise<PasswordChangeSkipResponse> {
+  return request<PasswordChangeSkipResponse>("/api/me/password/skip", {
+    method: "POST",
+    token
   });
 }
 

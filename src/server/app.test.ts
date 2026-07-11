@@ -347,7 +347,7 @@ describe("planner API", () => {
     expect(changeResponse.body.mustChangePassword).toBe(false);
   });
 
-  it("keeps temporary-password accounts at the password-change gate after each login until the password changes", async () => {
+  it("lets a temporary-password user skip the password change for the current session only", async () => {
     const { app, token: adminToken } = await loginAs("admin");
     const temporaryPassword = "Keep-This-Temporary-Password";
     await request(app)
@@ -362,6 +362,15 @@ describe("planner API", () => {
       .expect(200);
     expect(firstLogin.body.mustChangePassword).toBe(true);
     await request(app).get("/api/state").set("authorization", `Bearer ${firstLogin.body.token}`).expect(403);
+
+    const skipResponse = await request(app)
+      .post("/api/me/password/skip")
+      .set("authorization", `Bearer ${firstLogin.body.token}`)
+      .expect(200);
+    await request(app).get("/api/session").set("authorization", `Bearer ${skipResponse.body.token}`).expect(200).expect((response) => {
+      expect(response.body.mustChangePassword).toBe(false);
+    });
+    await request(app).get("/api/state").set("authorization", `Bearer ${skipResponse.body.token}`).expect(200);
 
     const secondLogin = await request(app)
       .post("/api/auth/login")

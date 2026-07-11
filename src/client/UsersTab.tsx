@@ -490,13 +490,29 @@ export function PasswordChangeRequiredScreen({
   token,
   username,
   onPasswordChanged,
+  onSkip,
   onLogout
 }: {
   token: string;
   username: string;
   onPasswordChanged: (user: PasswordChangeResponse) => void;
+  onSkip: () => Promise<void>;
   onLogout: () => void;
 }) {
+  const [isSkipping, setIsSkipping] = useState(false);
+  const [skipError, setSkipError] = useState<string | undefined>();
+
+  async function skipForNow() {
+    try {
+      setIsSkipping(true);
+      setSkipError(undefined);
+      await onSkip();
+    } catch (error) {
+      setSkipError(error instanceof Error ? error.message : "Unable to skip password change");
+      setIsSkipping(false);
+    }
+  }
+
   return (
     <main className="login-screen password-change-required-screen">
       <button className="secondary-button temporary-password-logout" type="button" onClick={onLogout}>
@@ -508,13 +524,14 @@ export function PasswordChangeRequiredScreen({
           token={token}
           username={username}
           heading="Change Password"
-          copy="Use your temporary or current password, then choose a new one."
+          copy="Use your temporary or current password, then choose a new one. Or skip for now to continue to the planner."
           onPasswordChanged={onPasswordChanged}
         />
         <p className="muted-copy temporary-password-reminder">
           You will see this screen again each time you sign in until you change your password.
         </p>
-        <button className="secondary-button temporary-password-skip" type="button" onClick={onLogout}>
+        {skipError && <p className="error-text">{skipError}</p>}
+        <button className="secondary-button temporary-password-skip" type="button" onClick={skipForNow} disabled={isSkipping}>
           Skip for now
         </button>
       </div>

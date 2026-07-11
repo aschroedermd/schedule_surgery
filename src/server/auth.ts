@@ -44,10 +44,19 @@ export async function validateLogin(userStore: UserStore, username: string, pass
     : undefined;
 }
 
-export function createToken(user: Pick<SessionUser, "username" | "role" | "passwordUpdatedAt">): string {
+export function createToken(
+  user: Pick<SessionUser, "username" | "role" | "passwordUpdatedAt">,
+  options: { deferPasswordChange?: boolean } = {}
+): string {
   const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS;
   const payload = base64Url(
-    JSON.stringify({ username: user.username, role: user.role, pwd: user.passwordUpdatedAt, exp: expiresAt })
+    JSON.stringify({
+      username: user.username,
+      role: user.role,
+      pwd: user.passwordUpdatedAt,
+      exp: expiresAt,
+      deferPasswordChange: options.deferPasswordChange || undefined
+    })
   );
   const signature = sign(payload);
   return `${payload}.${signature}`;
@@ -62,6 +71,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     role?: Role;
     pwd?: string;
     exp?: number;
+    deferPasswordChange?: boolean;
   };
   if (!parsed.username || !parsed.role || !["admin", "attending", "viewer"].includes(parsed.role)) return undefined;
   if (!parsed.exp || parsed.exp < Math.floor(Date.now() / 1000)) return undefined;
@@ -69,6 +79,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
   const user = await userStore.getUser(parsed.username);
   if (!user || user.role !== parsed.role) return undefined;
   if (!parsed.pwd || parsed.pwd !== user.passwordUpdatedAt) return undefined;
+  const passwordChangeDeferred = user.mustChangePassword && parsed.deferPasswordChange === true;
   return {
     username: user.username,
     displayName: user.displayName,
@@ -76,7 +87,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     attendingId: user.attendingId,
     servicePrivileges: user.servicePrivileges,
     passwordUpdatedAt: user.passwordUpdatedAt,
-    mustChangePassword: user.mustChangePassword
+    mustChangePassword: user.mustChangePassword && !passwordChangeDeferred
   };
 }
 

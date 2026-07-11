@@ -303,6 +303,18 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
+  app.post("/api/me/password/skip", requireAuth, (req: AuthenticatedRequest, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    if (!req.user.mustChangePassword) {
+      res.status(400).json({ error: "Password change is not required" });
+      return;
+    }
+    res.json({ token: createToken(req.user, { deferPasswordChange: true }) });
+  });
+
   app.get("/api/state", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       res.json(filterStateForUser(await store.load(), req.user));

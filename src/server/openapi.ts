@@ -402,6 +402,18 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/me/password/skip": {
+        post: {
+          summary: "Defer the current session's required password change",
+          description:
+            "Allows the current temporary-password session to use the planner. The password-change screen returns after the next username/password login unless the password is changed.",
+          responses: {
+            "200": { description: "Replacement session token" },
+            "400": { description: "Password change is not required" },
+            "401": { description: "Unauthorized" }
+          }
+        }
+      },
       "/api/state": {
         get: {
           summary: "Get complete planner state",

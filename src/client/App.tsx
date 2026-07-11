@@ -42,6 +42,7 @@ import {
   runSuggestion,
   Session,
   setExpectedStateVersion,
+  skipPasswordChange,
   submitCoverageRequest,
   subscribeToStateEvents,
   UnauthorizedError,
@@ -237,6 +238,15 @@ export function App() {
     setSession(nextSession);
     setError(undefined);
     setToast("Password changed");
+  }
+
+  async function handlePasswordChangeSkipped() {
+    if (!session) return;
+    const { token } = await skipPasswordChange(session.token);
+    const nextSession: PlannerSession = { ...session, token, mustChangePassword: false };
+    storeSession(nextSession);
+    setSession(nextSession);
+    setError(undefined);
   }
 
   async function refresh(
@@ -512,6 +522,7 @@ export function App() {
         token={session.token}
         username={session.username}
         onPasswordChanged={handlePasswordChanged}
+        onSkip={handlePasswordChangeSkipped}
         onLogout={handleLogout}
       />
     );
