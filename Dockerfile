@@ -6,7 +6,8 @@ RUN npm ci
 FROM deps AS build
 WORKDIR /app
 COPY . .
-RUN npm run build
+ARG NODE_BUILD_HEAP_MB=192
+RUN NODE_OPTIONS="--max-old-space-size=${NODE_BUILD_HEAP_MB}" npm run build:client
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
