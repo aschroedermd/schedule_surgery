@@ -217,6 +217,45 @@ describe("planner API", () => {
     );
   });
 
+  it("lets a browser account without a resident or attending link award one weekly gold star", async () => {
+    const { app, token: adminToken } = await loginAs("admin");
+    await request(app)
+      .post("/api/users")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({
+        username: "facultyguest",
+        displayName: "Faculty Guest",
+        password: "faculty-guest-password"
+      })
+      .expect(201);
+
+    const guestToken = await loginOnApp(app, "facultyguest", "faculty-guest-password");
+    const awardResponse = await request(app)
+      .post("/api/gold-stars")
+      .set("authorization", `Bearer ${guestToken}`)
+      .send({ recipientResidentId: "res_fellow" })
+      .expect(201);
+
+    expect(awardResponse.body.goldStarAwards[0]).toEqual(
+      expect.objectContaining({
+        giverUsername: "facultyguest",
+        recipientResidentId: "res_fellow"
+      })
+    );
+    expect(awardResponse.body.goldStarAwards[0]).not.toHaveProperty("giverResidentId");
+
+    const reloadedState = await request(app).get("/api/state").set("authorization", `Bearer ${guestToken}`).expect(200);
+    expect(reloadedState.body.goldStarAwards[0]).toEqual(
+      expect.objectContaining({ giverUsername: "facultyguest", recipientResidentId: "res_fellow" })
+    );
+
+    await request(app)
+      .post("/api/gold-stars")
+      .set("authorization", `Bearer ${guestToken}`)
+      .send({ recipientResidentId: "res_chief" })
+      .expect(400);
+  });
+
   it("seeds user accounts and lets admin manage privileges", async () => {
     const { app, token } = await loginAs("admin");
 

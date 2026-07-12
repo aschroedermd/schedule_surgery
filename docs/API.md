@@ -126,7 +126,7 @@ Calendar `call` entries are shared across all services. Surgery call uses one `r
 POST /api/gold-stars
 ```
 
-Linked resident browser users can award one weekly star to another resident. The server computes the current Monday-starting week, rejects self-awards, and rejects a second award from the same linked resident in that week. User-facing tools should display weekly recipient counts and should not surface giver identity.
+Any logged-in browser account can award one weekly star to a resident. The server computes the current Monday-starting week, rejects self-awards for resident-linked accounts, and rejects a second award from the same account in that week. User-facing tools should display weekly recipient counts and should not surface giver identity.
 
 ## Calendar Requests, Trades, and Profile Requests
 

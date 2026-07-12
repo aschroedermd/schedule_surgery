@@ -128,6 +128,7 @@ type GoldStarCelebrationState =
 
 const MOBILE_LAYOUT_QUERY = "(max-width: 760px), (hover: none) and (pointer: coarse) and (orientation: portrait) and (max-width: 900px)";
 const TOUCH_INPUT_QUERY = "(hover: none) and (pointer: coarse)";
+const GOLD_STAR_DELIVERY_SOUND = "/audio/gold-star-delivery.mp3";
 
 const emptyResident: Resident = {
   id: "",
@@ -212,6 +213,8 @@ export function App() {
   }
 
   function celebrateGoldStarDelivery(recipientName: string) {
+    const audio = new Audio(GOLD_STAR_DELIVERY_SOUND);
+    void audio.play().catch(() => undefined);
     setGoldStarCelebration({ kind: "given", recipientName });
   }
 
@@ -1556,11 +1559,11 @@ function GoldStarChartTab({
     (award) => award.weekStartDate === weekStartDate && eligibleResidentIds.has(award.recipientResidentId)
   );
   const linkedResident = findResidentForSession(state, session);
-  const linkedAttending = session.role === "attending" && session.attendingId
-    ? state.attendings.find((attending) => attending.id === session.attendingId)
-    : undefined;
-  const canGiveStar = Boolean(linkedResident || linkedAttending);
-  const myAward = weeklyAwards.find((award) => award.giverUsername === session.username || award.giverResidentId === linkedResident?.id);
+  const myAward = weeklyAwards.find(
+    (award) =>
+      award.giverUsername === session.username ||
+      Boolean(linkedResident && award.giverResidentId === linkedResident.id)
+  );
   const myRecipient = myAward ? state.residents.find((resident) => resident.id === myAward.recipientResidentId) : undefined;
   const leaderboard = getGoldStarLeaderboard(eligibleResidents, weeklyAwards).slice(0, 5);
 
@@ -1583,9 +1586,9 @@ function GoldStarChartTab({
       </div>
 
       <section className="gold-star-rules" aria-label="Gold Star Chart rules">
-        <span>One star each week.</span>
+        <span>One star from each account every week.</span>
         <span>Refreshes every Monday.</span>
-        <span>Give it to another resident.</span>
+        <span>Give it to a resident.</span>
         <span>Awards are anonymous.</span>
       </section>
 
@@ -1621,44 +1624,38 @@ function GoldStarChartTab({
             <Sparkles size={18} />
             <h2>Award a star</h2>
           </div>
-          {!canGiveStar ? (
-            <p className="muted-copy">A linked resident or attending profile is required to award a star.</p>
+          {myAward ? (
+            <p className="gold-star-spent">
+              This week's star went to {myRecipient ? formatResidentName(myRecipient) : "another resident"}.
+            </p>
           ) : (
-            <>
-              {myAward ? (
-                <p className="gold-star-spent">
-                  This week's star went to {myRecipient ? formatResidentName(myRecipient) : "another resident"}.
-                </p>
-              ) : (
-                <p className="muted-copy">Choose one resident for this week's star.</p>
-              )}
-              <div className="gold-star-resident-list">
-                {eligibleResidents.map((resident) => {
-                  const isSelf = resident.id === linkedResident?.id;
-                  const isChosen = myAward?.recipientResidentId === resident.id;
-                  const canAward = !isSelf && !myAward;
-                  return (
-                    <div key={resident.id} className="gold-star-resident">
-                      <div>
-                        <strong>{formatResidentName(resident)}</strong>
-                        <span>{formatResidentRosterSummary(resident, weekStartDate)}</span>
-                      </div>
-                      <button
-                        type="button"
-                        data-testid={`gold-star-award-${resident.id}`}
-                        className={isChosen ? "primary-button gold-star-award-button" : "secondary-button gold-star-award-button"}
-                        disabled={!canAward}
-                        onClick={() => submitStar(resident)}
-                      >
-                        <Star size={16} />
-                        {getGoldStarButtonLabel({ isSelf, isChosen, hasAward: Boolean(myAward) })}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
+            <p className="muted-copy">Choose one resident for this week's star.</p>
           )}
+          <div className="gold-star-resident-list">
+            {eligibleResidents.map((resident) => {
+              const isSelf = resident.id === linkedResident?.id;
+              const isChosen = myAward?.recipientResidentId === resident.id;
+              const canAward = !isSelf && !myAward;
+              return (
+                <div key={resident.id} className="gold-star-resident">
+                  <div>
+                    <strong>{formatResidentName(resident)}</strong>
+                    <span>{formatResidentRosterSummary(resident, weekStartDate)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid={`gold-star-award-${resident.id}`}
+                    className={isChosen ? "primary-button gold-star-award-button" : "secondary-button gold-star-award-button"}
+                    disabled={!canAward}
+                    onClick={() => submitStar(resident)}
+                  >
+                    <Star size={16} />
+                    {getGoldStarButtonLabel({ isSelf, isChosen, hasAward: Boolean(myAward) })}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </section>
       </div>
     </section>

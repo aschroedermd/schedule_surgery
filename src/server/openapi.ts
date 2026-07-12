@@ -612,7 +612,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Award this week's Gold Star Chart star",
           description:
-            "Requires a logged-in browser user linked to a resident profile. Each linked resident can award one star per Monday-starting week, and cannot award it to themselves. State responses support anonymous weekly chart counts.",
+            "Requires a logged-in browser account. Each account can award one star per Monday-starting week; a resident-linked account cannot award its own resident profile. State responses support anonymous weekly chart counts.",
           requestBody: {
             required: true,
             content: {
@@ -623,8 +623,7 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" },
-            "400": { description: "Invalid recipient, self-award, or weekly star already used" },
-            "403": { description: "Linked resident profile required" }
+            "400": { description: "Invalid recipient, self-award, or weekly star already used" }
           }
         }
       },

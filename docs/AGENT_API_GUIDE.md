@@ -245,7 +245,7 @@ Accepting a resident trade applies the handoff or swap immediately and marks the
 
 ## Gold Star Chart
 
-Linked resident browser users and linked attending browser users can award one weekly star from the Residents tab. The server computes the current Monday-starting week, rejects resident self-awards, and rejects a second award from the same authenticated username in that week. An attending can award a resident but cannot use this endpoint without a valid `attendingId` link.
+Any logged-in browser account can award one weekly star from the Residents tab. The server computes the current Monday-starting week, rejects self-awards for resident-linked accounts, and rejects a second award from the same authenticated username in that week. An account does not need a resident or attending profile link to award a resident.
 
 ```json
 {

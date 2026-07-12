@@ -500,10 +500,10 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
     }),
     goldStarAwards: state.goldStarAwards.filter(
       (award) =>
-        Boolean(award.giverResidentId) &&
-        residentIds.has(award.giverResidentId ?? "") &&
+        Boolean(award.giverUsername || award.giverResidentId) &&
         residentIds.has(award.recipientResidentId) &&
-        award.giverResidentId !== award.recipientResidentId
+        (!award.giverResidentId ||
+          (residentIds.has(award.giverResidentId) && award.giverResidentId !== award.recipientResidentId))
     )
   };
 }

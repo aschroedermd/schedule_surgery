@@ -20,7 +20,6 @@ import {
 import { isResidentOnService } from "../shared/services";
 import {
   CALL_POSITIONS,
-  Attending,
   AttendingBlock,
   CallPosition,
   ClaimRequest,
@@ -801,7 +800,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   app.post("/api/gold-stars", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
-      const { award, giver, recipient } = buildGoldStarAward(state, req.user, req.body);
+      const { award, giverName, recipient } = buildGoldStarAward(state, req.user, req.body);
       const nextState: PlannerState = {
         ...state,
         goldStarAwards: [award, ...state.goldStarAwards]
@@ -810,7 +809,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         ...requestActivityActor(req, "viewer"),
         activityType: "resident",
         action: "awarded gold star",
-        details: `${giver.name} awarded a star to ${recipient.name}`,
+        details: `${giverName} awarded a star to ${recipient.name}`,
         entityType: "goldStarAward",
         entityId: award.id
       });
@@ -1132,11 +1131,8 @@ function buildGoldStarAward(
   state: PlannerState,
   user: SessionUser | undefined,
   input: { recipientResidentId?: unknown; residentId?: unknown } | undefined
-): { award: GoldStarAward; giver: Resident | Attending; recipient: Resident } {
+): { award: GoldStarAward; giverName: string; recipient: Resident } {
   const giver = findResidentForUser(state, user);
-  const attendingGiver = user?.role === "attending" ? findAttendingForUser(state, user) : undefined;
-  const starGiver = giver ?? attendingGiver;
-  if (!starGiver) throw new HttpError(403, "A linked resident or attending profile is required to award a star");
   const body = input ?? {};
   const recipientResidentId = readOptionalString(body.recipientResidentId) ?? readOptionalString(body.residentId);
   if (!recipientResidentId) throw new HttpError(400, "Choose a resident to receive your star");
@@ -1151,7 +1147,7 @@ function buildGoldStarAward(
 
   const now = new Date().toISOString();
   return {
-    giver: starGiver,
+    giverName: user?.displayName || user?.username || "A signed-in user",
     recipient,
     award: {
       id: createId("star"),
@@ -1163,10 +1159,6 @@ function buildGoldStarAward(
       updatedAt: now
     }
   };
-}
-
-function findAttendingForUser(state: PlannerState, user: SessionUser | undefined): Attending | undefined {
-  return user?.attendingId ? state.attendings.find((attending) => attending.id === user.attendingId) : undefined;
 }
 
 function assertAttendingAccountLinks(state: PlannerState, inputs: Array<{ role?: unknown; attendingId?: unknown }>): void {
@@ -1982,7 +1974,7 @@ function filterStateForUser(state: PlannerState, user: SessionUser | undefined):
     ...state,
     coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest)),
     goldStarAwards: state.goldStarAwards.map((award) =>
-      award.giverUsername === user.username || award.giverResidentId === linkedResident?.id
+      award.giverUsername === user.username || Boolean(linkedResident && award.giverResidentId === linkedResident.id)
         ? award
         : { ...award, giverResidentId: undefined, giverUsername: undefined }
     ),
