@@ -280,7 +280,6 @@ export const RANDOM_PHRASES = [
   "nb-altmier",
   "nb-cbd-incision",
   "nb-cholangiogram-side",
-  "nb-debakey",
   "nb-favorite",
   "nb-first",
   "nb-fistula",

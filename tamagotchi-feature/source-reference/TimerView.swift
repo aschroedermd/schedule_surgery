@@ -842,7 +842,6 @@ private final class NussbaumAudioPlayer: NSObject, ObservableObject, AVAudioPlay
         "nb-altmier",
         "nb-cbd-incision",
         "nb-cholangiogram-side",
-        "nb-debakey",
         "nb-favorite",
         "nb-first",
         "nb-fistula",

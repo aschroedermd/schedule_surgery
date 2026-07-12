@@ -43,7 +43,6 @@ const RANDOM_PHRASES = [
   "nb-cbd-incision",
   "nb-chloramphenicol",
   "nb-cholangiogram-side",
-  "nb-debakey",
   "nb-favorite",
   "nb-first",
   "nb-fistula",
