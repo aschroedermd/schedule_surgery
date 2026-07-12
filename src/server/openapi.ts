@@ -174,12 +174,29 @@ export function getOpenApiDocument() {
             }
           }
         },
+        VacationBlockInput: {
+          type: "object",
+          required: ["id", "startDate", "endDate"],
+          properties: {
+            id: { type: "string" },
+            startDate: { type: "string", format: "date" },
+            endDate: { type: "string", format: "date", description: "Inclusive. Must be on or after startDate." }
+          }
+        },
+        ResidentVacationChange: {
+          type: "object",
+          required: ["residentId", "vacation"],
+          properties: {
+            residentId: { type: "string" },
+            vacation: { type: "array", items: { $ref: "#/components/schemas/VacationBlockInput" } }
+          }
+        },
         CoverageRequestInput: {
           type: "object",
           required: ["action"],
           properties: {
             serviceLine: { type: "string", enum: [...SERVICE_LINES] },
-            requestType: { type: "string", enum: ["calendar", "resident-trade", "resident-profile"], default: "calendar" },
+            requestType: { type: "string", enum: ["calendar", "resident-trade", "resident-profile", "resident-vacation"], default: "calendar" },
             action: { type: "string", enum: ["create", "update", "delete"] },
             entryId: { type: "string" },
             requestedEntry: { $ref: "#/components/schemas/CoverageEntryInput" },
@@ -191,7 +208,8 @@ export function getOpenApiDocument() {
                 aliases: { type: "array", items: { type: "string" } }
               }
             },
-            targetResidentId: { type: "string", description: "For resident-trade and resident-profile requests, the target resident." },
+            requestedResidentVacation: { $ref: "#/components/schemas/ResidentVacationChange" },
+            targetResidentId: { type: "string", description: "For resident-trade, resident-profile, and resident-vacation requests, the target resident." },
             swapEntryId: { type: "string", description: "Optional resident-trade entry owned by targetResidentId to swap back to the requester." },
             requesterName: { type: "string" },
             message: { type: "string" }
@@ -464,7 +482,7 @@ export function getOpenApiDocument() {
       "/api/residents/{residentId}/calendar.ics": {
         get: {
           summary: "Export a resident calendar feed",
-          description: "Returns text/calendar with OR, clinic, call, rounding, off, and note entries. Non-admin users can export only their linked resident profile.",
+          description: "Returns text/calendar with OR, clinic, call, rounding, off, note, and vacation entries. Non-admin users can export only their linked resident profile.",
           parameters: [
             { name: "residentId", in: "path", required: true, schema: { type: "string" } },
             { name: "token", in: "query", required: false, schema: { type: "string" } }
@@ -677,8 +695,8 @@ export function getOpenApiDocument() {
       },
       "/api/coverage-requests": {
         post: {
-          summary: "Submit a calendar edit request",
-          description: "Default calendar requests require request or edit privilege for serviceLine and are resolved by a service editor. Resident-trade requests use requestType=resident-trade, must come from the linked resident who owns entryId, and are resolved by targetResidentId. Resident-profile requests use requestType=resident-profile, must come from the linked resident profile, and require admin approval.",
+          summary: "Submit a schedule change request",
+          description: "Default calendar requests require request or edit privilege for serviceLine and are resolved by a service editor. Resident-trade requests use requestType=resident-trade, must come from the linked resident who owns entryId, and are resolved by targetResidentId. Resident-profile requests use requestType=resident-profile, must come from the linked resident profile, and require admin approval. Resident-vacation requests use requestType=resident-vacation and require admin approval.",
           requestBody: {
             required: true,
             content: {
@@ -706,7 +724,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests/{id}/approve": {
         post: {
           summary: "Approve and apply a calendar request",
-          description: "Requires edit privilege for the request serviceLine, admin/API admin access, the target resident on a resident-trade request, or admin access for resident-profile requests.",
+          description: "Requires edit privilege for the request serviceLine, admin/API admin access, the target resident on a resident-trade request, or admin access for resident-profile and resident-vacation requests.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },
@@ -717,7 +735,7 @@ export function getOpenApiDocument() {
       "/api/coverage-requests/{id}/deny": {
         post: {
           summary: "Deny a calendar request",
-          description: "Requires edit privilege for the request serviceLine, admin/API admin access, the target resident on a resident-trade request, or admin access for resident-profile requests.",
+          description: "Requires edit privilege for the request serviceLine, admin/API admin access, the target resident on a resident-trade request, or admin access for resident-profile and resident-vacation requests.",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated PlannerState" },

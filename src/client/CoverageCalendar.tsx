@@ -49,6 +49,7 @@ import {
   isResidentOnService,
   servicesMatch
 } from "../shared/services";
+import { isResidentAvailableForWork } from "../shared/availability";
 import {
   getCalendarNightResidentsForDate,
   getResidentLastName,
@@ -99,10 +100,13 @@ export function CalendarTab({
   );
   const visibleCoverageEntries = useMemo(
     () =>
-      state.coverageEntries.filter(
-        (entry) => entry.kind !== "call" && coverageEntryMatchesServices(state, entry, visibleServices)
-      ),
-    [state, visibleServices]
+      [
+        ...state.coverageEntries.filter(
+          (entry) => entry.kind !== "call" && coverageEntryMatchesServices(state, entry, visibleServices)
+        ),
+        ...getVacationCalendarEntries(state.residents, dates).filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices))
+      ].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
+    [dates, state, visibleServices]
   );
   const callEntries = useMemo(
     () => state.coverageEntries.filter((entry) => entry.kind === "call"),
@@ -379,7 +383,8 @@ function CoverageDay({
             key={entry.id}
             entry={entry}
             residents={visibleResidents}
-            canDelete={inMonth}
+            canDelete={inMonth && !isVacationCalendarEntry(entry)}
+            isVacation={isVacationCalendarEntry(entry)}
             selectedService={selectedService}
             visibleServices={visibleServices}
             state={state}
@@ -468,9 +473,9 @@ function AddRounderControl({
   const availableResidents = useMemo(
     () =>
       state.residents
-        .filter((resident) => !assignedResidentIds.has(resident.id))
+        .filter((resident) => !assignedResidentIds.has(resident.id) && isResidentAvailableForWork(state, resident, date))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [assignedResidentIds, state.residents]
+    [assignedResidentIds, date, state]
   );
   const [showPicker, setShowPicker] = useState(false);
   const [residentFilter, setResidentFilter] = useState("");
@@ -584,6 +589,13 @@ function CoverageSlotSelect({
   onMutate: MutationRunner;
 }) {
   const resident = state.residents.find((candidate) => candidate.id === entry?.residentId);
+  const residentOptions =
+    kind === "rounding"
+      ? visibleResidents.filter(
+          (residentOption) =>
+            residentOption.id === entry?.residentId || isResidentAvailableForWork(state, residentOption, date)
+        )
+      : visibleResidents;
   const style = resident
     ? ({
         "--resident-color": getResidentColor(resident)
@@ -740,7 +752,7 @@ function CoverageSlotSelect({
             onChange={(event) => changeResident(event.target.value)}
           >
             <option value="">Unassigned</option>
-            {visibleResidents.map((residentOption) => (
+            {residentOptions.map((residentOption) => (
               <option key={residentOption.id} value={residentOption.id}>
                 {formatResidentCoverageOption(residentOption, date)}
               </option>
@@ -848,6 +860,7 @@ function CoverageChip({
   entry,
   residents,
   canDelete,
+  isVacation,
   selectedService,
   visibleServices,
   state,
@@ -859,6 +872,7 @@ function CoverageChip({
   entry: CoverageEntry;
   residents: Resident[];
   canDelete: boolean;
+  isVacation: boolean;
   selectedService: string;
   visibleServices: string[];
   state: PlannerState;
@@ -944,9 +958,9 @@ function CoverageChip({
   return (
     <div className={`coverage-chip ${entry.kind}${showActions || isEditing ? " expanded" : ""}`} style={style}>
       <div className="coverage-chip-main">
-        <span>{entry.kind}</span>
+        <span>{isVacation ? "VAC" : entry.kind}</span>
         <strong>{residentName}</strong>
-        {entry.note && <em>{entry.note}</em>}
+        {(entry.note || isVacation) && <em>{isVacation ? "Vacation" : entry.note}</em>}
       </div>
       {canDelete && (canEdit || canRequest) && (
         <button
@@ -1114,6 +1128,32 @@ function makeClientCoverageEntry(
   };
 }
 
+function getVacationCalendarEntries(residents: Resident[], dates: string[]): CoverageEntry[] {
+  const visibleDates = new Set(dates);
+  return residents.flatMap((resident) =>
+    (resident.vacation ?? []).flatMap((vacation) => {
+      const entries: CoverageEntry[] = [];
+      for (const date of dates) {
+        if (!visibleDates.has(date) || date < vacation.startDate || date > vacation.endDate) continue;
+        entries.push({
+          id: `vacation_calendar_${resident.id}_${vacation.id}_${date}`,
+          date,
+          kind: "off",
+          residentId: resident.id,
+          note: "Vacation",
+          createdAt: "",
+          updatedAt: ""
+        });
+      }
+      return entries;
+    })
+  );
+}
+
+function isVacationCalendarEntry(entry: CoverageEntry): boolean {
+  return entry.id.startsWith("vacation_calendar_");
+}
+
 function requestTouchesDate(state: PlannerState, coverageRequest: CoverageChangeRequest, date: string): boolean {
   if (coverageRequest.requestedEntry?.date === date) return true;
   if (!coverageRequest.entryId) return false;
@@ -1235,6 +1275,9 @@ function describeRequest(state: PlannerState, coverageRequest: CoverageChangeReq
   if (isResidentProfileRequest(coverageRequest)) {
     return describeResidentProfileRequest(state, coverageRequest);
   }
+  if (isResidentVacationRequest(coverageRequest)) {
+    return describeResidentVacationRequest(state, coverageRequest);
+  }
   if (isResidentTradeRequest(coverageRequest)) {
     return describeResidentTradeRequest(state, coverageRequest);
   }
@@ -1256,6 +1299,15 @@ function describeResidentProfileRequest(state: PlannerState, coverageRequest: Co
   const requestedAliases = coverageRequest.requestedResidentProfile?.aliases ?? [];
   const aliasText = requestedAliases.length ? ` · aliases: ${requestedAliases.join(", ")}` : "";
   return `Update ${resident ? formatResidentName(resident) : "resident"}${requestedName ? ` to ${requestedName}` : ""}${aliasText}`;
+}
+
+function describeResidentVacationRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  const resident = coverageRequest.targetResidentId
+    ? state.residents.find((candidate) => candidate.id === coverageRequest.targetResidentId)
+    : undefined;
+  const vacation = coverageRequest.requestedResidentVacation?.vacation ?? [];
+  const dates = vacation.map((block) => `${block.startDate} to ${block.endDate}`).join(", ");
+  return `Update vacation for ${resident ? formatResidentName(resident) : "resident"}${dates ? ` · ${dates}` : ""}`;
 }
 
 function describeResidentTradeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
@@ -1297,7 +1349,7 @@ function canResolveRequest(
   isAdmin: boolean,
   servicePrivileges: ServicePrivileges
 ): boolean {
-  if (isResidentProfileRequest(coverageRequest)) return isAdmin;
+  if (isResidentProfileRequest(coverageRequest) || isResidentVacationRequest(coverageRequest)) return isAdmin;
   if (isResidentTradeRequest(coverageRequest) && coverageRequestTargetsUsername(state, coverageRequest, username)) {
     return true;
   }
@@ -1321,6 +1373,10 @@ function isResidentTradeRequest(coverageRequest: CoverageChangeRequest): boolean
 
 function isResidentProfileRequest(coverageRequest: CoverageChangeRequest): boolean {
   return coverageRequest.requestType === "resident-profile";
+}
+
+function isResidentVacationRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "resident-vacation";
 }
 
 function isTradeableCoverageKind(kind: CoverageKind): boolean {

@@ -5,6 +5,7 @@ import { URL } from "node:url";
 import { isCoverageKindAllowedOnDate } from "../shared/coverage";
 import { addDays, getCurrentMonday, minutesToTime, timeToMinutes } from "../shared/date";
 import { createId } from "../shared/id";
+import { getResidentTimeOff } from "../shared/availability";
 import {
   type ActivityActor,
   type ActivityInput,
@@ -33,6 +34,7 @@ import {
   PlannerState,
   Resident,
   ResidentProfileChange,
+  ResidentVacationChange,
   Role,
   SessionUser,
   SurgeryCase
@@ -393,6 +395,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const entity = req.body;
       if (!requireEntityWriteAccess(req, res, state, collection, entity)) return;
       assertNoPhiInEntity(collection, entity);
+      if (collection === "residents") assertResidentVacationInput(entity);
       const nextState = {
         ...state,
         [collection]: [...state[collection], entity]
@@ -420,6 +423,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const nextEntity = existing ? { ...existing, ...req.body, id } : undefined;
       if (!requireEntityWriteAccess(req, res, state, collection, existing, nextEntity)) return;
       assertNoPhiInEntity(collection, req.body);
+      if (collection === "residents") assertResidentVacationInput(req.body);
       const nextState = {
         ...state,
         [collection]: state[collection].map((entity) => (entity.id === id ? { ...entity, ...req.body, id } : entity))
@@ -465,6 +469,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const serviceLine = getAssignmentTargetServiceLine(state, req.body.kind, req.body.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
       requireResident(state, req.body.residentId);
+      assertResidentAvailableForAssignment(state, req.body.kind, req.body.targetId, req.body.residentId);
       const assignment = makeAssignment(req.body.kind, req.body.targetId, req.body.residentId, "admin", Boolean(req.body.locked));
       if (
         assignment.kind === "case" &&
@@ -519,6 +524,9 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       if (req.body.residentId) requireResident(state, req.body.residentId);
       const nextResidentId = typeof req.body.residentId === "string" ? req.body.residentId : existing.residentId;
       const nextTargetId = typeof req.body.targetId === "string" ? req.body.targetId : existing.targetId;
+      if (typeof req.body.residentId === "string" || typeof req.body.targetId === "string") {
+        assertResidentAvailableForAssignment(state, existing.kind, nextTargetId, nextResidentId);
+      }
       if (
         existing.kind === "case" &&
         state.assignments.some(
@@ -653,24 +661,29 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const serviceLine = readServiceLine(req);
       const isResidentTrade = req.body?.requestType === "resident-trade";
       const isResidentProfile = req.body?.requestType === "resident-profile";
-      if (!isResidentTrade && !isResidentProfile && !requireServiceRequest(req, res, serviceLine)) return;
+      const isResidentVacation = req.body?.requestType === "resident-vacation";
+      if (!isResidentTrade && !isResidentProfile && !isResidentVacation && !requireServiceRequest(req, res, serviceLine)) return;
       const coverageRequest = isResidentTrade
         ? buildResidentTradeRequest(state, req.body, req.user, serviceLine)
         : isResidentProfile
           ? buildResidentProfileRequest(state, req.body, req.user)
-          : buildCoverageRequest(state, req.body, req.user, serviceLine);
+          : isResidentVacation
+            ? buildResidentVacationRequest(state, req.body, req.user)
+            : buildCoverageRequest(state, req.body, req.user, serviceLine);
       const nextState: PlannerState = {
         ...state,
         coverageRequests: [coverageRequest, ...state.coverageRequests]
       };
       const withActivity = addActivity(nextState, {
         ...requestActivityActor(req, "viewer"),
-        activityType: isResidentProfile ? "account" : "calendar",
+        activityType: isResidentProfile ? "account" : isResidentVacation ? "resident" : "calendar",
         action: isResidentTrade
           ? "submitted resident call trade"
           : isResidentProfile
             ? "submitted resident profile request"
-            : "submitted call calendar request",
+            : isResidentVacation
+              ? "submitted resident vacation request"
+              : "submitted call calendar request",
         details: describeCoverageRequest(nextState, coverageRequest),
         entityType: "coverageRequest",
         entityId: coverageRequest.id
@@ -707,7 +720,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       };
       const withActivity = addActivity(nextState, {
         ...requestActivityActor(req),
-        activityType: isResidentProfileRequest(coverageRequest) ? "account" : "calendar",
+        activityType: getCoverageRequestActivityType(coverageRequest),
         action: getApprovedCoverageRequestActivity(coverageRequest),
         details: describeCoverageRequest(nextState, coverageRequest),
         entityType: "coverageRequest",
@@ -744,7 +757,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       };
       const withActivity = addActivity(nextState, {
         ...requestActivityActor(req),
-        activityType: isResidentProfileRequest(coverageRequest) ? "account" : "calendar",
+        activityType: getCoverageRequestActivityType(coverageRequest),
         action: getDeniedCoverageRequestActivity(coverageRequest),
         details: describeCoverageRequest(nextState, coverageRequest),
         entityType: "coverageRequest",
@@ -767,7 +780,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       };
       const withActivity = addActivity(nextState, {
         ...requestActivityActor(req),
-        activityType: isResidentProfileRequest(coverageRequest) ? "account" : "calendar",
+        activityType: getCoverageRequestActivityType(coverageRequest),
         action: "removed coverage request",
         details: describeCoverageRequest(state, coverageRequest),
         entityType: "coverageRequest",
@@ -790,6 +803,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const serviceLine = getAssignmentTargetServiceLine(state, claim.scope, claim.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
       requireResident(state, claim.residentId);
+      assertResidentAvailableForAssignment(state, claim.scope, claim.targetId, claim.residentId);
       const nextState = applyClaim(state, claim, requestActivityActor(req, "viewer"));
       res.status(201).json(await commitState(req, nextState));
     } catch (error) {
@@ -1048,6 +1062,16 @@ function buildResidentCalendarIcs(state: PlannerState, residentId: string): stri
       })
     );
   }
+  for (const vacation of resident?.vacation ?? []) {
+    events.push(
+      allDayDateRangeIcsEvent({
+        uid: `vacation-${residentId}-${vacation.id}@schedule-surgery`,
+        summary: `Vacation${resident ? `: ${resident.name}` : ""}`,
+        startDate: vacation.startDate,
+        endDate: vacation.endDate
+      })
+    );
+  }
 
   return [
     "BEGIN:VCALENDAR",
@@ -1092,6 +1116,18 @@ function allDayIcsEvent(input: { uid: string; summary: string; description?: str
     input.description ? `DESCRIPTION:${escapeIcsText(input.description)}` : undefined,
     "END:VEVENT"
   ].filter(Boolean).join("\r\n");
+}
+
+function allDayDateRangeIcsEvent(input: { uid: string; summary: string; startDate: string; endDate: string }): string {
+  return [
+    "BEGIN:VEVENT",
+    `UID:${escapeIcsText(input.uid)}`,
+    `DTSTAMP:${formatIcsTimestamp(new Date())}`,
+    `DTSTART;VALUE=DATE:${formatIcsDate(input.startDate)}`,
+    `DTEND;VALUE=DATE:${formatIcsDate(addDays(input.endDate, 1))}`,
+    `SUMMARY:${escapeIcsText(input.summary)}`,
+    "END:VEVENT"
+  ].join("\r\n");
 }
 
 function formatIcsLocalDateTime(date: string, minutes: number): string {
@@ -1586,9 +1622,61 @@ function buildResidentProfileChange(input: ResidentProfileChange | undefined, re
   };
 }
 
+function buildResidentVacationRequest(
+  state: PlannerState,
+  input: Partial<CoverageChangeRequest>,
+  requester: SessionUser | undefined
+): CoverageChangeRequest {
+  const now = new Date().toISOString();
+  const action = input.action ? assertCoverageRequestAction(input.action) : "update";
+  if (action !== "update") {
+    throw new Error("Resident vacation requests must update an existing resident");
+  }
+  const targetResidentId = readOptionalString(input.targetResidentId) ?? readOptionalString(input.requestedResidentVacation?.residentId);
+  if (!targetResidentId) throw new Error("Resident vacation requests require a targetResidentId");
+  const targetResident = state.residents.find((resident) => resident.id === targetResidentId);
+  if (!targetResident) throw new Error(`Resident not found: ${targetResidentId}`);
+  assertNoPhiText(readOptionalString(input.message) ?? "", "request message");
+  const requestedResidentVacation = buildResidentVacationChange(input.requestedResidentVacation, targetResident);
+
+  return {
+    id: readOptionalString(input.id) ?? createId("resident_vacation_req"),
+    requestType: "resident-vacation",
+    action,
+    status: "pending",
+    targetResidentId: targetResident.id,
+    requestedResidentVacation,
+    requesterUsername: requester?.username,
+    requesterName: readOptionalString(input.requesterName) ?? requester?.displayName,
+    message: readOptionalString(input.message) ?? "",
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function buildResidentVacationChange(
+  input: ResidentVacationChange | undefined,
+  resident: Resident
+): ResidentVacationChange {
+  if (!input || !Array.isArray(input.vacation)) {
+    throw new Error("Resident vacation requests require a vacation list");
+  }
+  if (input.residentId && input.residentId !== resident.id) {
+    throw new Error("Resident vacation request must target the selected resident");
+  }
+  return {
+    residentId: resident.id,
+    vacation: normalizeVacationBlocks(input.vacation)
+  };
+}
+
 function applyCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): PlannerState {
   if (isResidentProfileRequest(coverageRequest)) {
     return applyResidentProfileRequest(state, coverageRequest);
+  }
+
+  if (isResidentVacationRequest(coverageRequest)) {
+    return applyResidentVacationRequest(state, coverageRequest);
   }
 
   if (isResidentTradeRequest(coverageRequest)) {
@@ -1642,6 +1730,23 @@ function applyResidentProfileRequest(state: PlannerState, coverageRequest: Cover
           aliases: requestedProfile.aliases ?? resident.aliases ?? []
         }
         : resident
+    )
+  };
+}
+
+function applyResidentVacationRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): PlannerState {
+  const requestedVacation = coverageRequest.requestedResidentVacation;
+  const residentId = coverageRequest.targetResidentId ?? requestedVacation?.residentId;
+  if (!residentId || !requestedVacation) {
+    throw new Error("Resident vacation request is missing vacation details");
+  }
+  if (!state.residents.some((resident) => resident.id === residentId)) {
+    throw new Error(`Resident not found: ${residentId}`);
+  }
+  return {
+    ...state,
+    residents: state.residents.map((resident) =>
+      resident.id === residentId ? { ...resident, vacation: requestedVacation.vacation } : resident
     )
   };
 }
@@ -1705,6 +1810,9 @@ function validateCoverageEntry(state: PlannerState, entry: CoverageEntry): void 
   }
   if (entry.residentId && !state.residents.some((resident) => resident.id === entry.residentId)) {
     throw new HttpError(400, `Unknown resident: ${entry.residentId}`);
+  }
+  if (entry.kind === "rounding" && entry.residentId) {
+    assertResidentAvailableForWork(state, entry.residentId, entry.date, "rounding");
   }
   if (entry.kind === "call") {
     validateCallEntry(state, entry);
@@ -1806,6 +1914,34 @@ function assertNoPhiInEntity(collection: CollectionName, entity: unknown): void 
   }
 }
 
+function assertResidentVacationInput(entity: unknown): void {
+  if (!entity || typeof entity !== "object" || !("vacation" in entity)) return;
+  const vacation = (entity as { vacation?: unknown }).vacation;
+  if (!Array.isArray(vacation)) {
+    throw new HttpError(400, "vacation must be an array");
+  }
+  normalizeVacationBlocks(vacation);
+}
+
+function normalizeVacationBlocks(vacation: unknown[]): ResidentVacationChange["vacation"] {
+  const ids = new Set<string>();
+  return vacation.map((vacationBlock, index) => {
+    if (!vacationBlock || typeof vacationBlock !== "object") {
+      throw new HttpError(400, `Vacation ${index + 1} must be an object`);
+    }
+    const block = vacationBlock as { id?: unknown; startDate?: unknown; endDate?: unknown };
+    const id = readRequiredString(block.id, `Vacation ${index + 1} id`);
+    if (ids.has(id)) throw new HttpError(400, `Duplicate vacation id: ${id}`);
+    ids.add(id);
+    const startDate = assertDate(block.startDate);
+    const endDate = assertDate(block.endDate);
+    if (endDate < startDate) {
+      throw new HttpError(400, "Vacation endDate must be on or after startDate");
+    }
+    return { id, startDate, endDate };
+  });
+}
+
 function assertNoPhiText(value: string, field: string): void {
   if (!value) return;
   const patterns = [
@@ -1893,6 +2029,10 @@ function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageC
     return describeResidentProfileRequest(state, coverageRequest);
   }
 
+  if (isResidentVacationRequest(coverageRequest)) {
+    return describeResidentVacationRequest(state, coverageRequest);
+  }
+
   if (isResidentTradeRequest(coverageRequest)) {
     return describeResidentTradeRequest(state, coverageRequest);
   }
@@ -1913,14 +2053,22 @@ function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageC
 
 function getApprovedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
   if (isResidentProfileRequest(coverageRequest)) return "approved resident profile request";
+  if (isResidentVacationRequest(coverageRequest)) return "approved resident vacation request";
   if (isResidentTradeRequest(coverageRequest)) return "accepted resident call trade";
   return "approved call calendar request";
 }
 
 function getDeniedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
   if (isResidentProfileRequest(coverageRequest)) return "denied resident profile request";
+  if (isResidentVacationRequest(coverageRequest)) return "denied resident vacation request";
   if (isResidentTradeRequest(coverageRequest)) return "denied resident call trade";
   return "denied call calendar request";
+}
+
+function getCoverageRequestActivityType(coverageRequest: CoverageChangeRequest): ActivityInput["activityType"] {
+  if (isResidentProfileRequest(coverageRequest)) return "account";
+  if (isResidentVacationRequest(coverageRequest)) return "resident";
+  return "calendar";
 }
 
 function describeResidentProfileRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
@@ -1928,6 +2076,15 @@ function describeResidentProfileRequest(state: PlannerState, coverageRequest: Co
     ? state.residents.find((candidate) => candidate.id === coverageRequest.targetResidentId)
     : undefined;
   return `Update profile for ${resident?.name ?? coverageRequest.requesterName ?? "resident"}`;
+}
+
+function describeResidentVacationRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  const resident = coverageRequest.targetResidentId
+    ? state.residents.find((candidate) => candidate.id === coverageRequest.targetResidentId)
+    : undefined;
+  const vacation = coverageRequest.requestedResidentVacation?.vacation ?? [];
+  const dates = vacation.map((block) => `${block.startDate} to ${block.endDate}`).join(", ");
+  return `Update vacation for ${resident?.name ?? coverageRequest.requesterName ?? "resident"}${dates ? ` (${dates})` : ""}`;
 }
 
 function describeResidentTradeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
@@ -1994,7 +2151,7 @@ function canResolveCoverageRequest(
   user: SessionUser | undefined,
   coverageRequest: CoverageChangeRequest
 ): boolean {
-  if (isResidentProfileRequest(coverageRequest)) {
+  if (isResidentProfileRequest(coverageRequest) || isResidentVacationRequest(coverageRequest)) {
     return user?.role === "admin";
   }
   if (isResidentTradeRequest(coverageRequest) && coverageRequestTargetsUserResident(state, user, coverageRequest)) {
@@ -2005,6 +2162,7 @@ function canResolveCoverageRequest(
 
 function getCoverageRequestResolveError(coverageRequest: CoverageChangeRequest): string {
   if (isResidentProfileRequest(coverageRequest)) return "Admin approval required for resident profile requests";
+  if (isResidentVacationRequest(coverageRequest)) return "Admin approval required for resident vacation requests";
   return isResidentTradeRequest(coverageRequest)
     ? "Only the requested resident or a service editor can resolve this trade request"
     : "Edit privilege required for this service";
@@ -2012,6 +2170,10 @@ function getCoverageRequestResolveError(coverageRequest: CoverageChangeRequest):
 
 function isResidentProfileRequest(coverageRequest: CoverageChangeRequest): boolean {
   return coverageRequest.requestType === "resident-profile";
+}
+
+function isResidentVacationRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "resident-vacation";
 }
 
 function isResidentTradeRequest(coverageRequest: CoverageChangeRequest): boolean {
@@ -2038,6 +2200,7 @@ function coverageRequestInvolvesUserResident(
     (coverageRequest.requesterResidentId === resident.id ||
       coverageRequest.targetResidentId === resident.id ||
       coverageRequest.requestedResidentProfile?.residentId === resident.id ||
+      coverageRequest.requestedResidentVacation?.residentId === resident.id ||
       coverageRequest.requestedEntry?.residentId === resident.id ||
       coverageRequest.swapRequestedEntry?.residentId === resident.id)
   );
@@ -2048,6 +2211,7 @@ function coverageRequestReferencesResident(coverageRequest: CoverageChangeReques
     coverageRequest.requesterResidentId === residentId ||
     coverageRequest.targetResidentId === residentId ||
     coverageRequest.requestedResidentProfile?.residentId === residentId ||
+    coverageRequest.requestedResidentVacation?.residentId === residentId ||
     coverageRequest.requestedEntry?.residentId === residentId ||
     coverageRequest.swapRequestedEntry?.residentId === residentId
   );
@@ -2077,6 +2241,41 @@ function getAssignmentTargetServiceLine(state: PlannerState, kind: unknown, targ
     return clinic.service;
   }
   throw new Error("Invalid assignment kind");
+}
+
+function getAssignmentTargetDate(state: PlannerState, kind: unknown, targetId: unknown): string {
+  if (typeof targetId !== "string") throw new Error("Assignment targetId is required");
+  if (kind === "case") {
+    const surgeryCase = state.cases.find((candidate) => candidate.id === targetId);
+    if (!surgeryCase) throw new Error(`Case not found: ${targetId}`);
+    return getAssignmentTargetDate(state, "block", surgeryCase.blockId);
+  }
+  if (kind === "block") {
+    const block = state.attendingBlocks.find((candidate) => candidate.id === targetId);
+    if (!block) throw new Error(`Block not found: ${targetId}`);
+    return block.date;
+  }
+  if (kind === "clinic") {
+    const clinic = state.clinicSessions.find((candidate) => candidate.id === targetId);
+    if (!clinic) throw new Error(`Clinic not found: ${targetId}`);
+    return clinic.date;
+  }
+  throw new Error("Invalid assignment kind");
+}
+
+function assertResidentAvailableForAssignment(state: PlannerState, kind: unknown, targetId: unknown, residentId: unknown): void {
+  if (kind !== "case" && kind !== "block") return;
+  assertResidentAvailableForWork(state, residentId, getAssignmentTargetDate(state, kind, targetId), "case");
+}
+
+function assertResidentAvailableForWork(state: PlannerState, residentId: unknown, date: string, workLabel: "case" | "rounding"): void {
+  if (typeof residentId !== "string") throw new Error("Resident is required");
+  const resident = state.residents.find((candidate) => candidate.id === residentId);
+  if (!resident) throw new HttpError(400, `Unknown resident: ${residentId}`);
+  const timeOff = getResidentTimeOff(state, resident, date);
+  if (timeOff) {
+    throw new HttpError(400, `${resident.name} cannot be assigned to ${workLabel} on ${date}: ${timeOff.description}`);
+  }
 }
 
 function getBlockServiceLine(state: PlannerState, blockId: string): string {

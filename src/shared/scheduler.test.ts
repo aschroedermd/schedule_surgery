@@ -263,6 +263,25 @@ describe("scheduler core", () => {
     expect(warnings.some((warning) => warning.includes("off after July 8"))).toBe(true);
   });
 
+  it("warns when an assigned resident is on vacation", () => {
+    const state = createInitialState();
+    const resident = state.residents.find((candidate) => candidate.id === "res_chief")!;
+    const assignmentDate = state.attendingBlocks.find((block) => block.id === "block_chen_mon")!.date;
+    const vacationState = {
+      ...state,
+      residents: state.residents.map((candidate) =>
+        candidate.id === resident.id
+          ? { ...candidate, vacation: [{ id: "vac_test", startDate: assignmentDate, endDate: assignmentDate }] }
+          : candidate
+      ),
+      assignments: [makeAssignment("case", "case_chen_whipple", resident.id, "admin", false)]
+    };
+
+    const warnings = collectWarnings(vacationState, "week_current").map((warning) => warning.message);
+
+    expect(warnings).toContain(`${resident.name} is on vacation (${assignmentDate} to ${assignmentDate})`);
+  });
+
   it("does not warn for a plain training interest mismatch without a better same-day assignment", () => {
     const state = {
       ...createInitialState(),

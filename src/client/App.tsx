@@ -86,6 +86,7 @@ import {
   ScheduledClinicSession,
   SurgeryCase,
   ResidentRotationBlock,
+  VacationBlock,
   TrainingLevel,
   UserSummary,
   Week,
@@ -100,6 +101,7 @@ import {
   isResidentOnService,
   sortResidentsForService
 } from "../shared/services";
+import { isResidentAvailableForWork } from "../shared/availability";
 import {
   ROTATION_BLOCK_DATES,
   getCalendarNightResidentsForDate,
@@ -145,7 +147,8 @@ const emptyResident: Resident = {
   color: "#2f78c4",
   tags: [],
   trainingInterests: [],
-  unavailable: []
+  unavailable: [],
+  vacation: []
 };
 
 export function App() {
@@ -680,7 +683,7 @@ export function App() {
       )}
       {activeTab === "call" && <CallShiftsTab state={state} />}
       {activeTab === "schedule" && (
-        <ResidentScheduleTab state={state} token={session.token} disabled={!isAdmin} onMutate={runMutation} />
+        <ResidentScheduleTab state={state} token={session.token} isAdmin={isAdmin} disabled={!isAdmin} onMutate={runMutation} />
       )}
       {activeTab === "requests" && (
         <RequestsTab
@@ -2251,7 +2254,9 @@ function AssignmentControl({
   const isCovered = Boolean(displayedAssignment || coveredWithoutDirectAssignment);
   const assignmentDate = getAssignmentDate(state, kind, targetId);
   const residents = sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
-    (resident) => !excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId
+    (resident) =>
+      (!excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId) &&
+      (kind === "clinic" || resident.id === assignment?.residentId || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
   );
   const [claimResidentId, setClaimResidentId] = useState(residents[0]?.id ?? "");
 
@@ -2835,11 +2840,13 @@ function RosterTab({
 function ResidentScheduleTab({
   state,
   token,
+  isAdmin,
   disabled,
   onMutate
 }: {
   state: PlannerState;
   token: string;
+  isAdmin: boolean;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
@@ -2864,7 +2871,7 @@ function ResidentScheduleTab({
           <select value={selectedBlock} onChange={(event) => setSelectedBlock(Number(event.target.value))}>
             {ROTATION_BLOCK_DATES.map((rotationBlock) => (
               <option key={rotationBlock.blockNumber} value={rotationBlock.blockNumber}>
-                Block {rotationBlock.blockNumber} · {rotationBlock.startDate} to {rotationBlock.endDate}
+                Block {rotationBlock.blockNumber} · {formatBlockDateRange(rotationBlock.startDate, rotationBlock.endDate)}
               </option>
             ))}
           </select>
@@ -2885,7 +2892,7 @@ function ResidentScheduleTab({
         <section className="editor-panel block-schedule-panel">
           <div className="schedule-panel-heading">
             <p className="eyebrow">Block {selectedBlock}</p>
-            <h2>{block.startDate} to {block.endDate}</h2>
+            <h2>{formatBlockDateRange(block.startDate, block.endDate)}</h2>
           </div>
           <div className="block-service-groups">
             {getBlockServiceGroups(state.residents, selectedBlock).map((group) => (
@@ -2896,9 +2903,12 @@ function ResidentScheduleTab({
                 </div>
                 <div className="block-resident-list">
                   {group.residents.map((resident) => (
-                    <span key={resident.id} className="resident-legend-item">
+                    <span key={resident.id} className="resident-legend-item block-resident-with-vacation">
                       <span className="resident-dot" style={{ backgroundColor: resident.color ?? "#2f78c4" }} />
-                      {formatResidentName(resident)}
+                      <span>{formatResidentName(resident)}</span>
+                      {getVacationsForDateRange(resident, block.startDate, block.endDate).map((vacation) => (
+                        <span key={vacation.id} className="vacation-line">VAC {formatVacationDateRange(vacation)}</span>
+                      ))}
                     </span>
                   ))}
                 </div>
@@ -2911,6 +2921,7 @@ function ResidentScheduleTab({
           <ResidentRotationEditor
             resident={selectedResident}
             token={token}
+            isAdmin={isAdmin}
             disabled={disabled}
             serviceOptions={serviceOptions}
             onMutate={onMutate}
@@ -2924,21 +2935,25 @@ function ResidentScheduleTab({
 function ResidentRotationEditor({
   resident,
   token,
+  isAdmin,
   disabled,
   serviceOptions,
   onMutate
 }: {
   resident: Resident;
   token: string;
+  isAdmin: boolean;
   disabled: boolean;
   serviceOptions: string[];
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const [draftServices, setDraftServices] = useState<Record<number, string>>(() => makeRotationDraft(resident));
+  const [vacationDraft, setVacationDraft] = useState<VacationBlock[]>(() => resident.vacation ?? []);
   const optionListId = `rotation-services-${resident.id}`;
 
   useEffect(() => {
     setDraftServices(makeRotationDraft(resident));
+    setVacationDraft(resident.vacation ?? []);
   }, [resident]);
 
   function saveBlock(blockNumber: number) {
@@ -2950,6 +2965,39 @@ function ResidentRotationEditor({
     void onMutate(
       () => updateEntity<Resident>(token, "residents", resident.id, { rotationSchedule: nextSchedule }),
       "Resident schedule updated"
+    );
+  }
+
+  function updateVacationDraft(id: string, patch: Partial<VacationBlock>) {
+    setVacationDraft((current) => current.map((vacation) => (vacation.id === id ? { ...vacation, ...patch } : vacation)));
+  }
+
+  function addVacation() {
+    const startDate = getTodayDate();
+    setVacationDraft((current) => [...current, { id: createId("vac"), startDate, endDate: startDate }]);
+  }
+
+  function saveVacation() {
+    const vacation = vacationDraft
+      .filter((block) => block.startDate && block.endDate)
+      .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
+    if (isAdmin) {
+      void onMutate(
+        () => updateEntity<Resident>(token, "residents", resident.id, { vacation }),
+        "Vacation updated"
+      );
+      return;
+    }
+    void onMutate(
+      () =>
+        submitCoverageRequest(token, {
+          requestType: "resident-vacation",
+          action: "update",
+          targetResidentId: resident.id,
+          requestedResidentVacation: { residentId: resident.id, vacation },
+          message: ""
+        }),
+      "Vacation request submitted"
     );
   }
 
@@ -2971,7 +3019,10 @@ function ResidentRotationEditor({
             <div key={rotation.blockNumber} className="resident-lineup-row">
               <div>
                 <strong>Block {rotation.blockNumber}</strong>
-                <span>{rotation.startDate} to {rotation.endDate}</span>
+                <span>{formatBlockDateRange(rotation.startDate, rotation.endDate)}</span>
+                {getVacationsForDateRange(resident, rotation.startDate, rotation.endDate).map((vacation) => (
+                  <span key={vacation.id} className="vacation-line">VAC {formatVacationDateRange(vacation)}</span>
+                ))}
               </div>
               <input
                 aria-label={`${formatResidentName(resident)} block ${rotation.blockNumber} rotation`}
@@ -2999,6 +3050,49 @@ function ResidentRotationEditor({
           );
         })}
       </div>
+      <section className="resident-vacation-panel">
+        <div className="schedule-panel-heading">
+          <p className="eyebrow">Time away</p>
+          <h3>Vacation</h3>
+        </div>
+        <div className="resident-vacation-list">
+          {vacationDraft.length === 0 && <span className="vacation-empty">No vacation entered</span>}
+          {vacationDraft.map((vacation) => (
+            <div key={vacation.id} className="resident-vacation-row">
+              <span className="vacation-line">VAC {formatVacationDateRange(vacation)}</span>
+              <input
+                aria-label={`${formatResidentName(resident)} vacation start`}
+                type="date"
+                value={vacation.startDate}
+                onChange={(event) => updateVacationDraft(vacation.id, { startDate: event.target.value })}
+              />
+              <input
+                aria-label={`${formatResidentName(resident)} vacation end`}
+                type="date"
+                min={vacation.startDate}
+                value={vacation.endDate}
+                onChange={(event) => updateVacationDraft(vacation.id, { endDate: event.target.value })}
+              />
+              <button
+                type="button"
+                className="icon-button"
+                title="Remove vacation"
+                onClick={() => setVacationDraft((current) => current.filter((block) => block.id !== vacation.id))}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="resident-vacation-actions">
+          <button type="button" className="secondary-button" onClick={addVacation}>
+            <Plus size={15} />Add vacation
+          </button>
+          <button type="button" className="primary-button" onClick={saveVacation}>
+            <Save size={15} />{isAdmin ? "Save vacation" : "Request vacation change"}
+          </button>
+        </div>
+      </section>
     </section>
   );
 }
@@ -3531,6 +3625,28 @@ function ensureRotationSchedule(resident: Resident): ResidentRotationBlock[] {
 
 function makeRotationDraft(resident: Resident): Record<number, string> {
   return Object.fromEntries(ensureRotationSchedule(resident).map((rotation) => [rotation.blockNumber, rotation.service]));
+}
+
+function getVacationsForDateRange(resident: Resident, startDate: string, endDate: string): VacationBlock[] {
+  return (resident.vacation ?? []).filter((vacation) => vacation.startDate <= endDate && vacation.endDate >= startDate);
+}
+
+function formatBlockDateRange(startDate: string, endDate: string): string {
+  return formatMonthDayRange(startDate, endDate);
+}
+
+function formatVacationDateRange(vacation: VacationBlock): string {
+  return formatMonthDayRange(vacation.startDate, vacation.endDate);
+}
+
+function formatMonthDayRange(startDate: string, endDate: string): string {
+  if (startDate === endDate) return formatMonthDay(startDate);
+  return `${formatMonthDay(startDate)}–${formatMonthDay(endDate)}`;
+}
+
+function formatMonthDay(date: string): string {
+  const parsed = parseLocalDate(date);
+  return `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][parsed.getMonth()]} ${parsed.getDate()}`;
 }
 
 function getRotationServiceOptions(state: PlannerState): string[] {

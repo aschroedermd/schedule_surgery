@@ -221,6 +221,17 @@ export function collectWarnings(state: PlannerState, weekId: string, serviceLine
         });
       }
     }
+
+    for (const vacation of (interval.resident.vacation ?? []).filter((block) => vacationIncludesDate(block, interval.date))) {
+      warnings.push({
+        id: createId("warn"),
+        severity: "danger",
+        residentId: interval.resident.id,
+        assignmentId: interval.assignment.id,
+        targetId: interval.targetId,
+        message: `${interval.resident.name} is on vacation (${vacation.startDate} to ${vacation.endDate})`
+      });
+    }
   }
 
   const byResidentDay = groupBy(intervals, (interval) => `${interval.resident.id}:${interval.date}`);
@@ -738,6 +749,10 @@ function availabilityIncludesDate(block: { date: string; endDate?: string ;}, da
     return block.date <= date && date <= block.endDate;
   }
   return block.date === date;
+}
+
+function vacationIncludesDate(block: { startDate: string; endDate: string }, date: string): boolean {
+  return block.startDate <= date && date <= block.endDate;
 }
 
 function requireEntity<T extends Attending | Hospital>(collection: T[], id: string, label: string): T {

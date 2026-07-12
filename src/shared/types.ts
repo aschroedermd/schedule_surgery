@@ -28,7 +28,7 @@ export type CoverageRequestAction = "create" | "update" | "delete";
 
 export type CoverageRequestStatus = "pending" | "approved" | "denied";
 
-export type CoverageRequestType = "calendar" | "resident-trade" | "resident-profile";
+export type CoverageRequestType = "calendar" | "resident-trade" | "resident-profile" | "resident-vacation";
 
 export type Priority = 1 | 2 | 3 | 4 | 5;
 
@@ -70,6 +70,12 @@ export interface ResidentRotationBlock {
   service: string;
 }
 
+export interface VacationBlock {
+  id: string;
+  startDate: string;
+  endDate: string;
+}
+
 export interface Resident {
   id: string;
   username?: string;
@@ -87,6 +93,7 @@ export interface Resident {
   tags: string[];
   trainingInterests: string[];
   unavailable: AvailabilityBlock[];
+  vacation?: VacationBlock[];
   rotationSchedule?: ResidentRotationBlock[];
 }
 
@@ -168,6 +175,11 @@ export interface ResidentProfileChange {
   aliases?: string[];
 }
 
+export interface ResidentVacationChange {
+  residentId: string;
+  vacation: VacationBlock[];
+}
+
 export interface CoverageChangeRequest {
   id: string;
   requestType?: CoverageRequestType;
@@ -178,6 +190,7 @@ export interface CoverageChangeRequest {
   requesterResidentId?: string;
   targetResidentId?: string;
   requestedResidentProfile?: ResidentProfileChange;
+  requestedResidentVacation?: ResidentVacationChange;
   swapEntryId?: string;
   swapRequestedEntry?: CoverageEntry;
   serviceLine?: string;

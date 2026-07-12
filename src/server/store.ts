@@ -243,6 +243,7 @@ function normalizeResident(resident: Resident): Resident {
     tags,
     trainingInterests: resident.trainingInterests ?? [],
     unavailable: resident.unavailable ?? [],
+    vacation: normalizeVacationBlocks(resident.vacation),
     rotationSchedule: normalizeRotationSchedule(resident.rotationSchedule)
   };
 }
@@ -303,6 +304,27 @@ function normalizeRotationSchedule(rotationSchedule: Resident["rotationSchedule"
       service: rotation.service?.trim() || "Not listed in source grid"
     }))
     .sort((a, b) => a.blockNumber - b.blockNumber);
+}
+
+function normalizeVacationBlocks(vacation: Resident["vacation"]): NonNullable<Resident["vacation"]> {
+  if (!Array.isArray(vacation)) return [];
+  const ids = new Set<string>();
+  const normalized = vacation.flatMap((block, index) => {
+    if (!block || typeof block !== "object") return [];
+    const startDate = typeof block.startDate === "string" ? block.startDate : "";
+    const endDate = typeof block.endDate === "string" ? block.endDate : startDate;
+    if (!isIsoDate(startDate) || !isIsoDate(endDate) || endDate < startDate) return [];
+    const suppliedId = typeof block.id === "string" ? block.id.trim() : "";
+    const id = suppliedId || `vac_${startDate}_${endDate}_${index + 1}`;
+    if (ids.has(id)) return [];
+    ids.add(id);
+    return [{ id, startDate, endDate }];
+  });
+  return normalized.sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
+}
+
+function isIsoDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function mergeRotationSeedIfNeeded(residents: Resident[]): Resident[] {
@@ -370,6 +392,7 @@ function mergeSeededResident(resident: Resident, seeded: Resident, hasExistingRo
     tags: resident.tags.length ? resident.tags : seeded.tags,
     trainingInterests: resident.trainingInterests.length ? resident.trainingInterests : seeded.trainingInterests,
     unavailable: resident.unavailable.length ? resident.unavailable : seeded.unavailable,
+    vacation: resident.vacation,
     rotationSchedule:
       hasExistingRotationSchedules && hasResidentSchedule
         ? mergeSeedMigrationBlocks(resident.rotationSchedule, seeded)

@@ -69,7 +69,7 @@ The database stores one JSON planner state. Important collections:
 - `weeks`: scheduling week metadata; a week starts on Monday.
 - `hospitals`: reusable hospital list.
 - `attendings`: reusable attending surgeon list.
-- `residents`: reusable resident/fellow/rotator list, optional login username link, display-name aliases, one-character marker, source program metadata, `accountEligible`, and availability blocks.
+- `residents`: reusable resident/fellow/rotator list, optional login username link, display-name aliases, one-character marker, source program metadata, `accountEligible`, general availability blocks, and vacation blocks.
 - `attendingBlocks`: one surgeon operating at one hospital on one date, with a first-case start time and `weekId`.
 - `cases`: ordered cases inside an attending block. Later case times are computed from prior estimated durations.
 - `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
@@ -84,7 +84,7 @@ Cases do not have independent start times. To change timing, patch the block `fi
 Service lines are selected client-side and persisted by each browser. The built-in service lines are `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`.
 
 - `attendings[].service` stores the attending's service line.
-- `residents[].rotationSchedule` stores dated resident block rotations; `residents[].serviceTags` remains a fallback for residents without a schedule. `rosterKind: "off-service"` plus `sourceProgramAbbreviation` marks outside rotators from the MedHub side label, and `accountEligible: false` means selectable without seeded browser login.
+- `residents[].rotationSchedule` stores dated resident block rotations; `residents[].serviceTags` remains a fallback for residents without a schedule. `residents[].vacation` is an optional list of inclusive `{ id, startDate, endDate }` intervals, kept separate from general `unavailable` blocks. `rosterKind: "off-service"` plus `sourceProgramAbbreviation` marks outside rotators from the MedHub side label, and `accountEligible: false` means selectable without seeded browser login.
 - `residents[].aliases` stores alternate resident display names for matching and lookup.
 - `clinicSessions[].service` controls service-line filtering and edit permissions for clinics.
 - Legacy or non-service-specific planner data is normalized into `Davies`.
@@ -274,6 +274,57 @@ Admins can directly edit `residents[].name` and `residents[].aliases`. Linked re
 ```
 
 Admins can remove accidental or obsolete request records with `DELETE /api/coverage-requests/{requestId}`. This removes the request from the log without applying, approving, or denying it.
+
+## Resident Vacation
+
+Vacation is stored as the complete `residents[].vacation` list. Each interval is inclusive, uses ISO dates, automatically appears as a read-only `VAC` calendar entry (and in the resident ICS feed), and blocks case or rounding assignment during the interval:
+
+```json
+{
+  "id": "vac_bradley_august",
+  "startDate": "2026-08-10",
+  "endDate": "2026-08-14"
+}
+```
+
+An admin browser session or the admin API key can directly replace a resident's vacation list with `PATCH /api/entities/residents/{residentId}`. Fetch the live state first, preserve any intervals that should remain, and send the full replacement list with `X-State-Version`:
+
+```json
+{
+  "vacation": [
+    {
+      "id": "vac_bradley_august",
+      "startDate": "2026-08-10",
+      "endDate": "2026-08-14"
+    }
+  ]
+}
+```
+
+Any logged-in non-admin browser user can instead submit a request; only an admin can approve or deny it. The request replaces the target resident's full vacation list when approved:
+
+```json
+{
+  "requestType": "resident-vacation",
+  "action": "update",
+  "targetResidentId": "res_bradley",
+  "requestedResidentVacation": {
+    "residentId": "res_bradley",
+    "vacation": [
+      {
+        "id": "vac_bradley_august",
+        "startDate": "2026-08-10",
+        "endDate": "2026-08-14"
+      }
+    ]
+  },
+  "message": ""
+}
+```
+
+Send this to `POST /api/coverage-requests`. After an admin approves it, refetch `GET /api/state` and verify the resident's `vacation` list.
+
+All-day `coverageEntries[]` items with `kind: "off"` also block case and rounding assignment for that resident on the matching date. Timed `unavailable` blocks remain partial-day constraints; all-day `unavailable` blocks block those assignments as well.
 
 ## Minimal JSON Shapes
 

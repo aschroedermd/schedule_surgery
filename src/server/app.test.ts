@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { createInitialState } from "./sampleData";
 import { MemoryStateStore, normalizePlannerState } from "./store";
-import { getCurrentMonday } from "../shared/date";
+import { addDays, getCurrentMonday } from "../shared/date";
 import { ServicePrivilege } from "../shared/types";
 
 const TEST_SEED_USER_PASSWORD = "resident-dev-password";
@@ -1304,6 +1304,112 @@ describe("planner API", () => {
     expect(approvalResponse.body.coverageRequests.find((item: { id: string ;}) => item.id === profileRequest.id)).toEqual(
       expect.objectContaining({ status: "approved" })
     );
+  });
+
+  it("routes non-admin vacation changes through admin approval and permits direct admin API updates", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const requesterToken = await loginOnApp(app, "cblue");
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const vacation = [{ id: "vac_fellow_august", startDate: "2026-08-10", endDate: "2026-08-14" }];
+
+    const requestResponse = await request(app)
+      .post("/api/coverage-requests")
+      .set("authorization", `Bearer ${requesterToken}`)
+      .send({
+        requestType: "resident-vacation",
+        action: "update",
+        targetResidentId: "res_fellow",
+        requestedResidentVacation: { residentId: "res_fellow", vacation },
+        message: ""
+      })
+      .expect(201);
+
+    const vacationRequest = requestResponse.body.coverageRequests[0];
+    expect(vacationRequest).toEqual(
+      expect.objectContaining({
+        requestType: "resident-vacation",
+        status: "pending",
+        requesterUsername: "cblue",
+        targetResidentId: "res_fellow",
+        requestedResidentVacation: { residentId: "res_fellow", vacation }
+      })
+    );
+
+    const requesterState = await request(app).get("/api/state").set("authorization", `Bearer ${requesterToken}`).expect(200);
+    expect(requesterState.body.coverageRequests.map((item: { id: string ;}) => item.id)).toContain(vacationRequest.id);
+
+    await request(app)
+      .post(`/api/coverage-requests/${vacationRequest.id}/approve`)
+      .set("authorization", `Bearer ${requesterToken}`)
+      .expect(403);
+
+    const approvalResponse = await request(app)
+      .post(`/api/coverage-requests/${vacationRequest.id}/approve`)
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(approvalResponse.body.residents.find((resident: { id: string ;}) => resident.id === "res_fellow")).toEqual(
+      expect.objectContaining({ vacation })
+    );
+    expect(approvalResponse.body.coverageRequests.find((item: { id: string ;}) => item.id === vacationRequest.id)).toEqual(
+      expect.objectContaining({ status: "approved" })
+    );
+
+    const directVacation = [{ id: "vac_fellow_december", startDate: "2026-12-21", endDate: "2026-12-25" }];
+    const directResponse = await request(app)
+      .patch("/api/entities/residents/res_fellow")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ vacation: directVacation })
+      .expect(200);
+    expect(directResponse.body.residents.find((resident: { id: string ;}) => resident.id === "res_fellow")).toEqual(
+      expect.objectContaining({ vacation: directVacation })
+    );
+
+    await request(app)
+      .patch("/api/entities/residents/res_fellow")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ vacation: [{ id: "vac_bad", startDate: "2026-08-14", endDate: "2026-08-10" }] })
+      .expect(400);
+  });
+
+  it("blocks case and rounding assignments for residents who are off or on vacation", async () => {
+    const state = createInitialState();
+    const app = createApp(new MemoryStateStore(state));
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const caseDate = state.attendingBlocks.find((block) => block.id === "block_chen_mon")!.date;
+    const roundingDate = addDays(caseDate, 5);
+
+    await request(app)
+      .patch("/api/entities/residents/res_chief")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ vacation: [{ id: "vac_chief_test", startDate: caseDate, endDate: caseDate }] })
+      .expect(200);
+
+    const caseResponse = await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: "res_chief" })
+      .expect(400);
+    expect(caseResponse.body.error).toMatch(/cannot be assigned to case.*on vacation/i);
+
+    const icsResponse = await request(app)
+      .get("/api/residents/res_chief/calendar.ics")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(icsResponse.text).toContain("SUMMARY:Vacation:");
+    expect(icsResponse.text).toContain(`DTSTART;VALUE=DATE:${caseDate.replace(/-/g, "")}`);
+
+    await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ date: roundingDate, kind: "off", residentId: "res_chief", note: "" })
+      .expect(201);
+
+    const roundingResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ date: roundingDate, kind: "rounding", residentId: "res_chief", serviceLine: "Davies", note: "" })
+      .expect(400);
+    expect(roundingResponse.body.error).toMatch(/cannot be assigned to rounding.*off on the calendar/i);
   });
 
   it("lets a service editor claim an uncovered case and records the claim", async () => {
