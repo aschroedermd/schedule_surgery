@@ -34,6 +34,60 @@
       "used_by_current_runtime": true
     },
     {
+      "path": "images/nb_char_16bit_gd.png",
+      "role": "Hatched Dr. Nussbaum character sprite, third in traversal order",
+      "dimensions": {
+        "width": 489,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_char_16bit_grill.png",
+      "role": "Hatched Dr. Nussbaum character sprite, fourth in traversal order",
+      "dimensions": {
+        "width": 521,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_char_16bit_basketball.png",
+      "role": "Hatched Dr. Nussbaum character sprite, fifth in traversal order",
+      "dimensions": {
+        "width": 489,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_char_16bit_vacation.png",
+      "role": "Hatched Dr. Nussbaum character sprite, sixth in traversal order",
+      "dimensions": {
+        "width": 489,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_char_16bit_tux.png",
+      "role": "Hatched Dr. Nussbaum character sprite, seventh in traversal order",
+      "dimensions": {
+        "width": 489,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
+      "path": "images/nb_char_16bit_pjs.png",
+      "role": "Hatched Dr. Nussbaum character sprite, eighth in traversal order",
+      "dimensions": {
+        "width": 489,
+        "height": 972
+      },
+      "used_by_current_runtime": true
+    },
+    {
       "path": "images/nb_call_bg_ring.png",
       "original_path": "SurgeryDashboard/Assets.xcassets/NussbaumCallRing.imageset/nb_call_bg_ring.png",
       "role": "Full-screen fake call ringing background",
@@ -64,6 +118,16 @@
       "used_by_current_runtime": false
     }
   ],
+  "character_image_sequence": [
+    "images/nb_char_16bit_whitecoat.png",
+    "images/nb_char_16bit_scrubs.png",
+    "images/nb_char_16bit_gd.png",
+    "images/nb_char_16bit_grill.png",
+    "images/nb_char_16bit_basketball.png",
+    "images/nb_char_16bit_vacation.png",
+    "images/nb_char_16bit_tux.png",
+    "images/nb_char_16bit_pjs.png"
+  ],
   "screenshots": [
     {
       "path": "screenshots/nussbaum-easter-egg.png",
@@ -83,14 +147,18 @@
     }
   ],
   "audio": {
+    "button_blip": "audio/blip.mp3",
+    "egg_sonar": "audio/sonar.mp3",
     "first_words": "audio/nb-first.mp3",
     "ring_loop": "audio/ring.mp3",
     "call": "audio/nussbaum_call.mp3",
     "random_phrase_directory": "audio/RandomPhrases",
     "random_phrases": [
+      "nb-altemeier-hernia-sac.mp3",
       "nb-altemeier-procedure.mp3",
       "nb-altmier.mp3",
       "nb-cbd-incision.mp3",
+      "nb-chloramphenicol.mp3",
       "nb-cholangiogram-side.mp3",
       "nb-debakey.mp3",
       "nb-favorite.mp3",
@@ -108,10 +176,14 @@
       "nb-retention-sutures.mp3",
       "nb-robert-cade.mp3",
       "nb-saline-drop-test.mp3",
+      "nb-seprafilm-1.mp3",
       "nb-seprafilm-2.mp3",
+      "nb-seprafilm-3.mp3",
+      "nb-seprafilm-4.mp3",
       "nb-seprafilm-ostomy.mp3",
       "nb-seprafilm.mp3",
       "nb-shouldice.mp3",
+      "nb-splenopneumopexy.mp3",
       "nb-why-ct.mp3"
     ],
     "top_level_audio_files_copied": [

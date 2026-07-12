@@ -2,7 +2,6 @@ import { ChevronLeft } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Outfit = "whitecoat" | "scrubs";
 type ButtonRole = "left" | "middle" | "right";
 
 type PlayAudio = (src: string) => HTMLAudioElement | undefined;
@@ -11,16 +10,24 @@ const DEVICE = { width: 708, height: 1258 };
 const LCD_RECT = { x: 130, y: 530, width: 450, height: 420 };
 const BUTTON_RADIUS = 80;
 const BUTTONS: Record<ButtonRole, { x: number; y: number; label: string }> = {
-  left: { x: 216, y: 1140, label: "Play Dr. Nussbaum" },
-  middle: { x: 356, y: 1170, label: "Mystery" },
-  right: { x: 500, y: 1138, label: "Transform Dr. Nussbaum" }
+  left: { x: 216, y: 1140, label: "Previous Dr. Nussbaum look" },
+  middle: { x: 356, y: 1170, label: "Play next Dr. Nussbaum phrase" },
+  right: { x: 500, y: 1138, label: "Next Dr. Nussbaum look" }
 };
 
 const FIRST_WORDS_AUDIO = "/tamagotchi/audio/nb-first.mp3";
-const OUTFIT_IMAGES: Record<Outfit, string> = {
-  whitecoat: "/tamagotchi/images/nb_char_16bit_whitecoat.png",
-  scrubs: "/tamagotchi/images/nb_char_16bit_scrubs.png"
-};
+const BUTTON_BLIP_AUDIO = "/tamagotchi/audio/blip.mp3";
+const EGG_SONAR_AUDIO = "/tamagotchi/audio/sonar.mp3";
+const CHARACTER_IMAGES = [
+  "/tamagotchi/images/nb_char_16bit_whitecoat.png",
+  "/tamagotchi/images/nb_char_16bit_scrubs.png",
+  "/tamagotchi/images/nb_char_16bit_gd.png",
+  "/tamagotchi/images/nb_char_16bit_grill.png",
+  "/tamagotchi/images/nb_char_16bit_basketball.png",
+  "/tamagotchi/images/nb_char_16bit_vacation.png",
+  "/tamagotchi/images/nb_char_16bit_tux.png",
+  "/tamagotchi/images/nb_char_16bit_pjs.png"
+] as const;
 
 const MYSTERY_EGG_MESSAGES = [
   "This egg is emitting weird surgical energy",
@@ -31,8 +38,10 @@ const MYSTERY_EGG_MESSAGES = [
 
 const RANDOM_PHRASES = [
   "nb-altemeier-procedure",
+  "nb-altemeier-hernia-sac",
   "nb-altmier",
   "nb-cbd-incision",
+  "nb-chloramphenicol",
   "nb-cholangiogram-side",
   "nb-debakey",
   "nb-favorite",
@@ -50,10 +59,14 @@ const RANDOM_PHRASES = [
   "nb-retention-sutures",
   "nb-robert-cade",
   "nb-saline-drop-test",
+  "nb-seprafilm-1",
   "nb-seprafilm-2",
+  "nb-seprafilm-3",
+  "nb-seprafilm-4",
   "nb-seprafilm-ostomy",
   "nb-seprafilm",
   "nb-shouldice",
+  "nb-splenopneumopexy",
   "nb-why-ct"
 ];
 
@@ -63,11 +76,12 @@ export function NussbaumTamagotchi({ onExit }: { onExit: () => void }) {
   const [eggCracked, setEggCracked] = useState(false);
   const [eggShakeCycle, setEggShakeCycle] = useState(0);
   const [hasHatched, setHasHatched] = useState(false);
-  const [outfit, setOutfit] = useState<Outfit>("whitecoat");
+  const [characterIndex, setCharacterIndex] = useState(0);
   const [isTransforming, setIsTransforming] = useState(false);
   const [screenMessage, setScreenMessage] = useState<string | undefined>();
   const [pressedButton, setPressedButton] = useState<ButtonRole | undefined>();
   const audioRef = useRef<HTMLAudioElement | undefined>();
+  const buttonAudioRef = useRef<HTMLAudioElement | undefined>();
   const timeoutRefs = useRef<number[]>([]);
   const messageTimeoutRef = useRef<number | undefined>();
   const phraseDeckRef = useRef<string[]>(shufflePhrases(RANDOM_PHRASES));
@@ -79,6 +93,26 @@ export function NussbaumTamagotchi({ onExit }: { onExit: () => void }) {
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
     audioRef.current = undefined;
+  }, []);
+
+  const playButtonBlip = useCallback(() => {
+    if (buttonAudioRef.current) {
+      buttonAudioRef.current.pause();
+      buttonAudioRef.current.currentTime = 0;
+    }
+    const audio = new Audio(BUTTON_BLIP_AUDIO);
+    audio.onended = () => {
+      if (buttonAudioRef.current === audio) buttonAudioRef.current = undefined;
+    };
+    buttonAudioRef.current = audio;
+    void audio.play().catch(() => undefined);
+  }, []);
+
+  const stopButtonAudio = useCallback(() => {
+    if (!buttonAudioRef.current) return;
+    buttonAudioRef.current.pause();
+    buttonAudioRef.current.currentTime = 0;
+    buttonAudioRef.current = undefined;
   }, []);
 
   const playAudio = useCallback<PlayAudio>(
@@ -121,8 +155,9 @@ export function NussbaumTamagotchi({ onExit }: { onExit: () => void }) {
       timeoutRefs.current.forEach((timeout) => window.clearTimeout(timeout));
       if (messageTimeoutRef.current) window.clearTimeout(messageTimeoutRef.current);
       stopAudio();
+      stopButtonAudio();
     };
-  }, [onExit, stopAudio]);
+  }, [onExit, stopAudio, stopButtonAudio]);
 
   function press(button: ButtonRole) {
     setPressedButton(button);
@@ -136,7 +171,12 @@ export function NussbaumTamagotchi({ onExit }: { onExit: () => void }) {
     const nextTapCount = eggTapCount + 1;
     setEggTapCount(nextTapCount);
     setEggShakeCycle((cycle) => cycle + 1);
-    if (nextTapCount >= 3) runHatchSequence();
+    if (nextTapCount === 1) {
+      playAudio(EGG_SONAR_AUDIO);
+      showScreenMessage("sounds like somethings inside!", 2500);
+      return;
+    }
+    if (nextTapCount >= 2) runHatchSequence();
   }
 
   function runHatchSequence() {
@@ -159,12 +199,14 @@ export function NussbaumTamagotchi({ onExit }: { onExit: () => void }) {
 
   function handleLeftButton() {
     press("left");
+    playButtonBlip();
     if (!hasHatched) {
       showMysteryEggMessage();
       return;
     }
-    const phraseName = nextPhraseName();
-    playAudio(`/tamagotchi/audio/RandomPhrases/${phraseName}.mp3`);
+    setIsTransforming(true);
+    setCharacterIndex((current) => Math.max(0, current - 1));
+    scheduleTimeout(() => setIsTransforming(false), 260);
   }
 
   function nextPhraseName(): string {
@@ -181,17 +223,23 @@ export function NussbaumTamagotchi({ onExit }: { onExit: () => void }) {
 
   function handleMiddleButton() {
     press("middle");
-    showScreenMessage("???", 1250);
+    if (!hasHatched) {
+      showMysteryEggMessage();
+      return;
+    }
+    const phraseName = nextPhraseName();
+    playAudio(`/tamagotchi/audio/RandomPhrases/${phraseName}.mp3`);
   }
 
   function handleRightButton() {
     press("right");
+    playButtonBlip();
     if (!hasHatched) {
       showMysteryEggMessage();
       return;
     }
     setIsTransforming(true);
-    setOutfit((current) => (current === "whitecoat" ? "scrubs" : "whitecoat"));
+    setCharacterIndex((current) => (current + 1) % CHARACTER_IMAGES.length);
     scheduleTimeout(() => setIsTransforming(false), 260);
   }
 
@@ -208,7 +256,7 @@ export function NussbaumTamagotchi({ onExit }: { onExit: () => void }) {
         hasHatched={hasHatched}
         eggCracked={eggCracked}
         eggShakeCycle={eggShakeCycle}
-        outfit={outfit}
+        characterIndex={characterIndex}
         isTransforming={isTransforming}
         screenMessage={screenMessage}
         pressedButton={pressedButton}
@@ -225,7 +273,7 @@ function TamagotchiDevice({
   hasHatched,
   eggCracked,
   eggShakeCycle,
-  outfit,
+  characterIndex,
   isTransforming,
   screenMessage,
   pressedButton,
@@ -237,7 +285,7 @@ function TamagotchiDevice({
   hasHatched: boolean;
   eggCracked: boolean;
   eggShakeCycle: number;
-  outfit: Outfit;
+  characterIndex: number;
   isTransforming: boolean;
   screenMessage?: string;
   pressedButton?: ButtonRole;
@@ -257,7 +305,7 @@ function TamagotchiDevice({
             <div className="nb-character-frame" aria-label="Dr. Nussbaum" role="img">
               <div
                 className={`nb-character${isTransforming ? " is-transforming" : ""}`}
-                style={{ "--nb-character-url": `url("${OUTFIT_IMAGES[outfit]}")` } as CSSProperties}
+                style={{ "--nb-character-url": `url("${CHARACTER_IMAGES[characterIndex]}")` } as CSSProperties}
               />
             </div>
           </div>

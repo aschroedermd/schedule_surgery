@@ -13,12 +13,13 @@ tamagotchi-feature/
   asset-manifest.json
   images/
     Tamagotchi.png
-    nb_char_16bit_whitecoat.png
-    nb_char_16bit_scrubs.png
+    nb_char_16bit_{whitecoat,scrubs,gd,grill,basketball,vacation,tux,pjs}.png
     nb_call_bg_ring.png
     nb_call_bg_answered.png
     nb_call_background.unused-reference.png
   audio/
+    blip.mp3
+    sonar.mp3
     nb-first.mp3
     ring.mp3
     nussbaum_call.mp3
@@ -56,11 +57,15 @@ local image and audio assets.
 
 1. User opens the hidden feature by tapping the timer screen's `Status` label.
 2. A Tamagotchi device shell appears with an egg inside the LCD.
-3. Tapping the egg three times starts the hatch sequence.
+3. The first egg tap shakes the egg, plays `sonar.mp3`, and displays `sounds
+   like somethings inside!`; the second tap starts the hatch sequence.
 4. After hatching, the LCD shows `Dr. Nussbaum` and the whitecoat pixel sprite.
-5. The left physical button plays a random audio phrase.
-6. The middle physical button shows `???`.
-7. The right physical button toggles the sprite between whitecoat and scrubs.
+5. The left physical button plays `blip.mp3` and moves one sprite backward,
+   stopping at whitecoat.
+6. The middle physical button plays the next randomized audio phrase. Every
+   phrase is used once before the deck is reshuffled.
+7. The right physical button plays `blip.mp3` and moves one sprite forward;
+   it wraps from pajamas back to whitecoat.
 8. The top-right menu contains `callme`.
 9. `callme` opens a minute/second picker. After the delay, a fake full-screen
    phone call appears, rings, can be tapped to answer, then plays
@@ -120,7 +125,6 @@ the LCD/buttons by multiplying their natural coordinates by the same scale.
 The web version should keep this state:
 
 ```ts
-type Outfit = "whitecoat" | "scrubs";
 type ButtonRole = "left" | "middle" | "right";
 
 type TamagotchiState = {
@@ -128,7 +132,7 @@ type TamagotchiState = {
   eggTapCount: number;
   eggCracked: boolean;
   hasHatched: boolean;
-  outfit: Outfit;
+  characterIndex: number;
   isTransforming: boolean;
   screenMessage: string | null;
   pressedButton: ButtonRole | null;
@@ -138,8 +142,9 @@ type TamagotchiState = {
 Hatch behavior:
 
 - Ignore egg taps after `hasStarted` or `hasHatched`.
-- For taps 1 and 2, run a short shake animation.
-- On tap 3:
+- On tap 1, run a short shake animation, play `audio/sonar.mp3`, and show
+  `sounds like somethings inside!` for `2500ms`.
+- On tap 2:
   - set `hasStarted = true`;
   - shake for `850ms`;
   - after `420ms`, set `eggCracked = true` and repeat the crack shake 5 times
@@ -151,12 +156,15 @@ Hatch behavior:
 
 Button behavior:
 
-- Left button before hatch: show a random mystery egg message.
-- Left button after hatch: play one random file from `audio/RandomPhrases/`.
-- Middle button: show `???` for `1250ms`.
-- Right button before hatch: show a random mystery egg message.
-- Right button after hatch: toggle whitecoat/scrubs and run a `260ms`
-  transform animation.
+- Left button: play `audio/blip.mp3`; before hatch, show a random mystery egg
+  message. After hatch, move one image backward without wrapping below
+  whitecoat.
+- Middle button: before hatch, show a random mystery egg message. After hatch,
+  play the next randomized file from `audio/RandomPhrases/`; do not repeat a
+  file until every phrase has played.
+- Right button: play `audio/blip.mp3`; before hatch, show a random mystery egg
+  message. After hatch, move one image forward, wrapping pajamas to whitecoat,
+  and run a `260ms` transform animation.
 - Any physical button press should show a visual pressed state for about
   `180ms`.
 
@@ -182,8 +190,12 @@ The LCD is drawn on top of that image:
 - Before hatch, draw the egg with CSS or SVG. No egg image is needed.
 - After hatch, show the text label `Dr. Nussbaum` above the character sprite.
 - Use `image-rendering: pixelated` for the character sprites.
-- Whitecoat sprite: `images/nb_char_16bit_whitecoat.png`.
-- Scrubs sprite: `images/nb_char_16bit_scrubs.png`.
+- Character sprite sequence: `images/nb_char_16bit_whitecoat.png`,
+  `images/nb_char_16bit_scrubs.png`, `images/nb_char_16bit_gd.png`,
+  `images/nb_char_16bit_grill.png`,
+  `images/nb_char_16bit_basketball.png`,
+  `images/nb_char_16bit_vacation.png`, `images/nb_char_16bit_tux.png`, then
+  `images/nb_char_16bit_pjs.png`.
 - Message bubble: yellow, near the bottom of the LCD, max two lines.
 
 The physical device buttons are not separate images. Create transparent circular
@@ -328,4 +340,3 @@ here to preserve the original app bundle layout.
 - Character sprites are pixelated, not smoothed.
 - The webapp does not depend on Swift, Xcode, the surgery dashboard API, or any
   patient data.
-
