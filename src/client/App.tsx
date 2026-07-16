@@ -167,6 +167,8 @@ export function App() {
   const [isTamagotchiOpen, setIsTamagotchiOpen] = useState(false);
   const [goldStarCelebration, setGoldStarCelebration] = useState<GoldStarCelebrationState | undefined>();
   const stateVersionRef = useRef<number | undefined>();
+  const selectedServiceRef = useRef(selectedService);
+  const scheduleLoadIdRef = useRef(0);
   const pendingActionRef = useRef(false);
   const checkedGoldStarReceiptForRef = useRef<string | undefined>();
 
@@ -180,8 +182,10 @@ export function App() {
   const linkedResident = state && session ? findResidentForSession(state, session) : undefined;
   const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session) || linkedResident || (state?.coverageRequests.length ?? 0) > 0));
   const pendingCoverageRequestCount = state?.coverageRequests.filter((request) => request.status === "pending").length ?? 0;
+  const liveUpdatesReady = Boolean(state && schedule && selectedWeekId);
 
   function showLoggedOutScreen() {
+    scheduleLoadIdRef.current += 1;
     clearStoredSession();
     setSession(undefined);
     setState(undefined);
@@ -205,10 +209,11 @@ export function App() {
   }
 
   function handleLogin(nextSession: PlannerSession) {
+    scheduleLoadIdRef.current += 1;
     setShowLoggedOut(false);
     storeSession(nextSession);
     const storedServiceLine = getStoredServiceLine(nextSession.username);
-    if (storedServiceLine) setSelectedService(storedServiceLine);
+    if (storedServiceLine) selectServiceState(storedServiceLine);
     setSelectedWeekId("");
     setGoldStarCelebration(undefined);
     checkedGoldStarReceiptForRef.current = undefined;
@@ -264,14 +269,28 @@ export function App() {
     if (!tokenOverride) return;
     const loadedState = nextState ?? (await fetchState(tokenOverride));
     const weekId = chooseWeekId(loadedState.weeks, preferredWeekId);
+    stateVersionRef.current = loadedState.version;
     setState(loadedState);
     if (weekId) {
       setSelectedWeekId(weekId);
-      setSchedule(await fetchSchedule(tokenOverride, weekId, serviceLine));
+      await loadSchedule(tokenOverride, weekId, serviceLine);
     } else {
       setSelectedWeekId("");
       setSchedule(undefined);
     }
+  }
+
+  function selectServiceState(serviceLine: string) {
+    selectedServiceRef.current = serviceLine;
+    setSelectedService(serviceLine);
+  }
+
+  async function loadSchedule(token: string, weekId: string, serviceLine: string) {
+    if (selectedServiceRef.current !== serviceLine) return;
+    const loadId = ++scheduleLoadIdRef.current;
+    const loadedSchedule = await fetchSchedule(token, weekId, serviceLine);
+    if (!shouldApplyScheduleLoad(loadId, scheduleLoadIdRef.current, serviceLine, selectedServiceRef.current)) return;
+    setSchedule(loadedSchedule);
   }
 
   async function runPending<T>(label: string, action: () => Promise<T>): Promise<T | undefined> {
@@ -330,7 +349,7 @@ export function App() {
       try {
         setError(undefined);
         setSelectedWeekId(weekId);
-        setSchedule(await fetchSchedule(session.token, weekId, selectedService));
+        await loadSchedule(session.token, weekId, selectedService);
       } catch (loadError) {
         if (handleExpiredSession(loadError)) return;
         setError(loadError instanceof Error ? loadError.message : "Unable to load week");
@@ -361,13 +380,13 @@ export function App() {
 
   async function selectServiceLine(serviceLine: string) {
     if (serviceLine === selectedService) return;
-    setSelectedService(serviceLine);
+    selectServiceState(serviceLine);
     storeSelectedServiceLine(session?.username, serviceLine);
     if (!session || !selectedWeekId) return;
     await runPending("Loading service…", async () => {
       try {
         setError(undefined);
-        setSchedule(await fetchSchedule(session.token, selectedWeekId, serviceLine));
+        await loadSchedule(session.token, selectedWeekId, serviceLine);
       } catch (loadError) {
         if (handleExpiredSession(loadError)) return;
         setError(loadError instanceof Error ? loadError.message : "Unable to load service");
@@ -425,7 +444,7 @@ export function App() {
         const loadedState = await fetchState(token);
         if (cancelled) return;
         const serviceLine = resolveSessionServiceLine(loadedState, nextSession, selectedService);
-        setSelectedService(serviceLine);
+        selectServiceState(serviceLine);
         await refresh(loadedState, selectedWeekId, serviceLine, token);
       } catch (loadError) {
         if (cancelled || handleExpiredSession(loadError)) return;
@@ -462,7 +481,10 @@ export function App() {
   }, [session?.mustChangePassword, session?.token, session?.username, state]);
 
   useEffect(() => {
-    if (!session || session.mustChangePassword) return;
+    // The server sends a state event immediately on connection. Wait until the
+    // resident-aware initial schedule is loaded so that event cannot fetch the
+    // Davies fallback and race the selected service.
+    if (!session || session.mustChangePassword || !liveUpdatesReady) return;
     return subscribeToStateEvents(
       session.token,
       (event) => {
@@ -474,7 +496,7 @@ export function App() {
       },
       showLoggedOutScreen
     );
-  }, [session?.token, session?.mustChangePassword, selectedWeekId, selectedService]);
+  }, [session?.token, session?.mustChangePassword, selectedWeekId, selectedService, liveUpdatesReady]);
 
   useEffect(() => {
     if (!printSnapshot) return;
@@ -4057,6 +4079,15 @@ function clampPriority(value: number): 1 | 2 | 3 | 4 | 5 {
 
 function roleLabel(role: Role): string {
   return role;
+}
+
+export function shouldApplyScheduleLoad(
+  loadId: number,
+  latestLoadId: number,
+  requestedService: string,
+  selectedService: string
+): boolean {
+  return loadId === latestLoadId && requestedService === selectedService;
 }
 
 function getStoredSession(): PlannerSession | undefined {

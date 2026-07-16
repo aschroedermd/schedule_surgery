@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shouldApplyScheduleLoad } from "./App";
 import {
   canEditScheduleForSelectedService,
   getNavigationTabs,
@@ -66,5 +67,16 @@ describe("planner navigation", () => {
     expect(canEditScheduleForSelectedService(false, "edit")).toBe(true);
     expect(canEditScheduleForSelectedService(false, "request")).toBe(false);
     expect(canEditScheduleForSelectedService(false, "view")).toBe(false);
+  });
+});
+
+describe("schedule load coordination", () => {
+  it("rejects a Davies response after the resident default switches to Berry", () => {
+    expect(shouldApplyScheduleLoad(1, 1, "Davies", "Berry")).toBe(false);
+  });
+
+  it("rejects an older response after a newer load starts", () => {
+    expect(shouldApplyScheduleLoad(1, 2, "Berry", "Berry")).toBe(false);
+    expect(shouldApplyScheduleLoad(2, 2, "Berry", "Berry")).toBe(true);
   });
 });
