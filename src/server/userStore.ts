@@ -340,7 +340,7 @@ function toSummary(user: StoredUser): UserSummary {
 }
 
 function normalizeRole(role: unknown): Role {
-  return role === "admin" || role === "attending" ? role : "viewer";
+  return role === "admin" || role === "attending" || role === "medical-student" ? role : "viewer";
 }
 
 function hashSecret(secret: string): PasswordHash {

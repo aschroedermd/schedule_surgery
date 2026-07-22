@@ -223,6 +223,7 @@ export function UsersTab({
             onChange={(event) => setAddDraft({ ...addDraft, role: event.target.value as Role })}
           >
             <option value="viewer">user</option>
+            <option value="medical-student">medical student</option>
             <option value="attending">attending</option>
             <option value="admin">admin</option>
           </select>
@@ -341,6 +342,7 @@ export function UsersTab({
                   onChange={(event) => updateDraft(user.username, { role: event.target.value as Role })}
                 >
                   <option value="viewer">user</option>
+                  <option value="medical-student">medical student</option>
                   <option value="attending">attending</option>
                   <option value="admin">admin</option>
                 </select>
@@ -545,6 +547,7 @@ export function AccountTab({
   onToast,
   onPasswordChanged,
   onOpenTamagotchi,
+  eggLink,
   children
 }: {
   token: string;
@@ -552,21 +555,33 @@ export function AccountTab({
   onToast: (message: string) => void;
   onPasswordChanged?: (user: PasswordChangeResponse) => void;
   onOpenTamagotchi?: () => void;
+  eggLink?: string;
   children?: ReactNode;
 }) {
   return (
     <section className="account-panel">
-      {onOpenTamagotchi && (
+      {(onOpenTamagotchi || eggLink) && (
         <div className="account-easter-egg-row">
-          <button
-            type="button"
-            className="icon-button account-easter-egg-button"
-            title="Dr. Nussbaum"
-            aria-label="Open Dr. Nussbaum"
-            onClick={onOpenTamagotchi}
-          >
-            🥚
-          </button>
+          {eggLink ? (
+            <a
+              className="icon-button account-easter-egg-button"
+              href={eggLink}
+              title="Open Surgemon"
+              aria-label="Open Surgemon"
+            >
+              🥚
+            </a>
+          ) : (
+            <button
+              type="button"
+              className="icon-button account-easter-egg-button"
+              title="Dr. Nussbaum"
+              aria-label="Open Dr. Nussbaum"
+              onClick={onOpenTamagotchi}
+            >
+              🥚
+            </button>
+          )}
         </div>
       )}
       {children}

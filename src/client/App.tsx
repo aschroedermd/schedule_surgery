@@ -733,7 +733,8 @@ export function App() {
           username={session.username}
           onToast={(message) => setToast(message)}
           onPasswordChanged={handlePasswordChanged}
-          onOpenTamagotchi={() => setIsTamagotchiOpen(true)}
+          onOpenTamagotchi={session.role === "medical-student" ? undefined : () => setIsTamagotchiOpen(true)}
+          eggLink={session.role === "medical-student" ? "https://surgemon.com/" : undefined}
         >
           {linkedResident && (
             <ResidentProfileRequestPanel
@@ -2150,14 +2151,14 @@ function CaseRow({
             claimable={false}
             selectedService={selectedService}
             excludedResidentIds={assignedResidentIds}
-            emptyLabel="Select resident"
+            emptyLabel="Select resident or medical student"
             quietEmpty
             onMutate={onAdditionalResidentMutate}
           />
         )}
         {canAddResident && (
           <button type="button" className="secondary-button add-resident-button" onClick={() => setIsAddingResident(true)}>
-            +resident
+            +person
           </button>
         )}
       </div>
@@ -2277,6 +2278,7 @@ function AssignmentControl({
   const assignmentDate = getAssignmentDate(state, kind, targetId);
   const residents = sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
     (resident) =>
+      (kind === "case" || resident.trainingLevel !== "Medical Student") &&
       (!excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId) &&
       (kind === "clinic" || resident.id === assignment?.residentId || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
   );
@@ -2790,7 +2792,7 @@ function RosterTab({
           <label>Aliases<input value={(editing.aliases ?? []).join(", ")} onChange={(event) => setEditing({ ...editing, aliases: splitTags(event.target.value) })} /></label>
           <label>Emoji<input value={editing.emoji ?? ""} onChange={(event) => setEditing({ ...editing, emoji: firstInputCharacter(event.target.value) })} /></label>
           <label>Level<select value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
-            {["PGY1", "PGY2", "PGY3", "PGY4", "PGY5", "Fellow"].map((level) => <option key={level}>{level}</option>)}
+            {["Medical Student", "PGY1", "PGY2", "PGY3", "PGY4", "PGY5", "Fellow"].map((level) => <option key={level}>{level}</option>)}
           </select></label>
           <label>Roster<select value={editing.rosterKind ?? "primary"} onChange={(event) => setEditing({ ...editing, rosterKind: event.target.value as Resident["rosterKind"] })}>
             <option value="primary">Primary</option>
@@ -4078,7 +4080,7 @@ function clampPriority(value: number): 1 | 2 | 3 | 4 | 5 {
 }
 
 function roleLabel(role: Role): string {
-  return role;
+  return role === "medical-student" ? "medical student" : role;
 }
 
 export function shouldApplyScheduleLoad(
@@ -4184,7 +4186,7 @@ function isKnownServiceLine(serviceLine: string | null | undefined): serviceLine
 }
 
 function isRole(role: string | null): role is Role {
-  return role === "admin" || role === "attending" || role === "viewer";
+  return role === "admin" || role === "attending" || role === "viewer" || role === "medical-student";
 }
 
 function parseStoredPrivileges(value: string | null): PlannerSession["servicePrivileges"] {

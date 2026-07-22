@@ -180,9 +180,11 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   app.post("/api/users", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const input = normalizeUserCreationInput(req, req.body);
-      assertAttendingAccountLinks(await store.load(), [input]);
+      const state = await store.load();
+      assertAttendingAccountLinks(state, [input]);
+      assertMedicalStudentAccountLinks(state, [input]);
       const created = await userStore.createUser(input);
-      await recordActivity({
+      const nextState = addActivity(addMedicalStudentRosterEntries(state, [created.user]), {
         ...requestActivityActor(req),
         activityType: "account",
         action: "created account",
@@ -190,6 +192,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         entityType: "user",
         entityId: created.user.username
       });
+      await commitState(req, nextState);
       res.status(201).json({ ...created, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -199,9 +202,11 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   app.post("/api/users/bulk", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const users = Array.isArray(req.body.users) ? req.body.users.map((input: unknown) => normalizeUserCreationInput(req, input)) : [];
-      assertAttendingAccountLinks(await store.load(), users);
+      const state = await store.load();
+      assertAttendingAccountLinks(state, users);
+      assertMedicalStudentAccountLinks(state, users);
       const created = await userStore.createUsers(users);
-      await recordActivity({
+      const nextState = addActivity(addMedicalStudentRosterEntries(state, created.map((item) => item.user)), {
         ...requestActivityActor(req),
         activityType: "account",
         action: "created accounts",
@@ -209,6 +214,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         entityType: "user",
         entityId: created.map((item) => item.user.username).join(",")
       });
+      await commitState(req, nextState);
       res.status(201).json({ created, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -220,17 +226,22 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const username = getParam(req.params.username);
       const existing = await userStore.getUser(username);
       if (!existing) throw new HttpError(404, "User not found");
-      assertAttendingAccountLinks(await store.load(), [{
+      const state = await store.load();
+      const input = {
         role: req.body.role ?? existing.role,
-        attendingId: req.body.attendingId ?? existing.attendingId
-      }]);
+        attendingId: req.body.attendingId ?? existing.attendingId,
+        username: existing.username,
+        displayName: req.body.displayName ?? existing.displayName
+      };
+      assertAttendingAccountLinks(state, [input]);
+      assertMedicalStudentAccountLinks(state, [input]);
       const user = await userStore.updateUser(username, {
         displayName: readOptionalString(req.body.displayName),
-        role: req.body.role === "admin" || req.body.role === "attending" || req.body.role === "viewer" ? req.body.role : undefined,
+        role: isRole(req.body.role) ? req.body.role : undefined,
         attendingId: readOptionalString(req.body.attendingId),
         servicePrivileges: req.body.servicePrivileges
       });
-      await recordActivity({
+      const nextState = addActivity(addMedicalStudentRosterEntries(state, [user]), {
         ...requestActivityActor(req),
         activityType: "account",
         action: "updated account",
@@ -238,6 +249,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         entityType: "user",
         entityId: user.username
       });
+      await commitState(req, nextState);
       res.json({ user, users: await userStore.listUsers() });
     } catch (error) {
       next(error);
@@ -469,6 +481,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const serviceLine = getAssignmentTargetServiceLine(state, req.body.kind, req.body.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
       requireResident(state, req.body.residentId);
+      assertMedicalStudentAssignmentKind(state, req.body.kind, req.body.residentId);
       assertResidentAvailableForAssignment(state, req.body.kind, req.body.targetId, req.body.residentId);
       const assignment = makeAssignment(req.body.kind, req.body.targetId, req.body.residentId, "admin", Boolean(req.body.locked));
       if (
@@ -525,6 +538,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const nextResidentId = typeof req.body.residentId === "string" ? req.body.residentId : existing.residentId;
       const nextTargetId = typeof req.body.targetId === "string" ? req.body.targetId : existing.targetId;
       if (typeof req.body.residentId === "string" || typeof req.body.targetId === "string") {
+        assertMedicalStudentAssignmentKind(state, existing.kind, nextResidentId);
         assertResidentAvailableForAssignment(state, existing.kind, nextTargetId, nextResidentId);
       }
       if (
@@ -803,6 +817,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
       const serviceLine = getAssignmentTargetServiceLine(state, claim.scope, claim.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
       requireResident(state, claim.residentId);
+      assertMedicalStudentAssignmentKind(state, claim.scope, claim.residentId);
       assertResidentAvailableForAssignment(state, claim.scope, claim.targetId, claim.residentId);
       const nextState = applyClaim(state, claim, requestActivityActor(req, "viewer"));
       res.status(201).json(await commitState(req, nextState));
@@ -1216,10 +1231,10 @@ function normalizeUserCreationInput(req: AuthenticatedRequest, input: unknown): 
   let role = user.role;
 
   if (accountType !== undefined) {
-    if (accountType !== "user" && accountType !== "attending") {
-      throw new HttpError(400, "Account type must be user or attending");
+    if (accountType !== "user" && accountType !== "attending" && accountType !== "medical-student") {
+      throw new HttpError(400, "Account type must be user, attending, or medical-student");
     }
-    const accountRole: Role = accountType === "user" ? "viewer" : "attending";
+    const accountRole: Role = accountType === "user" ? "viewer" : accountType;
     if (role !== undefined && role !== accountRole) {
       throw new HttpError(400, "accountType and role must describe the same account type");
     }
@@ -1227,10 +1242,48 @@ function normalizeUserCreationInput(req: AuthenticatedRequest, input: unknown): 
   }
 
   if (req.user?.authType === "apiKey" && role === "admin") {
-    throw new HttpError(403, "API keys can create only user or attending accounts");
+    throw new HttpError(403, "API keys can create only user, attending, or medical-student accounts");
   }
 
   return { ...user, role };
+}
+
+function isRole(value: unknown): value is Role {
+  return value === "admin" || value === "attending" || value === "viewer" || value === "medical-student";
+}
+
+function assertMedicalStudentAccountLinks(state: PlannerState, inputs: Array<{ role?: unknown; username?: unknown }>): void {
+  for (const input of inputs) {
+    if (input.role !== "medical-student") continue;
+    const username = readOptionalString(input.username);
+    if (!username) throw new HttpError(400, "Medical student accounts require a username");
+    const linkedResident = state.residents.find((resident) => normalizeUsername(resident.username ?? "") === normalizeUsername(username));
+    if (linkedResident && linkedResident.trainingLevel !== "Medical Student") {
+      throw new HttpError(400, "This username is already linked to a non-medical-student roster entry");
+    }
+  }
+}
+
+function addMedicalStudentRosterEntries(state: PlannerState, users: Array<{ username: string; displayName: string; role: Role }>): PlannerState {
+  const newStudents = users
+    .filter((user) => user.role === "medical-student")
+    .filter((user) => !state.residents.some((resident) => normalizeUsername(resident.username ?? "") === normalizeUsername(user.username)))
+    .map((user): Resident => ({
+      id: createId("res_medical_student"),
+      username: user.username,
+      name: user.displayName,
+      aliases: [],
+      trainingLevel: "Medical Student",
+      rosterKind: "primary",
+      sourceProgram: "Medical School",
+      accountEligible: true,
+      serviceTags: [],
+      tags: [],
+      trainingInterests: [],
+      unavailable: [],
+      vacation: []
+    }));
+  return newStudents.length ? { ...state, residents: [...state.residents, ...newStudents] } : state;
 }
 
 function normalizeUsername(value: string): string {
@@ -2266,6 +2319,14 @@ function getAssignmentTargetDate(state: PlannerState, kind: unknown, targetId: u
 function assertResidentAvailableForAssignment(state: PlannerState, kind: unknown, targetId: unknown, residentId: unknown): void {
   if (kind !== "case" && kind !== "block") return;
   assertResidentAvailableForWork(state, residentId, getAssignmentTargetDate(state, kind, targetId), "case");
+}
+
+function assertMedicalStudentAssignmentKind(state: PlannerState, kind: unknown, residentId: unknown): void {
+  if (typeof residentId !== "string") return;
+  const resident = state.residents.find((candidate) => candidate.id === residentId);
+  if (resident?.trainingLevel === "Medical Student" && kind !== "case") {
+    throw new HttpError(400, "Medical students can be assigned to cases only");
+  }
 }
 
 function assertResidentAvailableForWork(state: PlannerState, residentId: unknown, date: string, workLabel: "case" | "rounding"): void {

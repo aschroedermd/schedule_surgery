@@ -51,7 +51,7 @@ export function getOpenApiDocument() {
             token: { type: "string" },
             username: { type: "string" },
             displayName: { type: "string" },
-            role: { type: "string", enum: ["admin", "attending", "viewer"] },
+            role: { type: "string", enum: ["admin", "attending", "viewer", "medical-student"] },
             attendingId: { type: "string", description: "Required for attending accounts; links the account to an attending record." },
             servicePrivileges: {
               type: "object",
@@ -66,7 +66,7 @@ export function getOpenApiDocument() {
           properties: {
             username: { type: "string" },
             displayName: { type: "string" },
-            role: { type: "string", enum: ["admin", "attending", "viewer"] },
+            role: { type: "string", enum: ["admin", "attending", "viewer", "medical-student"] },
             attendingId: { type: "string" },
             servicePrivileges: {
               type: "object",
@@ -86,13 +86,13 @@ export function getOpenApiDocument() {
             displayName: { type: "string" },
             accountType: {
               type: "string",
-              enum: ["user", "attending"],
-              description: "Use this for account creation, especially with X-API-Key. user is stored as the viewer role. Defaults to user."
+              enum: ["user", "attending", "medical-student"],
+              description: "Use this for account creation, especially with X-API-Key. user is stored as the viewer role; medical-student accounts also create a case-assignable medical-student roster entry. Defaults to user."
             },
             role: {
               type: "string",
-              enum: ["admin", "attending", "viewer"],
-              description: "Browser-admin compatibility field. X-API-Key callers can create only user/viewer or attending accounts."
+              enum: ["admin", "attending", "viewer", "medical-student"],
+              description: "Browser-admin compatibility field. X-API-Key callers can create user/viewer, attending, or medical-student accounts."
             },
             attendingId: { type: "string", description: "Required when role is attending." },
             password: { type: "string", description: "Optional permanent password. Cannot be combined with temporaryPassword." },
@@ -309,7 +309,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create browser user",
           description:
-            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create user or attending accounts, set servicePrivileges, and set temporaryPassword. Use accountType user or attending; omit both password fields to use the schroeder1 temporary password. Temporary passwords force a password change on next login.",
+            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create user, attending, or medical-student accounts, set servicePrivileges, and set temporaryPassword. Use accountType user, attending, or medical-student; omit both password fields to use the schroeder1 temporary password. Temporary passwords force a password change on next login.",
           requestBody: {
             required: true,
             content: {
@@ -345,7 +345,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create multiple browser users",
           description:
-            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create user or attending accounts, set servicePrivileges, and set temporaryPassword. Omit both password fields to use the schroeder1 temporary password.",
+            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create user, attending, or medical-student accounts, set servicePrivileges, and set temporaryPassword. Omit both password fields to use the schroeder1 temporary password.",
           requestBody: {
             required: true,
             content: {

@@ -12,7 +12,7 @@ curl -H "X-API-Key: $ADMIN_API_KEY" https://your-domain.example/api/state
 
 Roles:
 
-- Admin API key: full read/write access, plus creation of `user` and `attending` browser accounts.
+- Admin API key: full read/write access, plus creation of `user`, `attending`, and `medical-student` browser accounts.
 - Viewer API key: read access.
 
 Browser logins use username/password credentials:
@@ -27,13 +27,13 @@ The response token can be passed as `Authorization: Bearer <token>`. MCP/tools c
 
 Seeded browser users are `admin` plus resident-linked accounts for account-eligible residents. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; off-service rotators from outside programs are kept as assignable-only residents unless `accountEligible` is enabled, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and opens the password-change screen on every login until the user chooses a new password; the user can skip for now and use the planner for the current session only.
 
-The admin Users tab can add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges:
+The admin Users tab can add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges. A medical-student account is case-assignable, and its egg icon opens [Surgemon](https://surgemon.com/) rather than the Tamagotchi.
 
 - `view`: read-only.
 - `request`: can submit coverage calendar edit requests for that service.
 - `edit`: can directly edit service assignments and coverage entries, and approve/deny requests for that service.
 
-User listing and later account changes require a logged-in admin browser-session bearer token. The admin API key may create new `user` or `attending` accounts only; it cannot list, update, delete, or reset browser users:
+User listing and later account changes require a logged-in admin browser-session bearer token. The admin API key may create new `user`, `attending`, or `medical-student` accounts only; it cannot list, update, delete, or reset browser users:
 
 ```text
 GET    /api/users
@@ -44,7 +44,7 @@ PATCH  /api/users/:username/password
 DELETE /api/users/:username
 ```
 
-For `POST /api/users` and `POST /api/users/bulk`, use `accountType: "user"` or `accountType: "attending"`; `user` is stored internally as the browser `viewer` role. Set permissions with `servicePrivileges`. An `attending` account must include an existing planner `attendingId`. Set `temporaryPassword` to choose the first-login password. If both `password` and `temporaryPassword` are omitted, the temporary password is `schroeder1`, returned once, and opens the password-change screen on every login until the user changes it. `POST /api/me/password/skip` lets that current session use the planner without changing the stored requirement.
+For `POST /api/users` and `POST /api/users/bulk`, use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"`; `user` is stored internally as the browser `viewer` role. A medical-student account automatically creates a linked, case-assignable Medical Student roster entry and cannot be assigned to blocks, clinics, call, or rounding. Set permissions with `servicePrivileges`. An `attending` account must include an existing planner `attendingId`. Set `temporaryPassword` to choose the first-login password. If both `password` and `temporaryPassword` are omitted, the temporary password is `schroeder1`, returned once, and opens the password-change screen on every login until the user changes it. `POST /api/me/password/skip` lets that current session use the planner without changing the stored requirement.
 
 Create a regular user with the admin API key:
 

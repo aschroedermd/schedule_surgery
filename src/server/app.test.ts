@@ -159,6 +159,47 @@ describe("planner API", () => {
     expect(viewerState.body.activityEvents).toEqual([]);
   });
 
+  it("creates a case-assignable roster entry for medical-student accounts", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+
+    const created = await request(app)
+      .post("/api/users")
+      .set("x-api-key", "test-admin-api-key")
+      .send({
+        username: "medstudent1",
+        displayName: "Avery Student",
+        accountType: "medical-student",
+        temporaryPassword: "TempStudent-2026"
+      })
+      .expect(201);
+
+    expect(created.body.user).toEqual(expect.objectContaining({ username: "medstudent1", role: "medical-student" }));
+
+    const stateResponse = await request(app).get("/api/state").set("x-api-key", "test-admin-api-key").expect(200);
+    const medicalStudent = stateResponse.body.residents.find((resident: { username?: string }) => resident.username === "medstudent1");
+    expect(medicalStudent).toEqual(
+      expect.objectContaining({ name: "Avery Student", trainingLevel: "Medical Student" })
+    );
+
+    await request(app)
+      .post("/api/assignments")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: medicalStudent.id })
+      .expect(201);
+
+    await request(app)
+      .post("/api/assignments")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ kind: "block", targetId: "block_chen_mon", residentId: medicalStudent.id })
+      .expect(400);
+
+    const login = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "medstudent1", password: "TempStudent-2026" })
+      .expect(200);
+    expect(login.body).toEqual(expect.objectContaining({ role: "medical-student" }));
+  });
+
   it("lets linked residents award one weekly gold star without exposing other givers to viewers", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");

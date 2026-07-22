@@ -73,7 +73,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     exp?: number;
     deferPasswordChange?: boolean;
   };
-  if (!parsed.username || !parsed.role || !["admin", "attending", "viewer"].includes(parsed.role)) return undefined;
+  if (!parsed.username || !parsed.role || !["admin", "attending", "viewer", "medical-student"].includes(parsed.role)) return undefined;
   if (!parsed.exp || parsed.exp < Math.floor(Date.now() / 1000)) return undefined;
 
   const user = await userStore.getUser(parsed.username);
