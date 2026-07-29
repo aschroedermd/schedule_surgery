@@ -22,6 +22,14 @@ describe("planner navigation", () => {
     expect(adminTabs).toContainEqual(["roster", "Roster"]);
   });
 
+  it("puts the assistant first for every signed-in user", () => {
+    const adminTabs = getNavigationTabs({ canUseRequests: true, pendingCoverageRequestCount: 1, isAdmin: true });
+    const userTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: false });
+
+    expect(adminTabs[0]).toEqual(["chat", "Assistant ✦"]);
+    expect(userTabs[0]).toEqual(["chat", "Assistant ✦"]);
+  });
+
   it("keeps the residents tab second to last", () => {
     const adminTabIds = tabIds(getNavigationTabs({ canUseRequests: true, pendingCoverageRequestCount: 2, isAdmin: true }));
     const userTabIds = tabIds(getNavigationTabs({ canUseRequests: true, pendingCoverageRequestCount: 2, isAdmin: false }));
@@ -58,7 +66,8 @@ describe("planner navigation", () => {
   it("keeps the responsive navigation groups presentation-only", () => {
     expect(["roster", "defaults", "users", "activity"].every((tab) => isAdminNavigationTab(tab as Tab))).toBe(true);
     expect(isAdminNavigationTab("account")).toBe(false);
-    expect(["board", "my", "calendar", "call"].every((tab) => isMobilePrimaryTab(tab as Tab))).toBe(true);
+    expect(["chat", "board", "my", "calendar"].every((tab) => isMobilePrimaryTab(tab as Tab))).toBe(true);
+    expect(isMobilePrimaryTab("call")).toBe(false);
     expect(isMobilePrimaryTab("residents")).toBe(false);
   });
 

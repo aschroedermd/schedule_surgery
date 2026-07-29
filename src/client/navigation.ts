@@ -1,10 +1,10 @@
 import type { ServicePrivilege } from "../shared/types";
 
-export type Tab = "board" | "my" | "residents" | "calendar" | "call" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "account";
+export type Tab = "chat" | "board" | "my" | "residents" | "calendar" | "call" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "account";
 export type NavigationTab = readonly [Tab, string];
 
 const ADMIN_NAVIGATION_TABS = new Set<Tab>(["roster", "defaults", "users", "activity"]);
-const MOBILE_PRIMARY_TABS = new Set<Tab>(["board", "my", "calendar", "call"]);
+const MOBILE_PRIMARY_TABS = new Set<Tab>(["chat", "board", "my", "calendar"]);
 
 export function getNavigationTabs({
   canUseRequests,
@@ -16,6 +16,7 @@ export function getNavigationTabs({
   isAdmin: boolean;
 }): NavigationTab[] {
   return [
+    ["chat", "Assistant ✦"],
     ["board", "OR / Clinic 🔪"],
     ["my", "My Schedule ☁️"],
     ["calendar", "Calendar 🗓️"],

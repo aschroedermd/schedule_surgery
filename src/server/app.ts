@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { URL } from "node:url";
 import { isCoverageKindAllowedOnDate } from "../shared/coverage";
@@ -51,11 +52,19 @@ import {
   validateLogin
 } from "./auth";
 import { getOpenApiDocument } from "./openapi";
+import {
+  answerScheduleQuestion,
+  ChatMessage,
+  ChatRequestError,
+  getChatQuotaDateKey,
+  transcribeScheduleAudio
+} from "./chat";
 import { StateConflictError, StateStore } from "./store";
 import { UpsertUserInput, UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
 
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
+const DAILY_CHAT_LIMIT = 20;
 
 const collections: CollectionName[] = [
   "hospitals",
@@ -75,12 +84,13 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   const userStore = options.userStore ?? createDefaultUserStore();
   const requireAuth = authenticate(userStore);
   const loginLimiter = createRateLimiter(8, 15 * 60 * 1000);
+  const transcriptionLimiter = createRateLimiter(25, 24 * 60 * 60 * 1000);
   const stateSubscribers = new Set<express.Response>();
 
   app.set("trust proxy", 1);
   app.use(securityHeaders);
   app.use(cors(getCorsOptions()));
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "12mb" }));
 
   app.get("/api/healthz", (_req, res) => {
     res.json({ ok: true });
@@ -148,6 +158,85 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
 
   app.get("/api/session", requireAuth, (req: AuthenticatedRequest, res) => {
     res.json(req.user);
+  });
+
+  app.get("/api/chat/quota", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const quota = await store.getChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
+      res.json({ ...quota, limit: DAILY_CHAT_LIMIT, warningThreshold: 5 });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/chat", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!process.env.OPENROUTER_API_KEY) {
+        res.status(503).json({ error: "The schedule assistant is not configured yet" });
+        return;
+      }
+      const messages = Array.isArray(req.body.messages) ? (req.body.messages as ChatMessage[]) : [];
+      const serviceLine = readOptionalString(req.body.serviceLine);
+      if (!serviceLine) {
+        res.status(400).json({ error: "Current service is required" });
+        return;
+      }
+      const quota = await store.consumeChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
+      if (!quota.allowed) {
+        res.status(429).json({
+          error: "Daily assistant limit reached. Try again after midnight Eastern time.",
+          ...quota,
+          limit: DAILY_CHAT_LIMIT,
+          warningThreshold: 5
+        });
+        return;
+      }
+      const state = filterStateForUser(await store.load(), req.user);
+      const answer = await answerScheduleQuestion(messages, {
+        state,
+        user: req.user!,
+        serviceLine
+      });
+      res.json({
+        ...answer,
+        used: quota.used,
+        remaining: quota.remaining,
+        limit: DAILY_CHAT_LIMIT,
+        warningThreshold: 5
+      });
+    } catch (error) {
+      if (error instanceof ChatRequestError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/transcribe", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const dateKey = getChatQuotaDateKey();
+      const quota = await store.getChatQuota(req.user!.username, dateKey, DAILY_CHAT_LIMIT);
+      if (quota.remaining === 0) {
+        res.status(429).json({ error: "Daily assistant limit reached. Try again after midnight Eastern time." });
+        return;
+      }
+      if (!transcriptionLimiter.tryConsume(`${req.user!.username}:${dateKey}`)) {
+        res.status(429).json({ error: "Daily voice recording limit reached. Try again tomorrow." });
+        return;
+      }
+      const text = await transcribeScheduleAudio({
+        data: typeof req.body.data === "string" ? req.body.data : "",
+        format: typeof req.body.format === "string" ? req.body.format : undefined
+      });
+      res.json({ text });
+    } catch (error) {
+      if (error instanceof ChatRequestError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
   });
 
   app.get("/api/events", requireAuth, requirePasswordReady, async (_req: AuthenticatedRequest, res, next) => {
@@ -877,13 +966,20 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   }
 
   const clientDist = path.resolve(process.cwd(), "dist/client");
-  app.use(express.static(clientDist));
-  app.get("*", (_req, res, next) => {
+  app.use(express.static(clientDist, { index: false }));
+  app.get("*", async (req, res, next) => {
     if (process.env.NODE_ENV !== "production") {
       next();
       return;
     }
-    res.sendFile(path.join(clientDist, "index.html"));
+    try {
+      const requestedOrigin = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+      const origin = new URL(requestedOrigin).origin;
+      const indexHtml = await fs.readFile(path.join(clientDist, "index.html"), "utf8");
+      res.type("html").send(indexHtml.replaceAll("__APP_ORIGIN__", origin));
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -1427,7 +1523,19 @@ function deleteResident(state: PlannerState, residentId: string): PlannerState {
 function deleteAttending(state: PlannerState, attendingId: string): PlannerState {
   const blockIds = new Set(state.attendingBlocks.filter((block) => block.attendingId === attendingId).map((block) => block.id));
   const clinicIds = new Set(state.clinicSessions.filter((clinic) => clinic.attendingId === attendingId).map((clinic) => clinic.id));
-  return deleteClinics(deleteBlocks({ ...state, attendings: state.attendings.filter((attending) => attending.id !== attendingId) }, blockIds), clinicIds);
+  return deleteClinics(
+    deleteBlocks(
+      {
+        ...state,
+        attendings: state.attendings.filter((attending) => attending.id !== attendingId),
+        coverageEntries: state.coverageEntries.filter(
+          (entry) => entry.dayAttendingId !== attendingId && entry.nightAttendingId !== attendingId
+        )
+      },
+      blockIds
+    ),
+    clinicIds
+  );
 }
 
 function deleteHospital(state: PlannerState, hospitalId: string): PlannerState {
@@ -1469,6 +1577,8 @@ function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, 
   const kind = assertCoverageKind(input.kind ?? existing?.kind);
   const date = assertDate(input.date ?? existing?.date);
   const residentId = readOptionalString(input.residentId);
+  const dayAttendingId = kind === "attending-call" ? readOptionalString(input.dayAttendingId) : undefined;
+  const nightAttendingId = kind === "attending-call" ? readOptionalString(input.nightAttendingId) : undefined;
   const serviceLine = readOptionalString(input.serviceLine) ?? existing?.serviceLine;
   const callPosition = kind === "call" ? normalizeCallPosition(input.callPosition ?? existing?.callPosition) : undefined;
   const note = normalizeCoverageEntryNote(kind, readOptionalString(input.note) ?? "");
@@ -1478,6 +1588,8 @@ function buildCoverageEntry(state: PlannerState, input: Partial<CoverageEntry>, 
     date,
     kind,
     residentId,
+    dayAttendingId,
+    nightAttendingId,
     serviceLine,
     callPosition,
     note,
@@ -1870,6 +1982,41 @@ function validateCoverageEntry(state: PlannerState, entry: CoverageEntry): void 
   if (entry.kind === "call") {
     validateCallEntry(state, entry);
   }
+  if (entry.kind === "attending-call") {
+    validateAttendingCallEntry(state, entry);
+  } else if (entry.dayAttendingId || entry.nightAttendingId) {
+    throw new HttpError(400, "Only attending call entries can include attending assignments");
+  }
+}
+
+function validateAttendingCallEntry(state: PlannerState, entry: CoverageEntry): void {
+  if (entry.residentId) {
+    throw new HttpError(400, "Attending call entries cannot include a resident");
+  }
+  if (entry.callPosition) {
+    throw new HttpError(400, "Attending call entries do not use callPosition");
+  }
+  if (entry.note) {
+    throw new HttpError(400, "Attending call entries do not accept notes");
+  }
+  if (!entry.dayAttendingId || !entry.nightAttendingId) {
+    throw new HttpError(400, "Attending call requires both dayAttendingId and nightAttendingId");
+  }
+  for (const attendingId of [entry.dayAttendingId, entry.nightAttendingId]) {
+    if (!state.attendings.some((attending) => attending.id === attendingId)) {
+      throw new HttpError(400, `Unknown attending: ${attendingId}`);
+    }
+  }
+  if (
+    state.coverageEntries.some(
+      (candidate) =>
+        candidate.id !== entry.id &&
+        candidate.kind === "attending-call" &&
+        candidate.date === entry.date
+    )
+  ) {
+    throw new HttpError(400, `Attending call is already listed for ${entry.date}`);
+  }
 }
 
 function validateCallEntry(state: PlannerState, entry: CoverageEntry): void {
@@ -2021,7 +2168,7 @@ function requireCoverageRequest(state: PlannerState, id: string): CoverageChange
 }
 
 function assertCoverageKind(value: unknown): CoverageKind {
-  if (value === "call" || value === "rounding" || value === "off" || value === "note") {
+  if (value === "call" || value === "attending-call" || value === "rounding" || value === "off" || value === "note") {
     return value;
   }
   throw new Error("Invalid coverage kind");
@@ -2061,7 +2208,7 @@ function normalizeAliasList(value: unknown): string[] {
 }
 
 function compareCoverageEntries(a: CoverageEntry, b: CoverageEntry): number {
-  const kindOrder = { call: 0, rounding: 1, off: 2, note: 3 };
+  const kindOrder: Record<CoverageKind, number> = { call: 0, "attending-call": 1, rounding: 2, off: 3, note: 4 };
   return (
     a.date.localeCompare(b.date) ||
     kindOrder[a.kind] - kindOrder[b.kind] ||
@@ -2157,6 +2304,12 @@ function describeResidentTradeRequest(state: PlannerState, coverageRequest: Cove
 }
 
 function describeCoverageEntry(state: PlannerState, entry: CoverageEntry): string {
+  if (entry.kind === "attending-call") {
+    const dayName = state.attendings.find((attending) => attending.id === entry.dayAttendingId)?.name ?? "Unknown attending";
+    const nightName = state.attendings.find((attending) => attending.id === entry.nightAttendingId)?.name ?? "Unknown attending";
+    const coverage = dayName === nightName ? `${dayName} all day` : `${dayName} day / ${nightName} night`;
+    return `Attending call on ${entry.date}: ${coverage}`;
+  }
   const residentName = entry.residentId
     ? state.residents.find((resident) => resident.id === entry.residentId)?.name ?? "Unknown resident"
     : "General";

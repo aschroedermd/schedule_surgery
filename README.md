@@ -32,6 +32,8 @@ DATABASE_URL=memory npm run dev
 ## What Is Implemented
 
 - Username/password browser logins. Seeded account-eligible residents use first-initial-plus-last-name usernames such as `aadeleke`; off-service rotators from outside programs remain assignable-only unless `accountEligible` is enabled. Set `SEED_USER_PASSWORD` privately if those accounts should be login-ready.
+- The signed-in landing page is a schedule assistant powered by `deepseek/deepseek-v4-flash`, with `google/gemma-3-27b-it` as its automatic fallback. It can read OR/clinic, call, calendar, and vacation context through permission-aware tools. Each user has 20 requests per Eastern-time day and receives a warning at five remaining.
+- Hold-to-record voice messages are transcribed server-side with `nvidia/parakeet-tdt-0.6b-v3`; set `OPENROUTER_API_KEY` privately before starting the app.
 - No `guest` account is seeded. `admin` starts with the private `ADMIN_PASSWORD` configured when the user store is first created.
 - Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges. The `ADMIN_API_KEY` can also create new `user` or `attending` accounts with per-service privileges.
 - New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. If neither `password` nor `temporaryPassword` is supplied, the temporary password is `schroeder1`; it is shown once and opens the password-change screen on every login until the user chooses a new password. Users can select `Skip for now` to continue in the current session; a fresh login shows the screen again.

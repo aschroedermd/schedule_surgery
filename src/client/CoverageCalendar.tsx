@@ -102,7 +102,10 @@ export function CalendarTab({
     () =>
       [
         ...state.coverageEntries.filter(
-          (entry) => entry.kind !== "call" && coverageEntryMatchesServices(state, entry, visibleServices)
+          (entry) =>
+            entry.kind !== "call" &&
+            entry.kind !== "attending-call" &&
+            coverageEntryMatchesServices(state, entry, visibleServices)
         ),
         ...getVacationCalendarEntries(state.residents, dates).filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices))
       ].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
@@ -1166,14 +1169,19 @@ function coverageRequestMatchesServices(
   visibleServices: string[]
 ): boolean {
   const entry = state.coverageEntries.find((candidate) => candidate.id === coverageRequest.entryId);
-  if (coverageRequest.requestedEntry?.kind === "call" || entry?.kind === "call") return true;
+  if (
+    coverageRequest.requestedEntry?.kind === "call" ||
+    coverageRequest.requestedEntry?.kind === "attending-call" ||
+    entry?.kind === "call" ||
+    entry?.kind === "attending-call"
+  ) return true;
   if (coverageRequest.serviceLine) return serviceIsVisible(visibleServices, coverageRequest.serviceLine);
   if (coverageRequest.requestedEntry) return coverageEntryMatchesServices(state, coverageRequest.requestedEntry, visibleServices);
   return entry ? coverageEntryMatchesServices(state, entry, visibleServices) : true;
 }
 
 function coverageEntryMatchesServices(state: PlannerState, entry: CoverageEntry, visibleServices: string[]): boolean {
-  if (entry.kind === "call") return true;
+  if (entry.kind === "call" || entry.kind === "attending-call") return true;
   if (entry.kind === "rounding" && entry.serviceLine) return serviceIsVisible(visibleServices, entry.serviceLine);
   if (!entry.residentId) return true;
   const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
@@ -1327,6 +1335,13 @@ function describeResidentTradeRequest(state: PlannerState, coverageRequest: Cove
 }
 
 function describeEntry(state: PlannerState, entry: CoverageEntry): string {
+  if (entry.kind === "attending-call") {
+    const dayName = state.attendings.find((attending) => attending.id === entry.dayAttendingId)?.name ?? "Unknown attending";
+    const nightName = state.attendings.find((attending) => attending.id === entry.nightAttendingId)?.name ?? "Unknown attending";
+    return dayName === nightName
+      ? `attending call for ${dayName} on ${entry.date}`
+      : `attending call for ${dayName} (day) / ${nightName} (night) on ${entry.date}`;
+  }
   const resident = state.residents.find((candidate) => candidate.id === entry.residentId);
   const residentName = resident ? formatResidentName(resident) : "General";
   const note = entry.note ? ` (${entry.note})` : "";
@@ -1334,7 +1349,7 @@ function describeEntry(state: PlannerState, entry: CoverageEntry): string {
 }
 
 function formatCoverageKindLabel(entry: CoverageEntry): string {
-  return entry.kind;
+  return entry.kind === "attending-call" ? "Attending call" : entry.kind;
 }
 
 function formatRequestStatus(coverageRequest: CoverageChangeRequest): string {

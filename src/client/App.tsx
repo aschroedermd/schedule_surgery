@@ -50,6 +50,7 @@ import {
   updateEntity
 } from "./api";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
+import { ChatTab } from "./ChatTab";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import {
@@ -158,7 +159,7 @@ export function App() {
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
   const [selectedWeekId, setSelectedWeekId] = useState("");
   const [selectedService, setSelectedService] = useState(() => getStoredServiceLine() ?? DEFAULT_SERVICE_LINE);
-  const [activeTab, setActiveTab] = useState<Tab>("board");
+  const [activeTab, setActiveTab] = useState<Tab>("chat");
   const [isScheduleEditorOpen, setIsScheduleEditorOpen] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
@@ -661,6 +662,13 @@ export function App() {
         onSelect={handleSelectTab}
       />
 
+      {activeTab === "chat" && (
+        <ChatTab
+          token={session.token}
+          displayName={session.displayName || session.username}
+          serviceLine={selectedService}
+        />
+      )}
       {activeTab === "board" && (
         <BoardTab
           state={state}
@@ -1897,23 +1905,26 @@ function CallShiftsTab({ state }: { state: PlannerState }) {
                 {row.days.map((day) => (
                   <section
                     key={day.date}
-                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length ? "" : " empty"}${day.date === today ? " today" : ""}`}
+                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length || day.attendingCallEntry ? "" : " empty"}${day.date === today ? " today" : ""}`}
                   >
                     <header className="call-day-header">
                       <span className="call-day-name">{day.weekday}</span>
                       <span className="call-day-date">{formatShortDate(day.date)}</span>
                     </header>
                     <div className="call-duty-list">
-                      {day.groups.length === 0 ? (
-                        <span className="call-duty-empty">Not listed</span>
-                      ) : (
-                        day.groups.map((group) => (
-                          <div key={group.label} className="call-duty-line">
-                            <span className="call-duty-label">{group.label}</span>
-                            <strong>{group.residentNames}</strong>
-                          </div>
-                        ))
+                      {day.groups.length === 0 && (
+                        <div className="call-duty-line">
+                          <span className="call-duty-label">Call</span>
+                          <strong className="call-duty-empty">Not listed</strong>
+                        </div>
                       )}
+                      {day.groups.map((group) => (
+                        <div key={group.label} className="call-duty-line">
+                          <span className="call-duty-label">{group.label}</span>
+                          <strong>{group.residentNames}</strong>
+                        </div>
+                      ))}
+                      <AttendingCallSummary state={state} entry={day.attendingCallEntry} />
                     </div>
                   </section>
                 ))}
@@ -1923,6 +1934,24 @@ function CallShiftsTab({ state }: { state: PlannerState }) {
         )}
       </div>
     </section>
+  );
+}
+
+function AttendingCallSummary({ state, entry }: { state: PlannerState; entry?: CoverageEntry }) {
+  const dayAttending = state.attendings.find((attending) => attending.id === entry?.dayAttendingId);
+  const nightAttending = state.attendings.find((attending) => attending.id === entry?.nightAttendingId);
+  const dayName = dayAttending ? getResidentLastName(dayAttending.name) : "Not listed";
+  const nightName = nightAttending ? getResidentLastName(nightAttending.name) : "Not listed";
+  const attendingNames =
+    !entry || entry.dayAttendingId === entry.nightAttendingId
+      ? dayName
+      : `${dayName} (day), ${nightName} (night)`;
+
+  return (
+    <div className="call-duty-line attending-call-duty">
+      <span className="call-duty-label">Attending</span>
+      <strong>{attendingNames}</strong>
+    </div>
   );
 }
 
@@ -3738,6 +3767,7 @@ interface CallWeekendDay {
   weekday: string;
   inMonth: boolean;
   groups: CallDutyGroup[];
+  attendingCallEntry?: CoverageEntry;
 }
 
 interface CallWeekendRow {
@@ -3749,7 +3779,7 @@ interface CallWeekendRow {
 
 function getDefaultCallMonth(state: PlannerState): string {
   const firstCallEntry = [...state.coverageEntries]
-    .filter((entry) => entry.kind === "call")
+    .filter((entry) => entry.kind === "call" || entry.kind === "attending-call")
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   return firstCallEntry ? getMonthFromDate(firstCallEntry.date) : getTodayDate().slice(0, 7);
 }
@@ -3838,7 +3868,10 @@ function getWeekendCallRows(state: PlannerState, month: string): CallWeekendRow[
           date,
           weekday,
           inMonth: getMonthFromDate(date) === month,
-          groups: getCallDutyGroupsForDate(state, date)
+          groups: getCallDutyGroupsForDate(state, date),
+          attendingCallEntry: state.coverageEntries.find(
+            (entry) => entry.date === date && entry.kind === "attending-call"
+          )
         };
       })
     }));
@@ -3938,6 +3971,8 @@ function sortWeeks(weeks: Week[]): Week[] {
 
 function getTabTitle(tab: Tab): string {
   switch (tab) {
+    case "chat":
+      return "Schedule Assistant";
     case "board":
       return "OR / Clinic 🔪";
     case "my":

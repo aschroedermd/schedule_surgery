@@ -18,7 +18,7 @@ export type AssignmentKind = "case" | "block" | "clinic";
 
 export type AssignmentSource = "admin" | "suggestion" | "viewer-claim";
 
-export type CoverageKind = "call" | "rounding" | "off" | "note";
+export type CoverageKind = "call" | "attending-call" | "rounding" | "off" | "note";
 
 export const CALL_POSITIONS = ["senior", "mid-level", "intern"] as const;
 
@@ -162,6 +162,8 @@ export interface CoverageEntry {
   date: string;
   kind: CoverageKind;
   residentId?: string;
+  dayAttendingId?: string;
+  nightAttendingId?: string;
   serviceLine?: string;
   callPosition?: CallPosition;
   note: string;

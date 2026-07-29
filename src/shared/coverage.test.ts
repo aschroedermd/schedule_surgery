@@ -55,6 +55,10 @@ describe("coverage calendar rules", () => {
     expect(isCoverageKindAllowedOnDate("call", "2026-07-04")).toBe(true);
     expect(isCoverageKindAllowedOnDate("call", "2026-07-05")).toBe(true);
     expect(isCoverageKindAllowedOnDate("call", "2026-07-06")).toBe(false);
+    expect(isCoverageKindAllowedOnDate("attending-call", "2026-07-03")).toBe(true);
+    expect(isCoverageKindAllowedOnDate("attending-call", "2026-07-04")).toBe(true);
+    expect(isCoverageKindAllowedOnDate("attending-call", "2026-07-05")).toBe(true);
+    expect(isCoverageKindAllowedOnDate("attending-call", "2026-07-06")).toBe(false);
 
     expect(isCoverageKindAllowedOnDate("rounding", "2026-07-04")).toBe(true);
     expect(isCoverageKindAllowedOnDate("rounding", "2026-07-05")).toBe(true);

@@ -32,8 +32,11 @@ Set these only on the Droplet in `.env.production`:
 - `USER_STORE_PATH`
 - `ADMIN_API_KEY`
 - `VIEWER_API_KEY`
+- `OPENROUTER_API_KEY`
 
 Use long random values for the database password, app secret, and API keys. `ADMIN_PASSWORD` seeds the first persistent admin account only, and `SEED_USER_PASSWORD` seeds resident-linked accounts only when the user store is first created. Browser-user passwords are stored as hashes in `USER_STORE_PATH`; do not commit that file or copy it into chat. New-user creation and admin password resets can generate a temporary password that is shown once and should be shared directly with the intended user. Rotate API keys if they are pasted into a chat, ticket, or untrusted tool.
+
+`OPENROUTER_API_KEY` is used only by the server-side assistant routes. Never expose it through client-side environment variables or commit it to source.
 
 ## GitHub And DigitalOcean
 

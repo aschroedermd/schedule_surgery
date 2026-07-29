@@ -30,6 +30,8 @@ services:
       USER_STORE_PATH: ${USER_STORE_PATH:-/data/users.json}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
       VIEWER_API_KEY: ${VIEWER_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      CHAT_QUOTA_TIME_ZONE: ${CHAT_QUOTA_TIME_ZONE:-America/New_York}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
     volumes:
       - planner-users:/data

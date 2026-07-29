@@ -118,7 +118,11 @@ GET /api/events?token=<browser bearer token>
 
 The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`. Off-service residents can also carry `rosterKind: "off-service"`, `sourceProgram`, `sourceProgramAbbreviation` such as `EM` or `Pl Sx`, and `accountEligible: false` when they should be manually selectable without seeded login accounts.
 
-Calendar `call` entries are shared across all services. Surgery call uses one `residentId` from `state.residents` for each `callPosition`: `senior`, `mid-level`, and `intern`. The one SCC/ICU resident is an additional call entry with `note: "SCC"` or `note: "ICU"` and no `callPosition`. Call `note` must otherwise be blank; do not store role labels, source text, or pasted names there. Calendar `rounding` entries are service-specific and can have multiple residents on the same Saturday-Sunday date; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. Create additional call or rounding entries with `POST /api/coverage-entries`; patch or delete a specific `coverageEntries[].id` to change an existing person.
+Calendar call entries are shared across all services. Surgery call uses `kind: "call"` with one `residentId` from `state.residents` for each `callPosition`: `senior`, `mid-level`, and `intern`. The one SCC/ICU resident is an additional call entry with `note: "SCC"` or `note: "ICU"` and no `callPosition`. Call `note` must otherwise be blank; do not store role labels, source text, or pasted names there.
+
+Attending call uses one `kind: "attending-call"` entry per Friday-Sunday date with both `dayAttendingId` and `nightAttendingId`. Set both fields to the same attending for the common all-day assignment, or use different attending IDs for split day/night coverage.
+
+Calendar `rounding` entries are service-specific and can have multiple residents on the same Saturday-Sunday date; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. Create additional coverage entries with `POST /api/coverage-entries`; patch or delete a specific `coverageEntries[].id` to change an existing assignment.
 
 ## Gold Star Chart
 

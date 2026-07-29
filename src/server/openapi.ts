@@ -160,8 +160,16 @@ export function getOpenApiDocument() {
           required: ["date", "kind"],
           properties: {
             date: { type: "string", format: "date" },
-            kind: { type: "string", enum: ["call", "rounding", "off", "note"] },
+            kind: { type: "string", enum: ["call", "attending-call", "rounding", "off", "note"] },
             residentId: { type: "string" },
+            dayAttendingId: {
+              type: "string",
+              description: "Required with nightAttendingId for attending-call. May match nightAttendingId for one attending all day."
+            },
+            nightAttendingId: {
+              type: "string",
+              description: "Required with dayAttendingId for attending-call. May differ for split day/night coverage."
+            },
             serviceLine: { type: "string", enum: [...SERVICE_LINES] },
             callPosition: {
               type: "string",
@@ -649,7 +657,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create a call calendar entry",
           description:
-            "Requires edit privilege for serviceLine, or admin/API admin access. Call is allowed Friday-Sunday and is shared across services. Each surgery call date uses one residentId from the resident list for each callPosition: senior, mid-level, and intern. Each position can be filled once per date. The one SCC/ICU resident is an additional call entry with note SCC or ICU and no callPosition. Do not put role names, source labels, or free text in call note. Rounding is allowed Saturday-Sunday and supports multiple service-specific rounders. Patch or delete by id to change an existing entry.",
+            "Requires edit privilege for serviceLine, or admin/API admin access. Call is allowed Friday-Sunday and is shared across services. Each surgery call date uses one residentId from the resident list for each callPosition: senior, mid-level, and intern. Each position can be filled once per date. The one SCC/ICU resident is an additional call entry with note SCC or ICU and no callPosition. Attending coverage uses one attending-call entry per date with dayAttendingId and nightAttendingId; use the same ID for all-day coverage or different IDs for split day/night coverage. Do not put role names, source labels, or free text in call notes. Rounding is allowed Saturday-Sunday and supports multiple service-specific rounders. Patch or delete by id to change an existing entry.",
           requestBody: {
             required: true,
             content: {

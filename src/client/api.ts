@@ -23,6 +23,23 @@ export interface PasswordChangeSkipResponse {
   token: string;
 }
 
+export interface ChatQuota {
+  used: number;
+  remaining: number;
+  limit: number;
+  warningThreshold: number;
+}
+
+export interface ChatConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatResponse extends ChatQuota {
+  message: string;
+  model: string;
+}
+
 export class UnauthorizedError extends Error {
   constructor(message = "Unauthorized") {
     super(message);
@@ -86,6 +103,30 @@ export async function fetchSession(token: string): Promise<Omit<Session, "token"
 
 export async function fetchState(token: string): Promise<PlannerState> {
   return request<PlannerState>("/api/state", { token });
+}
+
+export async function fetchChatQuota(token: string): Promise<ChatQuota> {
+  return request<ChatQuota>("/api/chat/quota", { token });
+}
+
+export async function sendChatMessage(
+  token: string,
+  messages: ChatConversationMessage[],
+  serviceLine: string
+): Promise<ChatResponse> {
+  return request<ChatResponse>("/api/chat", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ messages, serviceLine })
+  });
+}
+
+export async function transcribeChatAudio(token: string, data: string, format = "wav"): Promise<{ text: string }> {
+  return request<{ text: string }>("/api/chat/transcribe", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ data, format })
+  });
 }
 
 export async function fetchSchedule(token: string, weekId: string, serviceLine?: string): Promise<WeekSchedule> {

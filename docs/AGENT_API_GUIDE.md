@@ -198,6 +198,38 @@ For an attending-session write, first call `GET /api/session` and use its `atten
 
 Calendar `call` entries are global across services. For each Friday-Sunday surgery call date, create one `coverageEntries[]` item for each position: `callPosition: "senior"`, `callPosition: "mid-level"`, and `callPosition: "intern"`, with `residentId` resolved from `state.residents`. Do not put role labels, source text, imported PDF labels, or names in `note`; those positions belong in `callPosition`. For the one SCC/ICU call resident, create one additional `kind: "call"` entry and either leave `note` blank when the resident's rotation is already SCC/ICU or set `note` to exactly `SCC` or `ICU`; omit `callPosition` for SCC/ICU. The API rejects duplicate same-day call residents, duplicate surgery call positions, missing `callPosition` on surgery call entries, more than one SCC/ICU call resident, and free-text call notes. The Calendar and CALL tab use `callPosition` for senior/mid-level/intern ordering but display compact last names only.
 
+For attending coverage, create one `kind: "attending-call"` entry for each Friday, Saturday, or Sunday with `dayAttendingId` and `nightAttendingId` resolved from `state.attendings`. Use the same ID in both fields when one attending covers day and night; use different IDs when coverage is split. Only one attending-call entry is allowed per date. The CALL tab keeps this to one Attending line, adding day/night labels only when the names differ.
+
+Read attending call from `GET /api/state` by filtering `coverageEntries[]` for `kind === "attending-call"`. Create or replace the line with the coverage-entry endpoints:
+
+```bash
+# One attending for both day and night
+curl -X POST "$BASE_URL/api/coverage-entries" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "X-State-Version: $STATE_VERSION" \
+  -H "content-type: application/json" \
+  -d '{
+    "date": "2026-08-01",
+    "kind": "attending-call",
+    "dayAttendingId": "att_chen",
+    "nightAttendingId": "att_chen",
+    "serviceLine": "Davies"
+  }'
+
+# Split day/night coverage on an existing attending-call entry
+curl -X PATCH "$BASE_URL/api/coverage-entries/cover_example" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "X-State-Version: $STATE_VERSION" \
+  -H "content-type: application/json" \
+  -d '{
+    "dayAttendingId": "att_chen",
+    "nightAttendingId": "att_patel",
+    "serviceLine": "Davies"
+  }'
+```
+
+Always replace the example IDs with IDs from the latest state response. After a successful write, use the returned state version for any subsequent mutation.
+
 Calendar `rounding` entries are service-specific and also support multiple same-day residents on Saturday-Sunday; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. To add another person, create a new `coverageEntries[]` item; to change an existing person, patch or delete that entry by `id`.
 
 Posting a case assignment for a different resident on the same `targetId` adds that resident as a co-assignee. The API rejects duplicate resident/case pairs.

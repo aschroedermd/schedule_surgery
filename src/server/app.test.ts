@@ -1052,6 +1052,84 @@ describe("planner API", () => {
     );
   });
 
+  it("stores one same-attending or split day/night attending call assignment per weekend date", async () => {
+    const { app, token } = await loginAs("admin");
+
+    const allDayResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-03",
+        kind: "attending-call",
+        dayAttendingId: "att_chen",
+        nightAttendingId: "att_chen",
+        serviceLine: "Davies"
+      })
+      .expect(201);
+
+    const allDayEntry = allDayResponse.body.coverageEntries.find(
+      (entry: { date: string; kind: string }) => entry.date === "2026-07-03" && entry.kind === "attending-call"
+    );
+    expect(allDayEntry).toEqual(
+      expect.objectContaining({
+        dayAttendingId: "att_chen",
+        nightAttendingId: "att_chen"
+      })
+    );
+
+    const splitResponse = await request(app)
+      .patch(`/api/coverage-entries/${allDayEntry.id}`)
+      .set("authorization", `Bearer ${token}`)
+      .send({ nightAttendingId: "att_patel", serviceLine: "Davies" })
+      .expect(200);
+    expect(splitResponse.body.coverageEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: allDayEntry.id,
+          dayAttendingId: "att_chen",
+          nightAttendingId: "att_patel"
+        })
+      ])
+    );
+
+    const duplicateResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-03",
+        kind: "attending-call",
+        dayAttendingId: "att_morris",
+        nightAttendingId: "att_morris",
+        serviceLine: "Davies"
+      })
+      .expect(400);
+    expect(duplicateResponse.body.error).toMatch(/already listed/i);
+
+    const incompleteResponse = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-04",
+        kind: "attending-call",
+        dayAttendingId: "att_chen",
+        serviceLine: "Davies"
+      })
+      .expect(400);
+    expect(incompleteResponse.body.error).toMatch(/requires both/i);
+
+    await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-06",
+        kind: "attending-call",
+        dayAttendingId: "att_chen",
+        nightAttendingId: "att_chen",
+        serviceLine: "Davies"
+      })
+      .expect(400);
+  });
+
   it("keeps surgery call entries resident-only and capped at three plus one SCC/ICU resident", async () => {
     const { app, token } = await loginAs("admin");
 

@@ -22,7 +22,7 @@ export function isWeekendCoverageRequired(date: string): boolean {
 }
 
 export function isCoverageKindAllowedOnDate(kind: CoverageKind, date: string): boolean {
-  if (kind === "call") return isCallDate(date);
+  if (kind === "call" || kind === "attending-call") return isCallDate(date);
   if (kind === "rounding") return isRoundingDate(date);
   return true;
 }

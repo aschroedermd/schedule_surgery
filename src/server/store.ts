@@ -22,10 +22,13 @@ export interface SaveOptions {
 export interface StateStore {
   load(): Promise<PlannerState>;
   save(state: PlannerState, options?: SaveOptions): Promise<PlannerState>;
+  getChatQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }>;
+  consumeChatQuota(username: string, dateKey: string, limit: number): Promise<{ allowed: boolean; used: number; remaining: number }>;
 }
 
 export class MemoryStateStore implements StateStore {
   private state: PlannerState;
+  private chatUsage = new Map<string, number>();
 
   constructor(initialState: PlannerState = createInitialState()) {
     this.state = normalizePlannerState(initialState);
@@ -46,6 +49,25 @@ export class MemoryStateStore implements StateStore {
       updatedAt: new Date().toISOString()
     });
     return structuredClone(this.state);
+  }
+
+  async getChatQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }> {
+    const key = `${username}:${dateKey}`;
+    const used = this.chatUsage.get(key) ?? 0;
+    return { used, remaining: Math.max(0, limit - used) };
+  }
+
+  async consumeChatQuota(
+    username: string,
+    dateKey: string,
+    limit: number
+  ): Promise<{ allowed: boolean; used: number; remaining: number }> {
+    const key = `${username}:${dateKey}`;
+    const used = this.chatUsage.get(key) ?? 0;
+    if (used >= limit) return { allowed: false, used, remaining: 0 };
+    const nextUsed = used + 1;
+    this.chatUsage.set(key, nextUsed);
+    return { allowed: true, used: nextUsed, remaining: limit - nextUsed };
   }
 }
 
@@ -98,6 +120,39 @@ export class PostgresStateStore implements StateStore {
     });
   }
 
+  async getChatQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }> {
+    await this.ensureInitialized();
+    const result = await this.pool.query<{ request_count: number }>(
+      "select request_count from chat_daily_usage where username = $1 and usage_date = $2",
+      [username, dateKey]
+    );
+    const used = Number(result.rows[0]?.request_count ?? 0);
+    return { used, remaining: Math.max(0, limit - used) };
+  }
+
+  async consumeChatQuota(
+    username: string,
+    dateKey: string,
+    limit: number
+  ): Promise<{ allowed: boolean; used: number; remaining: number }> {
+    await this.ensureInitialized();
+    const result = await this.pool.query<{ request_count: number }>(
+      `insert into chat_daily_usage (username, usage_date, request_count, updated_at)
+       values ($1, $2, 1, now())
+       on conflict (username, usage_date) do update
+       set request_count = chat_daily_usage.request_count + 1, updated_at = now()
+       where chat_daily_usage.request_count < $3
+       returning request_count`,
+      [username, dateKey, limit]
+    );
+    if (result.rows[0]) {
+      const used = Number(result.rows[0].request_count);
+      return { allowed: true, used, remaining: Math.max(0, limit - used) };
+    }
+    const quota = await this.getChatQuota(username, dateKey, limit);
+    return { allowed: false, ...quota };
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -113,6 +168,16 @@ export class PostgresStateStore implements StateStore {
       )
     `);
     await this.pool.query("alter table planner_state add column if not exists version bigint not null default 1");
+    await this.pool.query(`
+      create table if not exists chat_daily_usage (
+        username text not null,
+        usage_date date not null,
+        request_count integer not null default 0,
+        updated_at timestamptz not null default now(),
+        primary key (username, usage_date),
+        check (request_count >= 0)
+      )
+    `);
     this.initialized = true;
   }
 
@@ -511,10 +576,19 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
       if (assignment.kind === "clinic") return clinicIds.has(assignment.targetId);
       return false;
     }),
-    coverageEntries: state.coverageEntries.filter((entry) => !entry.residentId || residentIds.has(entry.residentId)),
+    coverageEntries: state.coverageEntries.filter(
+      (entry) =>
+        (!entry.residentId || residentIds.has(entry.residentId)) &&
+        (!entry.dayAttendingId || attendingIds.has(entry.dayAttendingId)) &&
+        (!entry.nightAttendingId || attendingIds.has(entry.nightAttendingId))
+    ),
     coverageRequests: state.coverageRequests.filter((request) => {
       const requestedResidentId = request.requestedEntry?.residentId;
       if (requestedResidentId && !residentIds.has(requestedResidentId)) return false;
+      const requestedDayAttendingId = request.requestedEntry?.dayAttendingId;
+      if (requestedDayAttendingId && !attendingIds.has(requestedDayAttendingId)) return false;
+      const requestedNightAttendingId = request.requestedEntry?.nightAttendingId;
+      if (requestedNightAttendingId && !attendingIds.has(requestedNightAttendingId)) return false;
       if (request.requesterResidentId && !residentIds.has(request.requesterResidentId)) return false;
       if (request.targetResidentId && !residentIds.has(request.targetResidentId)) return false;
       if (request.requestedResidentProfile?.residentId && !residentIds.has(request.requestedResidentProfile.residentId)) return false;
