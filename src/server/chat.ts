@@ -226,10 +226,17 @@ Current signed-in user:
 - Username: ${user.username}
 - Display name: ${user.displayName}
 - Role: ${user.role}
-- Current service: ${serviceLine}
+- Current resident service context: ${serviceLine}
 - Today: ${today}
 
-Always use the current user and current service above as context. Use the supplied tools whenever schedule facts are needed; never invent schedule, call, vacation, or assignment data. State the date range when the user's wording is ambiguous. Keep answers concise, clinically professional, and easy to scan.
+Scheduling domain rules:
+- "Call" means the General Surgery call schedule. It is shared across every service and is never filtered by the user's current service.
+- General Surgery call shifts occur only on Friday, Saturday, and Sunday. Each listed shift has attending coverage plus a three-resident team with senior, mid-level, and intern positions. Attending coverage may be all-day or split into day and night attendings.
+- For any call question, use get_call_schedule. Do not ask which service the user means and do not describe call as belonging to ${serviceLine} or any other service.
+- The current service is useful context for service-specific rounding, off/note calendar entries, and the default OR/clinic schedule.
+- An attending's OR cases may be on any service. When the user names an attending, pass attending_name to get_or_schedule so it searches across services unless the user explicitly names a service.
+
+Use the supplied tools whenever schedule facts are needed; never invent schedule, call, vacation, or assignment data. State the date range when the user's wording is ambiguous. Keep answers concise, clinically professional, and easy to scan.
 
 Privacy and safety rules:
 - This planner contains staffing and procedure information only. Do not ask for or repeat patient names, MRNs, dates of birth, or other patient identifiers.
@@ -251,7 +258,7 @@ function executeScheduleTool(toolCall: ToolCall, context: AssistantContext): unk
       case "get_or_schedule":
         return getOrSchedule(context, args);
       case "get_call_schedule":
-        return getCalendarEntries(context, args, ["call", "attending-call"]);
+        return getCallSchedule(context, args);
       case "get_calendar":
         return getCalendarEntries(context, args, ["call", "attending-call", "rounding", "off", "note"]);
       case "get_vacations":
@@ -268,31 +275,123 @@ function executeScheduleTool(toolCall: ToolCall, context: AssistantContext): unk
 
 function getOrSchedule(context: AssistantContext, args: Record<string, unknown>) {
   const range = readDateRange(args, context.now, 14, 35);
-  const service = readService(args, context.serviceLine);
+  const requestedAttending = readOptionalString(args.attending_name);
+  const requestedService = readOptionalString(args.service);
+  const service = requestedService ?? (requestedAttending ? undefined : context.serviceLine);
   const schedules = context.state.weeks
     .filter((week) => week.startDate <= range.end && addDaysIso(week.startDate, 6) >= range.start)
     .flatMap((week) => buildWeekSchedule(context.state, week.id, service).days)
     .filter((day) => day.date >= range.start && day.date <= range.end)
-    .map((day) => ({
-      date: day.date,
-      or: day.blocks.map((block) => ({
-        attending: block.attending.name,
-        hospital: block.hospital.shortName,
-        firstCase: block.firstCaseStartTime,
-        cases: block.cases.map((surgeryCase) => ({
-          time: surgeryCase.startTime,
-          procedure: surgeryCase.procedureLabel,
-          residents: surgeryCase.assignments.map((assignment) => residentName(context.state, assignment.residentId))
+    .map((day) => {
+      const blocks = day.blocks.filter(
+        (block) => !requestedAttending || matchesPersonName(block.attending.name, requestedAttending)
+      );
+      const clinics = day.clinics.filter(
+        (clinic) => !requestedAttending || Boolean(clinic.attending && matchesPersonName(clinic.attending.name, requestedAttending))
+      );
+      return {
+        date: day.date,
+        or: blocks.map((block) => ({
+          attending: block.attending.name,
+          service: block.attending.service,
+          hospital: block.hospital.shortName,
+          firstCase: block.firstCaseStartTime,
+          cases: block.cases.map((surgeryCase) => ({
+            time: surgeryCase.startTime,
+            procedure: surgeryCase.procedureLabel,
+            residents: surgeryCase.assignments.map((assignment) => residentName(context.state, assignment.residentId))
+          }))
+        })),
+        clinics: clinics.map((clinic) => ({
+          time: `${clinic.startTime}-${clinic.endTime}`,
+          attending: clinic.attending?.name,
+          service: clinic.service,
+          location: clinic.location,
+          residents: clinic.assignments.map((assignment) => residentName(context.state, assignment.residentId))
         }))
-      })),
-      clinics: day.clinics.map((clinic) => ({
-        time: `${clinic.startTime}-${clinic.endTime}`,
-        attending: clinic.attending?.name,
-        location: clinic.location,
-        residents: clinic.assignments.map((assignment) => residentName(context.state, assignment.residentId))
-      }))
-    }));
-  return { service, range, days: schedules };
+      };
+    })
+    .filter((day) => day.or.length > 0 || day.clinics.length > 0);
+  return {
+    service_scope: service ?? "All services",
+    attending_filter: requestedAttending,
+    range,
+    days: schedules
+  };
+}
+
+function getCallSchedule(context: AssistantContext, args: Record<string, unknown>) {
+  const range = readDateRange(args, context.now, 14, 62);
+  const requestedAttending = readOptionalString(args.attending_name);
+  const requestedResident = readOptionalString(args.resident_name);
+  const entries = context.state.coverageEntries.filter(
+    (entry) =>
+      (entry.kind === "call" || entry.kind === "attending-call") &&
+      entry.date >= range.start &&
+      entry.date <= range.end
+  );
+  const dates = [...new Set(entries.map((entry) => entry.date))].sort();
+  const shifts = dates
+    .map((date) => {
+      const attendingEntry = entries.find((entry) => entry.date === date && entry.kind === "attending-call");
+      const residentEntries = entries.filter((entry) => entry.date === date && entry.kind === "call");
+      const dayAttending = attendingEntry?.dayAttendingId
+        ? attendingName(context.state, attendingEntry.dayAttendingId)
+        : undefined;
+      const nightAttending = attendingEntry?.nightAttendingId
+        ? attendingName(context.state, attendingEntry.nightAttendingId)
+        : undefined;
+      const residents = {
+        senior: residentEntries
+          .filter((entry) => entry.callPosition === "senior")
+          .map((entry) => residentName(context.state, entry.residentId!)),
+        mid_level: residentEntries
+          .filter((entry) => entry.callPosition === "mid-level")
+          .map((entry) => residentName(context.state, entry.residentId!)),
+        intern: residentEntries
+          .filter((entry) => entry.callPosition === "intern")
+          .map((entry) => residentName(context.state, entry.residentId!))
+      };
+      const supplementalCoverage = residentEntries
+        .filter((entry) => !entry.callPosition)
+        .map((entry) => ({
+          resident: entry.residentId ? residentName(context.state, entry.residentId) : undefined,
+          assignment: entry.note || "Supplemental call"
+        }));
+      return {
+        date,
+        weekday: getWeekday(date),
+        attending:
+          dayAttending === nightAttending
+            ? { all_day: dayAttending }
+            : { day: dayAttending, night: nightAttending },
+        residents,
+        supplemental_coverage: supplementalCoverage
+      };
+    })
+    .filter((shift) => {
+      const attendingNames = Object.values(shift.attending).filter((name): name is string => Boolean(name));
+      const residentNames = [
+        ...shift.residents.senior,
+        ...shift.residents.mid_level,
+        ...shift.residents.intern,
+        ...shift.supplemental_coverage.flatMap((entry) => entry.resident ?? [])
+      ];
+      return (
+        (!requestedAttending || attendingNames.some((name) => matchesPersonName(name, requestedAttending))) &&
+        (!requestedResident || residentNames.some((name) => matchesPersonName(name, requestedResident)))
+      );
+    });
+  return {
+    schedule: "General Surgery call",
+    service_scope: "All General Surgery services",
+    call_days: ["Friday", "Saturday", "Sunday"],
+    range,
+    attending_filter: requestedAttending,
+    resident_filter: requestedResident,
+    matching_shift_count: shifts.length,
+    shifts
+  };
 }
 
 function getCalendarEntries(
@@ -324,7 +423,10 @@ function getCalendarEntries(
         : undefined,
       position: entry.callPosition,
       note: entry.note,
-      service: entry.serviceLine ?? service
+      service:
+        entry.kind === "call" || entry.kind === "attending-call"
+          ? "General Surgery"
+          : entry.serviceLine ?? service
     }))
     .filter((entry) => !requestedResident || entry.resident?.toLowerCase().includes(requestedResident.toLowerCase()));
   return { service, range, entries };
@@ -413,6 +515,36 @@ function residentName(state: PlannerState, residentId: string): string {
   return state.residents.find((resident) => resident.id === residentId)?.name ?? "Unlinked resident";
 }
 
+function attendingName(state: PlannerState, attendingId: string): string {
+  return state.attendings.find((attending) => attending.id === attendingId)?.name ?? "Unlinked attending";
+}
+
+function matchesPersonName(fullName: string, query: string): boolean {
+  const normalizedName = normalizePersonName(fullName);
+  const normalizedQuery = normalizePersonName(query);
+  return Boolean(
+    normalizedQuery &&
+    (normalizedName.includes(normalizedQuery) ||
+      normalizedQuery.includes(normalizedName) ||
+      normalizedQuery.split(" ").every((part) => normalizedName.split(" ").some((namePart) => namePart === part)))
+  );
+}
+
+function normalizePersonName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\b(?:doctor|dr)\b\.?/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getWeekday(date: string): string {
+  return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "UTC"
+  });
+}
+
 function addDaysIso(date: string, days: number): string {
   const parsed = new Date(`${date}T12:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);
@@ -447,12 +579,14 @@ const SCHEDULE_TOOLS = [
     type: "function",
     function: {
       name: "get_or_schedule",
-      description: "Read OR cases and clinic sessions for a date range and service.",
+      description:
+        "Read OR cases and clinic sessions. If attending_name is provided without service, searches that attending across every service. Otherwise defaults to the user's current service.",
       parameters: {
         type: "object",
         properties: {
           ...dateProperties,
-          service: { type: "string", description: "Service line. Defaults to the user's current service." }
+          service: { type: "string", description: "Optional service line. Defaults to the user's current service unless attending_name is supplied." },
+          attending_name: { type: "string", description: "Optional attending name. Searches across all services unless service is also supplied." }
         }
       }
     }
@@ -461,12 +595,13 @@ const SCHEDULE_TOOLS = [
     type: "function",
     function: {
       name: "get_call_schedule",
-      description: "Read resident and attending call coverage for a date range and service.",
+      description:
+        "Read the shared General Surgery Friday-Sunday call schedule, including attending day/night coverage and the senior, mid-level, and intern resident team. Call is never service-specific.",
       parameters: {
         type: "object",
         properties: {
           ...dateProperties,
-          service: { type: "string", description: "Service line. Defaults to the user's current service." },
+          attending_name: { type: "string", description: "Optional attending name filter, such as Harnois." },
           resident_name: { type: "string", description: "Optional resident name filter." }
         }
       }

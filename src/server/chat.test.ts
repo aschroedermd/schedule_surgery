@@ -19,7 +19,7 @@ describe("schedule assistant", () => {
     process.env.CHAT_QUOTA_TIME_ZONE = "America/New_York";
   });
 
-  it("sends identity and service context, configures fallback, and completes tool calls", async () => {
+  it("treats attending call as shared General Surgery coverage instead of filtering by service", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -38,7 +38,11 @@ describe("schedule assistant", () => {
                     type: "function",
                     function: {
                       name: "get_call_schedule",
-                      arguments: JSON.stringify({ start_date: "2026-07-28", end_date: "2026-07-30" })
+                      arguments: JSON.stringify({
+                        start_date: "2026-08-01",
+                        end_date: "2026-08-31",
+                        attending_name: "Doctor Harnois"
+                      })
                     }
                   }
                 ]
@@ -49,14 +53,47 @@ describe("schedule assistant", () => {
       }
       return Response.json({
         model: "deepseek/deepseek-v4-flash",
-        choices: [{ message: { role: "assistant", content: "I checked the Davies call schedule." } }]
+        choices: [{ message: { role: "assistant", content: "Dr. Harnois is on General Surgery call twice in August." } }]
       });
     }) as typeof fetch;
 
-    const result = await answerScheduleQuestion(
-      [{ role: "user", content: "Who is on call?" }],
+    const state = createInitialState();
+    state.attendings.push({
+      id: "att_harnois",
+      name: "Dr. Harnois",
+      service: "Berry",
+      priority: 4,
+      defaultHospitalId: "hosp_main"
+    });
+    state.coverageEntries.push(
       {
-        state: createInitialState(),
+        id: "call_att_harnois_1",
+        date: "2026-08-01",
+        kind: "attending-call",
+        dayAttendingId: "att_harnois",
+        nightAttendingId: "att_harnois",
+        serviceLine: "Berry",
+        note: "",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-01T00:00:00.000Z"
+      },
+      {
+        id: "call_att_harnois_2",
+        date: "2026-08-09",
+        kind: "attending-call",
+        dayAttendingId: "att_harnois",
+        nightAttendingId: "att_harnois",
+        serviceLine: "Berry",
+        note: "",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-01T00:00:00.000Z"
+      }
+    );
+
+    const result = await answerScheduleQuestion(
+      [{ role: "user", content: "How many times is Doctor Harnois on call during August?" }],
+      {
+        state,
         user,
         serviceLine: "Davies",
         now: new Date("2026-07-28T16:00:00Z")
@@ -64,15 +101,35 @@ describe("schedule assistant", () => {
       fetcher
     );
 
-    expect(result.message).toBe("I checked the Davies call schedule.");
+    expect(result.message).toBe("Dr. Harnois is on General Surgery call twice in August.");
     expect(requests).toHaveLength(2);
     expect(requests[0]).toMatchObject({
       model: "deepseek/deepseek-v4-flash",
       models: ["google/gemma-3-27b-it"]
     });
     expect(JSON.stringify(requests[0].messages)).toContain("Christian Blue");
-    expect(JSON.stringify(requests[0].messages)).toContain("Current service: Davies");
-    expect(JSON.stringify(requests[1].messages)).toContain('"role":"tool"');
+    expect(JSON.stringify(requests[0].messages)).toContain("Current resident service context: Davies");
+    expect(JSON.stringify(requests[0].messages)).toContain("General Surgery call schedule");
+
+    const toolMessage = (requests[1].messages as Array<{ role: string; content: string }>).find(
+      (message) => message.role === "tool"
+    );
+    expect(JSON.parse(toolMessage!.content)).toMatchObject({
+      schedule: "General Surgery call",
+      service_scope: "All General Surgery services",
+      attending_filter: "Doctor Harnois",
+      matching_shift_count: 2,
+      shifts: [
+        { date: "2026-08-01", attending: { all_day: "Dr. Harnois" } },
+        { date: "2026-08-09", attending: { all_day: "Dr. Harnois" } }
+      ]
+    });
+
+    const callTool = (requests[0].tools as Array<{ function: { name: string; parameters: { properties: Record<string, unknown> } } }>).find(
+      (tool) => tool.function.name === "get_call_schedule"
+    );
+    expect(callTool?.function.parameters.properties).toHaveProperty("attending_name");
+    expect(callTool?.function.parameters.properties).not.toHaveProperty("service");
   });
 
   it("uses the Parakeet transcription endpoint payload", async () => {

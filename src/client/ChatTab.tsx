@@ -1,5 +1,5 @@
 import { ArrowUp, Bot, Mic, Plus, Sparkles, UserRound } from "lucide-react";
-import { FormEvent, KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
+import { Fragment, FormEvent, KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
 import {
   ChatConversationMessage,
   ChatQuota,
@@ -232,7 +232,7 @@ export function ChatTab({
               </div>
               <div className="chat-bubble">
                 {message.content.split("\n").map((line, lineIndex) => (
-                  <p key={lineIndex}>{line || "\u00a0"}</p>
+                  <p key={lineIndex}>{renderInlineMarkdown(line || "\u00a0")}</p>
                 ))}
               </div>
             </article>
@@ -260,7 +260,7 @@ export function ChatTab({
           <div className="chat-suggestions" aria-label="Suggested questions">
             {[
               "What does my next week look like?",
-              `Who is on call for ${serviceLine}?`,
+              "Who is on call this weekend?",
               "Show me upcoming vacations",
               "What OR cases are scheduled tomorrow?"
             ].map((suggestion) => (
@@ -294,7 +294,7 @@ export function ChatTab({
                 }
               }}
               rows={1}
-              placeholder={`Ask about ${serviceLine} schedules…`}
+              placeholder="Ask about schedules…"
               aria-label="Message the schedule assistant"
               disabled={isBusy || quotaExhausted}
             />
@@ -335,6 +335,16 @@ export function ChatTab({
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = undefined;
   }
+}
+
+function renderInlineMarkdown(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**") ? (
+      <strong key={index}>{part.slice(2, -2)}</strong>
+    ) : (
+      <Fragment key={index}>{part}</Fragment>
+    )
+  );
 }
 
 function getRecorderOptions(): MediaRecorderOptions | undefined {
