@@ -153,6 +153,7 @@ const emptyResident: Resident = {
 };
 
 export function App() {
+  useVisualViewportHeight();
   const [session, setSession] = useState<PlannerSession | undefined>(() => getStoredSession());
   const [showLoggedOut, setShowLoggedOut] = useState(false);
   const [state, setState] = useState<PlannerState | undefined>();
@@ -184,6 +185,20 @@ export function App() {
   const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session) || linkedResident || (state?.coverageRequests.length ?? 0) > 0));
   const pendingCoverageRequestCount = state?.coverageRequests.filter((request) => request.status === "pending").length ?? 0;
   const liveUpdatesReady = Boolean(state && schedule && selectedWeekId);
+  const chatViewportActive = Boolean(
+    session &&
+    !session.mustChangePassword &&
+    state &&
+    schedule &&
+    selectedWeek &&
+    selectedWeekId &&
+    activeTab === "chat"
+  );
+
+  useEffect(() => {
+    document.body.classList.toggle("chat-viewport-locked", chatViewportActive);
+    return () => document.body.classList.remove("chat-viewport-locked");
+  }, [chatViewportActive]);
 
   function showLoggedOutScreen() {
     scheduleLoadIdRef.current += 1;
@@ -581,6 +596,7 @@ export function App() {
     <Shell
       role={session.role}
       onLogout={handleLogout}
+      chatMode={activeTab === "chat"}
       error={error}
       toast={toast}
       pendingAction={pendingAction}
@@ -844,7 +860,8 @@ function Shell({
   onDismissError,
   onDismissToast,
   onDismissGoldStarCelebration,
-  printMode = false
+  printMode = false,
+  chatMode = false
 }: {
   role: Role;
   children: React.ReactNode;
@@ -857,12 +874,13 @@ function Shell({
   onDismissToast?: () => void;
   onDismissGoldStarCelebration?: () => void;
   printMode?: boolean;
+  chatMode?: boolean;
 }) {
   const responsiveMode = useResponsiveMode();
 
   return (
     <main
-      className={`app-shell${printMode ? " is-printing-board" : ""}`}
+      className={`app-shell${printMode ? " is-printing-board" : ""}${chatMode ? " chat-mode" : ""}`}
       data-layout-mode={responsiveMode.layoutMode}
       data-input-mode={responsiveMode.inputMode}
       aria-busy={Boolean(pendingAction)}
@@ -4029,6 +4047,28 @@ function useResponsiveMode(): { layoutMode: LayoutMode; inputMode: InputMode } {
   }, []);
 
   return responsiveMode;
+}
+
+function useVisualViewportHeight(): void {
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateViewportHeight = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--app-viewport-height", `${Math.round(height)}px`);
+    };
+
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    viewport?.addEventListener("resize", updateViewportHeight);
+    viewport?.addEventListener("scroll", updateViewportHeight);
+
+    return () => {
+      window.removeEventListener("resize", updateViewportHeight);
+      viewport?.removeEventListener("resize", updateViewportHeight);
+      viewport?.removeEventListener("scroll", updateViewportHeight);
+      document.documentElement.style.removeProperty("--app-viewport-height");
+    };
+  }, []);
 }
 
 function getResponsiveMode(): { layoutMode: LayoutMode; inputMode: InputMode } {

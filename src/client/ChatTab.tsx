@@ -171,6 +171,13 @@ export function ChatTab({
   }, [messages, status]);
 
   useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    composer.style.height = `${Math.min(composer.scrollHeight, 140)}px`;
+  }, [draft]);
+
+  useEffect(() => {
     function handleEscape(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape" && responseAbortRef.current) stopResponse();
     }
@@ -265,6 +272,7 @@ export function ChatTab({
     }, RESPONSE_DELAY_MS);
     const controller = new AbortController();
     responseAbortRef.current = controller;
+    const requestStartedAt = Date.now();
     let assistantMessageId: string | undefined;
     let streamedContent = "";
 
@@ -281,6 +289,25 @@ export function ChatTab({
               limit: meta.limit,
               warningThreshold: meta.warningThreshold
             });
+          },
+          onReset: () => {
+            if (assistantMessageId) {
+              const provisionalMessageId = assistantMessageId;
+              setMessages((current) => current.filter((message) => message.id !== provisionalMessageId));
+            }
+            assistantMessageId = undefined;
+            streamedContent = "";
+            window.clearTimeout(responseDelayTimeoutRef.current);
+            const elapsed = Date.now() - requestStartedAt;
+            if (elapsed >= RESPONSE_DELAY_MS) {
+              setResponseStatusMessage(nextRandomizedMessage(ALMOST_DONE_MESSAGES, almostDoneMessageQueueRef));
+            } else {
+              setResponseStatusMessage(nextRandomizedMessage(WORKING_MESSAGES, workingMessageQueueRef));
+              responseDelayTimeoutRef.current = window.setTimeout(() => {
+                setResponseStatusMessage(nextRandomizedMessage(ALMOST_DONE_MESSAGES, almostDoneMessageQueueRef));
+              }, RESPONSE_DELAY_MS - elapsed);
+            }
+            setStatus("thinking");
           },
           onDelta: (delta) => {
             if (!assistantMessageId) {
@@ -711,6 +738,16 @@ export function ChatTab({
               rows={1}
               placeholder="Ask about scheduling things"
               aria-label="Message the schedule assistant"
+              enterKeyHint="send"
+              autoCapitalize="sentences"
+              autoCorrect="on"
+              onFocus={() => {
+                shouldAutoScrollRef.current = true;
+                window.requestAnimationFrame(() => {
+                  const thread = threadRef.current;
+                  if (thread) thread.scrollTop = thread.scrollHeight;
+                });
+              }}
               disabled={isVoiceBusy || quotaExhausted}
             />
             <button

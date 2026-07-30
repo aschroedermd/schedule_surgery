@@ -136,14 +136,15 @@ export async function streamScheduleQuestion(
   context: AssistantContext,
   onDelta: (delta: string) => void,
   fetcher: typeof fetch = fetch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onReset: () => void = () => undefined
 ): Promise<ScheduleAnswer> {
   const modelMessages = buildModelMessages(messages, context);
   const lookups: ScheduleLookup[] = [];
   let resolvedModel = PRIMARY_MODEL;
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
-    const streamed = await callOpenRouterStream(modelMessages, onDelta, fetcher, signal);
+    const streamed = await callOpenRouterStream(modelMessages, onDelta, onReset, fetcher, signal);
     resolvedModel = streamed.model ?? resolvedModel;
 
     if (!streamed.toolCalls.length) {
@@ -299,6 +300,7 @@ async function callOpenRouter(messages: ModelMessage[], fetcher: typeof fetch): 
 async function callOpenRouterStream(
   messages: ModelMessage[],
   onDelta: (delta: string) => void,
+  onReset: () => void,
   fetcher: typeof fetch,
   signal?: AbortSignal
 ): Promise<{ content: string; model?: string; toolCalls: ToolCall[] }> {
@@ -395,9 +397,7 @@ async function callOpenRouterStream(
     .sort(([left], [right]) => left - right)
     .map(([, toolCall]) => toolCall)
     .filter((toolCall) => Boolean(toolCall.function.name));
-  if (completedToolCalls.length && contentMode) {
-    throw new ChatRequestError(502, "The schedule assistant returned an invalid mixed response");
-  }
+  if (completedToolCalls.length && contentMode) onReset();
   return { content, model: resolvedModel, toolCalls: completedToolCalls };
 }
 
@@ -470,7 +470,7 @@ Scheduling domain rules:
 - The current service is useful context for service-specific rounding, off/note calendar entries, and the default OR/clinic schedule.
 - An attending's OR cases may be on any service. When the user names an attending, pass attending_name to get_or_schedule so it searches across services unless the user explicitly names a service.
 
-Use the supplied tools whenever schedule facts are needed; never invent schedule, call, vacation, or assignment data. Resolve relative dates from Today and state the exact interpreted date or range in the answer. Ask one short clarification only when multiple reasonable interpretations would materially change the answer. Understand follow-ups such as "what about Friday?" from the conversation history.
+Use the supplied tools whenever schedule facts are needed; never invent schedule, call, vacation, or assignment data. When a lookup is needed, issue the tool call directly without first writing a preamble or progress update. Resolve relative dates from Today and state the exact interpreted date or range in the answer. Ask one short clarification only when multiple reasonable interpretations would materially change the answer. Understand follow-ups such as "what about Friday?" from the conversation history.
 
 Lead with the direct answer. Keep the default response concise, clinically professional, and easy to scan; the interface separately presents detailed schedule records. When comparing schedules, explain the important differences. When data shows uncovered work, overlaps, post-call concerns, vacation, or timing conflicts, call those out plainly. If asked why someone cannot cover, explain only from supplied availability and schedule facts and suggest qualified alternatives only when the data supports them.
 

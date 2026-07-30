@@ -34,6 +34,8 @@ describe("client API requests", () => {
               dataUpdatedAt: "2026-07-29T14:59:00.000Z",
               stateVersion: 7
             }),
+            JSON.stringify({ type: "delta", delta: "Checking…" }),
+            JSON.stringify({ type: "reset" }),
             JSON.stringify({ type: "delta", delta: "On call: " }),
             JSON.stringify({ type: "delta", delta: "Dr. Blue" }),
             JSON.stringify({
@@ -56,15 +58,22 @@ describe("client API requests", () => {
       )
     );
     const deltas: string[] = [];
+    let resets = 0;
 
     const response = await streamChatMessage(
       "token",
       [{ role: "user", content: "Who is on call?" }],
       "Davies",
-      { onDelta: (delta) => deltas.push(delta) }
+      {
+        onDelta: (delta) => deltas.push(delta),
+        onReset: () => {
+          resets += 1;
+        }
+      }
     );
 
-    expect(deltas).toEqual(["On call: ", "Dr. Blue"]);
+    expect(deltas).toEqual(["Checking…", "On call: ", "Dr. Blue"]);
+    expect(resets).toBe(1);
     expect(response).toMatchObject({ message: "On call: Dr. Blue", stateVersion: 7, remaining: 19 });
   });
 });

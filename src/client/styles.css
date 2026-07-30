@@ -6,6 +6,7 @@
   line-height: 1.4;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
   /* CSS Variable Design System - Light Theme */
   --bg-app: #f1f5f9;
   --bg-surface: #ffffff;
@@ -2434,6 +2435,10 @@ h2 {
   margin: 0 auto;
 }
 
+.chat-tab-host {
+  min-width: 0;
+}
+
 .chat-surface {
   border: 1px solid var(--border-color);
   border-radius: 18px;
@@ -3025,6 +3030,13 @@ h2 {
 }
 
 @media (max-width: 760px), (hover: none) and (pointer: coarse) and (orientation: portrait) and (max-width: 900px) {
+  body.chat-viewport-locked,
+  body.chat-viewport-locked #root {
+    height: var(--app-viewport-height, 100dvh);
+    min-height: 0;
+    overflow: hidden;
+  }
+
   body {
     background: var(--bg-app);
   }
@@ -3050,6 +3062,26 @@ h2 {
       max(10px, env(safe-area-inset-right))
       max(88px, calc(72px + env(safe-area-inset-bottom)))
       max(10px, env(safe-area-inset-left));
+  }
+
+  .app-shell.chat-mode {
+    height: var(--app-viewport-height, 100dvh);
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: max(76px, calc(70px + env(safe-area-inset-bottom)));
+  }
+
+  .app-shell.chat-mode .top-strip,
+  .app-shell.chat-mode .planner-header {
+    flex: 0 0 auto;
+  }
+
+  .app-shell.chat-mode .chat-tab-host {
+    min-height: 0;
+    display: flex;
+    flex: 1 1 auto;
   }
 
   .top-strip {
@@ -3092,17 +3124,21 @@ h2 {
   }
 
   .chat-page {
-    min-height: calc(100svh - 182px);
+    height: 100%;
+    min-height: 0;
   }
 
   .chat-surface {
-    min-height: calc(100svh - 182px);
+    height: 100%;
+    min-height: 0;
     border-radius: 14px;
   }
 
   .chat-thread {
-    min-height: 300px;
+    min-height: 0;
     padding: 18px 13px 12px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .chat-message {
@@ -3127,6 +3163,22 @@ h2 {
     opacity: 0.72;
   }
 
+  .chat-icon-action,
+  .chat-schedule-card-heading button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .chat-inline-action,
+  .chat-update-alert,
+  .chat-schedule-heading > button,
+  .chat-error button,
+  .chat-recording-status button {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
   .chat-schedule-cards {
     grid-template-columns: 1fr;
   }
@@ -3136,8 +3188,8 @@ h2 {
   }
 
   .chat-composer-wrap {
-    position: sticky;
-    bottom: 0;
+    position: relative;
+    flex: 0 0 auto;
     z-index: 5;
     padding: 10px 10px 12px;
   }
@@ -3147,9 +3199,11 @@ h2 {
   }
 
   .chat-composer textarea {
+    max-height: 112px;
     overflow-y: auto;
     padding-inline: 5px;
-    font-size: 0.86rem;
+    font-size: 16px;
+    line-height: 1.35;
     scrollbar-width: none;
   }
 
@@ -3165,6 +3219,27 @@ h2 {
 
   .chat-composer-meta {
     font-size: 0.66rem;
+  }
+
+  .mobile-bottom-nav {
+    transition: transform var(--transition-fast), opacity var(--transition-fast);
+  }
+
+  @supports selector(:has(*)) {
+    .app-shell.chat-mode:has(.chat-composer textarea:focus) {
+      padding-bottom: max(8px, env(safe-area-inset-bottom));
+    }
+
+    .app-shell.chat-mode:has(.chat-composer textarea:focus) .mobile-bottom-nav {
+      transform: translateY(110%);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .app-shell.chat-mode:has(.chat-composer textarea:focus) .chat-composer-meta {
+      display: none;
+    }
   }
 
   .week-range {

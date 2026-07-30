@@ -144,6 +144,7 @@ export async function streamChatMessage(
   handlers: {
     onDelta: (delta: string) => void;
     onMeta?: (meta: ChatStreamMeta) => void;
+    onReset?: () => void;
   },
   signal?: AbortSignal
 ): Promise<ChatResponse> {
@@ -174,10 +175,12 @@ export async function streamChatMessage(
     const event = JSON.parse(trimmed) as
       | ({ type: "meta" } & ChatStreamMeta)
       | { type: "delta"; delta: string }
+      | { type: "reset" }
       | ({ type: "complete" } & ChatResponse)
       | { type: "error"; error: string };
     if (event.type === "meta") handlers.onMeta?.(event);
     if (event.type === "delta") handlers.onDelta(event.delta);
+    if (event.type === "reset") handlers.onReset?.();
     if (event.type === "complete") completed = event;
     if (event.type === "error") throw new Error(event.error);
   }

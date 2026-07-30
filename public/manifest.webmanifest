@@ -1,0 +1,10 @@
+{
+  "name": "Schedule Assistant | Resident OR Coverage Planner",
+  "short_name": "Schedule",
+  "description": "Ask about OR, clinic, call, calendar, and vacation schedules in one secure workspace.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0f19",
+  "theme_color": "#0b0f19"
+}

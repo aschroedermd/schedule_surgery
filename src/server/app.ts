@@ -264,7 +264,8 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         { state, user: req.user!, serviceLine },
         (delta) => writeChatStreamEvent(res, { type: "delta", delta }),
         fetch,
-        abortController.signal
+        abortController.signal,
+        () => writeChatStreamEvent(res, { type: "reset" })
       );
       writeChatStreamEvent(res, {
         type: "complete",

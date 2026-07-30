@@ -185,6 +185,71 @@ describe("schedule assistant", () => {
       lookups: []
     });
   });
+
+  it("recovers when the model streams a preamble before requesting a schedule tool", async () => {
+    const deltas: string[] = [];
+    let resets = 0;
+    let requestNumber = 0;
+    const fetcher = vi.fn(async () => {
+      requestNumber += 1;
+      if (requestNumber === 1) {
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              model: "deepseek/deepseek-v4-flash",
+              choices: [{ delta: { content: "Let me check that." } }]
+            })}`,
+            `data: ${JSON.stringify({
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: 0,
+                    id: "call_mixed",
+                    function: {
+                      name: "get_call_schedule",
+                      arguments: JSON.stringify({ start_date: "2026-07-01", end_date: "2026-07-31" })
+                    }
+                  }]
+                }
+              }]
+            })}`,
+            "data: [DONE]",
+            ""
+          ].join("\n"),
+          { headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      return new Response(
+        [
+          `data: ${JSON.stringify({
+            model: "deepseek/deepseek-v4-flash",
+            choices: [{ delta: { content: "Dr. Collins is on call twice." } }]
+          })}`,
+          "data: [DONE]",
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+    const state = createInitialState();
+
+    const result = await streamScheduleQuestion(
+      [{ role: "user", content: "Who is on call with Dr. Collins over the next few months?" }],
+      { state, user, serviceLine: "Davies", now: new Date("2026-07-28T16:00:00Z") },
+      (delta) => deltas.push(delta),
+      fetcher,
+      undefined,
+      () => {
+        resets += 1;
+      }
+    );
+
+    expect(resets).toBe(1);
+    expect(deltas).toEqual(["Let me check that.", "Dr. Collins is on call twice."]);
+    expect(result.message).toBe("Dr. Collins is on call twice.");
+    expect(result.lookups).toHaveLength(1);
+    expect(result.lookups[0].tool).toBe("get_call_schedule");
+  });
 });
 
 describe("daily chat quota", () => {
