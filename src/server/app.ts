@@ -57,6 +57,8 @@ import {
   ChatMessage,
   ChatRequestError,
   getChatQuotaDateKey,
+  refreshScheduleLookups,
+  streamScheduleQuestion,
   transcribeScheduleAudio
 } from "./chat";
 import { StateConflictError, StateStore } from "./store";
@@ -85,6 +87,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   const requireAuth = authenticate(userStore);
   const loginLimiter = createRateLimiter(8, 15 * 60 * 1000);
   const transcriptionLimiter = createRateLimiter(25, 24 * 60 * 60 * 1000);
+  const chatFeedbackLimiter = createRateLimiter(50, 24 * 60 * 60 * 1000);
   const stateSubscribers = new Set<express.Response>();
 
   app.set("trust proxy", 1);
@@ -209,6 +212,140 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         res.status(error.status).json({ error: error.message });
         return;
       }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/stream", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    if (!process.env.OPENROUTER_API_KEY) {
+      res.status(503).json({ error: "The schedule assistant is not configured yet" });
+      return;
+    }
+    const messages = Array.isArray(req.body.messages) ? (req.body.messages as ChatMessage[]) : [];
+    const serviceLine = readOptionalString(req.body.serviceLine);
+    if (!serviceLine) {
+      res.status(400).json({ error: "Current service is required" });
+      return;
+    }
+
+    try {
+      const quota = await store.consumeChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
+      if (!quota.allowed) {
+        res.status(429).json({
+          error: "Daily assistant limit reached. Try again after midnight Eastern time.",
+          ...quota,
+          limit: DAILY_CHAT_LIMIT,
+          warningThreshold: 5
+        });
+        return;
+      }
+      const state = filterStateForUser(await store.load(), req.user);
+      const abortController = new AbortController();
+      res.on("close", () => {
+        if (!res.writableEnded) abortController.abort();
+      });
+      res.status(200);
+      res.setHeader("content-type", "application/x-ndjson; charset=utf-8");
+      res.setHeader("cache-control", "no-cache, no-transform");
+      res.setHeader("x-accel-buffering", "no");
+      res.flushHeaders();
+      writeChatStreamEvent(res, {
+        type: "meta",
+        used: quota.used,
+        remaining: quota.remaining,
+        limit: DAILY_CHAT_LIMIT,
+        warningThreshold: 5,
+        checkedAt: new Date().toISOString(),
+        dataUpdatedAt: state.updatedAt,
+        stateVersion: state.version
+      });
+      const answer = await streamScheduleQuestion(
+        messages,
+        { state, user: req.user!, serviceLine },
+        (delta) => writeChatStreamEvent(res, { type: "delta", delta }),
+        fetch,
+        abortController.signal
+      );
+      writeChatStreamEvent(res, {
+        type: "complete",
+        ...answer,
+        used: quota.used,
+        remaining: quota.remaining,
+        limit: DAILY_CHAT_LIMIT,
+        warningThreshold: 5
+      });
+      res.end();
+    } catch (error) {
+      if (res.headersSent) {
+        if (!res.writableEnded && !res.destroyed) {
+          const message =
+            error instanceof ChatRequestError
+              ? error.message
+              : error instanceof DOMException && error.name === "AbortError"
+                ? "Request stopped"
+                : "The assistant could not answer";
+          writeChatStreamEvent(res, { type: "error", error: message });
+          res.end();
+        }
+        return;
+      }
+      if (error instanceof ChatRequestError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/lookups/refresh", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const serviceLine = readOptionalString(req.body.serviceLine);
+      if (!serviceLine) {
+        res.status(400).json({ error: "Current service is required" });
+        return;
+      }
+      const state = filterStateForUser(await store.load(), req.user);
+      const requestedLookups = Array.isArray(req.body.lookups) ? req.body.lookups : [];
+      const lookups = refreshScheduleLookups(requestedLookups, {
+        state,
+        user: req.user!,
+        serviceLine
+      });
+      res.json({
+        lookups,
+        checkedAt: new Date().toISOString(),
+        dataUpdatedAt: state.updatedAt,
+        stateVersion: state.version
+      });
+    } catch (error) {
+      if (error instanceof ChatRequestError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/feedback", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const rating = req.body.rating === "up" || req.body.rating === "down" ? req.body.rating : undefined;
+      if (!rating) {
+        res.status(400).json({ error: "Feedback rating must be up or down" });
+        return;
+      }
+      if (!chatFeedbackLimiter.tryConsume(`${req.user!.username}:${getChatQuotaDateKey()}`)) {
+        res.status(429).json({ error: "Feedback limit reached for today" });
+        return;
+      }
+      await recordActivity({
+        ...requestActivityActor(req),
+        activityType: "assistant",
+        action: `rated assistant response ${rating}`,
+        details: readOptionalString(req.body.excerpt)?.slice(0, 240) || "Assistant response feedback",
+        entityType: "assistant"
+      });
+      res.json({ ok: true });
+    } catch (error) {
       next(error);
     }
   });
@@ -1118,6 +1255,10 @@ function readExpectedVersion(req: express.Request, fallbackVersion: number): num
 
 function formatStateEvent(state: PlannerState): string {
   return `event: state\ndata: ${JSON.stringify({ version: state.version, updatedAt: state.updatedAt })}\n\n`;
+}
+
+function writeChatStreamEvent(res: express.Response, event: Record<string, unknown>): void {
+  if (!res.writableEnded && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
 }
 
 function broadcastStateEvent(subscribers: Set<express.Response>, state: PlannerState): void {

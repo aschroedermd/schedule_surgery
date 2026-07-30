@@ -42,35 +42,56 @@ interface OpenRouterResponse {
   };
 }
 
-interface AssistantContext {
+interface OpenRouterStreamChunk {
+  model?: string;
+  choices?: Array<{
+    delta?: {
+      content?: string | null;
+      tool_calls?: Array<{
+        index?: number;
+        id?: string;
+        type?: "function";
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }>;
+    };
+  }>;
+  error?: {
+    message?: string;
+  };
+}
+
+export interface AssistantContext {
   state: PlannerState;
   user: SessionUser;
   serviceLine: string;
   now?: Date;
 }
 
+export interface ScheduleLookup {
+  tool: string;
+  arguments: Record<string, unknown>;
+  result: unknown;
+}
+
+export interface ScheduleAnswer {
+  message: string;
+  model: string;
+  checkedAt: string;
+  dataUpdatedAt: string;
+  stateVersion: number;
+  lookups: ScheduleLookup[];
+}
+
 export async function answerScheduleQuestion(
   messages: ChatMessage[],
   context: AssistantContext,
   fetcher: typeof fetch = fetch
-): Promise<{ message: string; model: string }> {
-  const cleanMessages = messages
-    .slice(-MAX_HISTORY_MESSAGES)
-    .filter(
-      (message) =>
-        (message.role === "user" || message.role === "assistant") &&
-        typeof message.content === "string" &&
-        Boolean(message.content.trim())
-    )
-    .map<ModelMessage>((message) => ({ role: message.role, content: message.content.trim().slice(0, 6000) }));
-  if (!cleanMessages.length || cleanMessages.at(-1)?.role !== "user") {
-    throw new ChatRequestError(400, "A user message is required");
-  }
-
-  const modelMessages: ModelMessage[] = [
-    { role: "system", content: buildSystemPrompt(context) },
-    ...cleanMessages
-  ];
+): Promise<ScheduleAnswer> {
+  const modelMessages = buildModelMessages(messages, context);
+  const lookups: ScheduleLookup[] = [];
 
   let resolvedModel = PRIMARY_MODEL;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
@@ -83,7 +104,7 @@ export async function answerScheduleQuestion(
     if (!toolCalls.length) {
       const content = typeof assistant.content === "string" ? assistant.content.trim() : "";
       if (!content) throw new ChatRequestError(502, "The schedule assistant returned an empty response");
-      return { message: content, model: resolvedModel };
+      return buildScheduleAnswer(content, resolvedModel, context, lookups);
     }
 
     if (round === MAX_TOOL_ROUNDS) {
@@ -96,17 +117,87 @@ export async function answerScheduleQuestion(
       tool_calls: toolCalls
     });
     for (const toolCall of toolCalls) {
-      const result = executeScheduleTool(toolCall, context);
+      const lookup = executeScheduleLookup(toolCall, context);
+      lookups.push(lookup);
       modelMessages.push({
         role: "tool",
         name: toolCall.function.name,
         tool_call_id: toolCall.id,
-        content: JSON.stringify(result)
+        content: JSON.stringify(lookup.result)
       });
     }
   }
 
   throw new ChatRequestError(502, "The schedule assistant could not complete the request");
+}
+
+export async function streamScheduleQuestion(
+  messages: ChatMessage[],
+  context: AssistantContext,
+  onDelta: (delta: string) => void,
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<ScheduleAnswer> {
+  const modelMessages = buildModelMessages(messages, context);
+  const lookups: ScheduleLookup[] = [];
+  let resolvedModel = PRIMARY_MODEL;
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+    const streamed = await callOpenRouterStream(modelMessages, onDelta, fetcher, signal);
+    resolvedModel = streamed.model ?? resolvedModel;
+
+    if (!streamed.toolCalls.length) {
+      const content = streamed.content.trim();
+      if (!content) throw new ChatRequestError(502, "The schedule assistant returned an empty response");
+      return buildScheduleAnswer(content, resolvedModel, context, lookups);
+    }
+
+    if (round === MAX_TOOL_ROUNDS) {
+      throw new ChatRequestError(502, "The schedule assistant requested too many data lookups");
+    }
+
+    modelMessages.push({
+      role: "assistant",
+      content: streamed.content || null,
+      tool_calls: streamed.toolCalls
+    });
+    for (const toolCall of streamed.toolCalls) {
+      const lookup = executeScheduleLookup(toolCall, context);
+      lookups.push(lookup);
+      modelMessages.push({
+        role: "tool",
+        name: toolCall.function.name,
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(lookup.result)
+      });
+    }
+  }
+
+  throw new ChatRequestError(502, "The schedule assistant could not complete the request");
+}
+
+export function refreshScheduleLookups(
+  requestedLookups: Array<{ tool?: unknown; arguments?: unknown }>,
+  context: AssistantContext
+): ScheduleLookup[] {
+  return requestedLookups.slice(0, 6).map((lookup, index) => {
+    const tool = typeof lookup.tool === "string" ? lookup.tool : "";
+    const args =
+      lookup.arguments && typeof lookup.arguments === "object" && !Array.isArray(lookup.arguments)
+        ? (lookup.arguments as Record<string, unknown>)
+        : {};
+    if (!SCHEDULE_TOOL_NAMES.has(tool)) {
+      throw new ChatRequestError(400, `Invalid schedule lookup at position ${index + 1}`);
+    }
+    return executeScheduleLookup(
+      {
+        id: `refresh_${index}`,
+        type: "function",
+        function: { name: tool, arguments: JSON.stringify(args) }
+      },
+      context
+    );
+  });
 }
 
 export async function transcribeScheduleAudio(
@@ -150,6 +241,38 @@ export class ChatRequestError extends Error {
   }
 }
 
+function buildModelMessages(messages: ChatMessage[], context: AssistantContext): ModelMessage[] {
+  const cleanMessages = messages
+    .slice(-MAX_HISTORY_MESSAGES)
+    .filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant") &&
+        typeof message.content === "string" &&
+        Boolean(message.content.trim())
+    )
+    .map<ModelMessage>((message) => ({ role: message.role, content: message.content.trim().slice(0, 6000) }));
+  if (!cleanMessages.length || cleanMessages.at(-1)?.role !== "user") {
+    throw new ChatRequestError(400, "A user message is required");
+  }
+  return [{ role: "system", content: buildSystemPrompt(context) }, ...cleanMessages];
+}
+
+function buildScheduleAnswer(
+  message: string,
+  model: string,
+  context: AssistantContext,
+  lookups: ScheduleLookup[]
+): ScheduleAnswer {
+  return {
+    message,
+    model,
+    checkedAt: (context.now ?? new Date()).toISOString(),
+    dataUpdatedAt: context.state.updatedAt,
+    stateVersion: context.state.version,
+    lookups
+  };
+}
+
 async function callOpenRouter(messages: ModelMessage[], fetcher: typeof fetch): Promise<OpenRouterResponse> {
   const response = await fetchWithTimeout(
     OPENROUTER_CHAT_URL,
@@ -173,6 +296,111 @@ async function callOpenRouter(messages: ModelMessage[], fetcher: typeof fetch): 
   return payload;
 }
 
+async function callOpenRouterStream(
+  messages: ModelMessage[],
+  onDelta: (delta: string) => void,
+  fetcher: typeof fetch,
+  signal?: AbortSignal
+): Promise<{ content: string; model?: string; toolCalls: ToolCall[] }> {
+  const response = await fetchWithTimeout(
+    OPENROUTER_CHAT_URL,
+    {
+      method: "POST",
+      headers: openRouterHeaders(),
+      body: JSON.stringify({
+        model: PRIMARY_MODEL,
+        models: [FALLBACK_MODEL],
+        messages,
+        tools: SCHEDULE_TOOLS,
+        parallel_tool_calls: true,
+        temperature: 0.2,
+        max_tokens: 1100,
+        stream: true
+      }),
+      signal
+    },
+    fetcher
+  );
+  if (!response.ok) {
+    const payload = (await readJson(response)) as OpenRouterResponse;
+    throw openRouterError(response.status, payload.error?.message);
+  }
+  if (!response.body) throw new ChatRequestError(502, "The schedule assistant returned an empty response");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const toolCalls = new Map<number, ToolCall>();
+  let buffer = "";
+  let content = "";
+  let resolvedModel: string | undefined;
+  let contentMode = false;
+
+  async function processLines(final = false) {
+    const lines = buffer.split(/\r?\n/);
+    buffer = final ? "" : (lines.pop() ?? "");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      let chunk: OpenRouterStreamChunk;
+      try {
+        chunk = JSON.parse(data) as OpenRouterStreamChunk;
+      } catch {
+        continue;
+      }
+      if (chunk.error?.message) throw openRouterError(502, chunk.error.message);
+      resolvedModel = chunk.model ?? resolvedModel;
+      const delta = chunk.choices?.[0]?.delta;
+      for (const partial of delta?.tool_calls ?? []) {
+        const index = partial.index ?? 0;
+        const current =
+          toolCalls.get(index) ??
+          ({
+            id: partial.id ?? `call_${index}`,
+            type: "function",
+            function: { name: "", arguments: "" }
+          } satisfies ToolCall);
+        if (partial.id) current.id = partial.id;
+        if (partial.function?.name) current.function.name += partial.function.name;
+        if (partial.function?.arguments) current.function.arguments += partial.function.arguments;
+        toolCalls.set(index, current);
+      }
+      if (typeof delta?.content === "string" && delta.content) {
+        contentMode = true;
+        content += delta.content;
+        onDelta(delta.content);
+      }
+    }
+  }
+
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException("The request was stopped", "AbortError");
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      await processLines();
+    }
+    buffer += decoder.decode();
+    await processLines(true);
+  } catch (error) {
+    void reader.cancel();
+    if (isAbortError(error) || signal?.aborted) throw error;
+    if (error instanceof ChatRequestError) throw error;
+    throw new ChatRequestError(502, "The schedule assistant stream was interrupted");
+  }
+
+  const completedToolCalls = [...toolCalls.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, toolCall]) => toolCall)
+    .filter((toolCall) => Boolean(toolCall.function.name));
+  if (completedToolCalls.length && contentMode) {
+    throw new ChatRequestError(502, "The schedule assistant returned an invalid mixed response");
+  }
+  return { content, model: resolvedModel, toolCalls: completedToolCalls };
+}
+
 function openRouterHeaders(): HeadersInit {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new ChatRequestError(503, "The schedule assistant is not configured yet");
@@ -188,14 +416,20 @@ function openRouterHeaders(): HeadersInit {
 async function fetchWithTimeout(url: string, init: RequestInit, fetcher: typeof fetch): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
+  const signal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
   try {
-    return await fetcher(url, { ...init, signal: controller.signal });
+    return await fetcher(url, { ...init, signal });
   } catch (error) {
     if (error instanceof ChatRequestError) throw error;
+    if (isAbortError(error) || init.signal?.aborted) throw error;
     throw new ChatRequestError(502, "The schedule assistant is temporarily unavailable");
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -236,7 +470,9 @@ Scheduling domain rules:
 - The current service is useful context for service-specific rounding, off/note calendar entries, and the default OR/clinic schedule.
 - An attending's OR cases may be on any service. When the user names an attending, pass attending_name to get_or_schedule so it searches across services unless the user explicitly names a service.
 
-Use the supplied tools whenever schedule facts are needed; never invent schedule, call, vacation, or assignment data. State the date range when the user's wording is ambiguous. Keep answers concise, clinically professional, and easy to scan.
+Use the supplied tools whenever schedule facts are needed; never invent schedule, call, vacation, or assignment data. Resolve relative dates from Today and state the exact interpreted date or range in the answer. Ask one short clarification only when multiple reasonable interpretations would materially change the answer. Understand follow-ups such as "what about Friday?" from the conversation history.
+
+Lead with the direct answer. Keep the default response concise, clinically professional, and easy to scan; the interface separately presents detailed schedule records. When comparing schedules, explain the important differences. When data shows uncovered work, overlaps, post-call concerns, vacation, or timing conflicts, call those out plainly. If asked why someone cannot cover, explain only from supplied availability and schedule facts and suggest qualified alternatives only when the data supports them.
 
 Privacy and safety rules:
 - This planner contains staffing and procedure information only. Do not ask for or repeat patient names, MRNs, dates of birth, or other patient identifiers.
@@ -245,32 +481,39 @@ Privacy and safety rules:
 - If the user asks for a change, explain that you can summarize the relevant schedule and direct them to the appropriate planner section.`;
 }
 
-function executeScheduleTool(toolCall: ToolCall, context: AssistantContext): unknown {
+function executeScheduleLookup(toolCall: ToolCall, context: AssistantContext): ScheduleLookup {
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(toolCall.function.arguments || "{}") as Record<string, unknown>;
   } catch {
-    return { error: "Invalid tool arguments" };
+    return { tool: toolCall.function.name, arguments: {}, result: { error: "Invalid tool arguments" } };
   }
 
+  let result: unknown;
   try {
     switch (toolCall.function.name) {
       case "get_or_schedule":
-        return getOrSchedule(context, args);
+        result = getOrSchedule(context, args);
+        break;
       case "get_call_schedule":
-        return getCallSchedule(context, args);
+        result = getCallSchedule(context, args);
+        break;
       case "get_calendar":
-        return getCalendarEntries(context, args, ["call", "attending-call", "rounding", "off", "note"]);
+        result = getCalendarEntries(context, args, ["call", "attending-call", "rounding", "off", "note"]);
+        break;
       case "get_vacations":
-        return getVacations(context, args);
+        result = getVacations(context, args);
+        break;
       case "get_my_schedule":
-        return getMySchedule(context, args);
+        result = getMySchedule(context, args);
+        break;
       default:
-        return { error: "Unknown tool" };
+        result = { error: "Unknown tool" };
     }
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Data lookup failed" };
+    result = { error: error instanceof Error ? error.message : "Data lookup failed" };
   }
+  return { tool: toolCall.function.name, arguments: args, result };
 }
 
 function getOrSchedule(context: AssistantContext, args: Record<string, unknown>) {
@@ -296,10 +539,12 @@ function getOrSchedule(context: AssistantContext, args: Record<string, unknown>)
           service: block.attending.service,
           hospital: block.hospital.shortName,
           firstCase: block.firstCaseStartTime,
+          warnings: block.warningMessages,
           cases: block.cases.map((surgeryCase) => ({
             time: surgeryCase.startTime,
             procedure: surgeryCase.procedureLabel,
-            residents: surgeryCase.assignments.map((assignment) => residentName(context.state, assignment.residentId))
+            residents: surgeryCase.assignments.map((assignment) => residentName(context.state, assignment.residentId)),
+            warnings: surgeryCase.warningMessages
           }))
         })),
         clinics: clinics.map((clinic) => ({
@@ -307,7 +552,13 @@ function getOrSchedule(context: AssistantContext, args: Record<string, unknown>)
           attending: clinic.attending?.name,
           service: clinic.service,
           location: clinic.location,
-          residents: clinic.assignments.map((assignment) => residentName(context.state, assignment.residentId))
+          residents: clinic.assignments.map((assignment) => residentName(context.state, assignment.residentId)),
+          warnings: clinic.warningMessages
+        })),
+        uncovered: day.uncoveredCases.map((surgeryCase) => ({
+          time: surgeryCase.startTime,
+          procedure: surgeryCase.procedureLabel,
+          attending: surgeryCase.attending.name
         }))
       };
     })
@@ -648,3 +899,5 @@ const SCHEDULE_TOOLS = [
     }
   }
 ] as const;
+
+const SCHEDULE_TOOL_NAMES = new Set<string>(SCHEDULE_TOOLS.map((tool) => tool.function.name));

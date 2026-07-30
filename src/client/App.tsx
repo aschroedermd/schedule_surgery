@@ -430,6 +430,12 @@ export function App() {
     window.scrollTo({ top: 0, behavior: "auto" });
   }
 
+  async function handleChatOpenPlanner(tab: "board" | "my" | "calendar" | "call", date?: string) {
+    if (date && tab === "board") await navigateToWeekForDate(date);
+    setActiveTab(tab);
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
   useEffect(() => {
     if (!session) return;
     const token = session.token;
@@ -662,13 +668,15 @@ export function App() {
         onSelect={handleSelectTab}
       />
 
-      {activeTab === "chat" && (
+      <div className="chat-tab-host" hidden={activeTab !== "chat"}>
         <ChatTab
           token={session.token}
           displayName={session.displayName || session.username}
           serviceLine={selectedService}
+          plannerVersion={state.version}
+          onOpenPlanner={(tab, date) => void handleChatOpenPlanner(tab, date)}
         />
-      )}
+      </div>
       {activeTab === "board" && (
         <BoardTab
           state={state}
@@ -3364,7 +3372,8 @@ const activityTypeOptions: Array<{ type: ActivityEventType; label: string }> = [
   { type: "assignment", label: "Assignment" },
   { type: "calendar", label: "Calendar" },
   { type: "account", label: "Account" },
-  { type: "resident", label: "Resident" }
+  { type: "resident", label: "Resident" },
+  { type: "assistant", label: "Assistant" }
 ];
 
 function ActivityTab({ state }: { state: PlannerState }) {
@@ -3373,7 +3382,8 @@ function ActivityTab({ state }: { state: PlannerState }) {
     assignment: true,
     calendar: true,
     account: true,
-    resident: true
+    resident: true,
+    assistant: true
   });
   const visibleEvents = state.activityEvents.filter((event) => selectedTypes[event.activityType]);
 

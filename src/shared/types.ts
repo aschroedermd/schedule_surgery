@@ -215,7 +215,7 @@ export interface GoldStarAward {
   updatedAt: string;
 }
 
-export type ActivityEventType = "login" | "assignment" | "calendar" | "account" | "resident";
+export type ActivityEventType = "login" | "assignment" | "calendar" | "account" | "resident" | "assistant";
 
 export interface ActivityEvent {
   id: string;

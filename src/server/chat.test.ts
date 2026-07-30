@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createInitialState } from "./sampleData";
-import { answerScheduleQuestion, transcribeScheduleAudio } from "./chat";
+import { answerScheduleQuestion, streamScheduleQuestion, transcribeScheduleAudio } from "./chat";
 import { MemoryStateStore } from "./store";
 import { SessionUser } from "../shared/types";
 
@@ -145,6 +145,45 @@ describe("schedule assistant", () => {
     await expect(transcribeScheduleAudio({ data: "d2F2", format: "wav" }, fetcher)).resolves.toBe(
       "Who is on call tomorrow?"
     );
+  });
+
+  it("streams answer text and returns the schedule version it checked", async () => {
+    const deltas: string[] = [];
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({ stream: true });
+      return new Response(
+        [
+          `data: ${JSON.stringify({
+            model: "deepseek/deepseek-v4-flash",
+            choices: [{ delta: { content: "You are on " } }]
+          })}`,
+          `data: ${JSON.stringify({
+            choices: [{ delta: { content: "call Saturday." } }]
+          })}`,
+          "data: [DONE]",
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+    const state = createInitialState();
+
+    const result = await streamScheduleQuestion(
+      [{ role: "user", content: "Am I on call Saturday?" }],
+      { state, user, serviceLine: "Davies", now: new Date("2026-07-28T16:00:00Z") },
+      (delta) => deltas.push(delta),
+      fetcher
+    );
+
+    expect(deltas).toEqual(["You are on ", "call Saturday."]);
+    expect(result).toMatchObject({
+      message: "You are on call Saturday.",
+      model: "deepseek/deepseek-v4-flash",
+      checkedAt: "2026-07-28T16:00:00.000Z",
+      dataUpdatedAt: state.updatedAt,
+      stateVersion: state.version,
+      lookups: []
+    });
   });
 });
 

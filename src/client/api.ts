@@ -35,9 +35,25 @@ export interface ChatConversationMessage {
   content: string;
 }
 
+export interface ChatLookup {
+  tool: string;
+  arguments: Record<string, unknown>;
+  result: unknown;
+}
+
 export interface ChatResponse extends ChatQuota {
   message: string;
   model: string;
+  checkedAt: string;
+  dataUpdatedAt: string;
+  stateVersion: number;
+  lookups: ChatLookup[];
+}
+
+export interface ChatStreamMeta extends ChatQuota {
+  checkedAt: string;
+  dataUpdatedAt: string;
+  stateVersion: number;
 }
 
 export class UnauthorizedError extends Error {
@@ -118,6 +134,92 @@ export async function sendChatMessage(
     method: "POST",
     token,
     body: JSON.stringify({ messages, serviceLine })
+  });
+}
+
+export async function streamChatMessage(
+  token: string,
+  messages: ChatConversationMessage[],
+  serviceLine: string,
+  handlers: {
+    onDelta: (delta: string) => void;
+    onMeta?: (meta: ChatStreamMeta) => void;
+  },
+  signal?: AbortSignal
+): Promise<ChatResponse> {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ messages, serviceLine }),
+    signal
+  });
+  if (!response.ok) {
+    const payload = await readOptionalJson<{ error?: string }>(response);
+    if (response.status === 401) throw new UnauthorizedError(payload?.error);
+    throw new Error(payload?.error ?? `Request failed: ${response.status}`);
+  }
+  if (!response.body) throw new Error("The assistant returned an empty response");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed: ChatResponse | undefined;
+
+  function processLine(line: string) {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const event = JSON.parse(trimmed) as
+      | ({ type: "meta" } & ChatStreamMeta)
+      | { type: "delta"; delta: string }
+      | ({ type: "complete" } & ChatResponse)
+      | { type: "error"; error: string };
+    if (event.type === "meta") handlers.onMeta?.(event);
+    if (event.type === "delta") handlers.onDelta(event.delta);
+    if (event.type === "complete") completed = event;
+    if (event.type === "error") throw new Error(event.error);
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) processLine(line);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) processLine(buffer);
+  if (!completed) throw new Error("The assistant response was interrupted");
+  return completed;
+}
+
+export async function refreshChatLookups(
+  token: string,
+  serviceLine: string,
+  lookups: ChatLookup[]
+): Promise<{ lookups: ChatLookup[]; checkedAt: string; dataUpdatedAt: string; stateVersion: number }> {
+  return request("/api/chat/lookups/refresh", {
+    method: "POST",
+    token,
+    body: JSON.stringify({
+      serviceLine,
+      lookups: lookups.map(({ tool, arguments: lookupArguments }) => ({ tool, arguments: lookupArguments }))
+    })
+  });
+}
+
+export async function sendChatFeedback(
+  token: string,
+  rating: "up" | "down",
+  excerpt: string
+): Promise<{ ok: true }> {
+  return request("/api/chat/feedback", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ rating, excerpt: excerpt.slice(0, 240) })
   });
 }
 

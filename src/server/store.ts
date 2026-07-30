@@ -254,12 +254,22 @@ function normalizeActivityEvents(activityEvents: ActivityEvent[]): ActivityEvent
 }
 
 function normalizeActivityEventType(value: unknown, event: Partial<ActivityEvent>): ActivityEventType {
-  if (value === "login" || value === "assignment" || value === "calendar" || value === "account" || value === "resident") return value;
+  if (
+    value === "login" ||
+    value === "assignment" ||
+    value === "calendar" ||
+    value === "account" ||
+    value === "resident" ||
+    value === "assistant"
+  ) {
+    return value;
+  }
   const action = event.action?.toLowerCase() ?? "";
   const entityType = event.entityType?.toLowerCase() ?? "";
   if (action.includes("login") || action.includes("logged in")) return "login";
   if (action.includes("account") || action.includes("password") || action.includes("profile") || entityType === "user") return "account";
   if (action.includes("resident") || action.includes("star") || entityType === "goldstaraward") return "resident";
+  if (action.includes("assistant") || entityType === "assistant") return "assistant";
   if (action.includes("calendar") || action.includes("call trade") || entityType === "coverageentry" || entityType === "coveragerequest") {
     return "calendar";
   }
