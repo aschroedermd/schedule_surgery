@@ -50,6 +50,8 @@ describe("planner API", () => {
     process.env.ADMIN_API_KEY = "test-admin-api-key";
     process.env.VIEWER_API_KEY = "test-viewer-api-key";
     process.env.SEED_USER_PASSWORD = TEST_SEED_USER_PASSWORD;
+    process.env.OPENAI_PRIMARY_MODEL = "gpt-5.6-luna";
+    process.env.OPENAI_FALLBACK_MODELS = "gpt-5.6-terra";
   });
 
   it("allows admin writes and blocks view-only users", async () => {
@@ -187,6 +189,7 @@ describe("planner API", () => {
       .patch("/api/admin/chat-settings")
       .set("x-api-key", "test-admin-api-key")
       .send({
+        chatProvider: "openrouter",
         primaryModel: "deepseek/deepseek-v4-flash-0731",
         fallbackModels: ["google/gemma-3-27b-it"],
         voiceModel: "fish-audio/s2-pro",
@@ -197,6 +200,7 @@ describe("planner API", () => {
       .expect(200);
     expect(updated.body).toEqual(
       expect.objectContaining({
+        chatProvider: "openrouter",
         primaryModel: "deepseek/deepseek-v4-flash-0731",
         fallbackModels: ["google/gemma-3-27b-it"],
         transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",
@@ -218,6 +222,17 @@ describe("planner API", () => {
       .set("x-api-key", "test-admin-api-key")
       .expect(200);
     expect(current.body.primaryModel).toBe("deepseek/deepseek-v4-flash-0731");
+
+    const switchedProvider = await request(app)
+      .patch("/api/admin/chat-settings")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ chatProvider: "openai" })
+      .expect(200);
+    expect(switchedProvider.body).toMatchObject({
+      chatProvider: "openai",
+      primaryModel: "gpt-5.6-luna",
+      fallbackModels: ["gpt-5.6-terra"]
+    });
   });
 
   it("gives regular users three spoken responses per day and makes admin OpenRouter quotas unlimited", async () => {

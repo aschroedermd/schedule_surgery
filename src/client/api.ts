@@ -40,10 +40,38 @@ export interface VoiceQuota {
 }
 
 export type VoicePreset = 1 | 2 | 3 | 4;
+export type ChatProvider = "openai" | "openrouter";
+
+export interface ChatModelSettings {
+  chatProvider: ChatProvider;
+  primaryModel: string;
+  fallbackModels: string[];
+  transcriptionModel: string;
+  voiceModel: string;
+  voiceName: string;
+  elevenLabsModel: string;
+  elevenLabsVoiceIds: [string, string, string];
+  updatedAt: string | null;
+}
 
 export interface ChatConversationMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+export async function fetchChatModelSettings(token: string): Promise<ChatModelSettings> {
+  return request<ChatModelSettings>("/api/admin/chat-settings", { token });
+}
+
+export async function updateChatModelSettings(
+  token: string,
+  patch: Pick<ChatModelSettings, "chatProvider" | "primaryModel" | "fallbackModels">
+): Promise<ChatModelSettings> {
+  return request<ChatModelSettings>("/api/admin/chat-settings", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(patch)
+  });
 }
 
 export interface ChatLookup {

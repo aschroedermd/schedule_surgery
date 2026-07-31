@@ -66,7 +66,7 @@ Browser clients can watch state changes with `GET /api/events?token=<browser-tok
 
 ## Admin API Quick Reference
 
-Use the admin API key only from a trusted secret store. Never place it, a temporary password, the OpenRouter key, or the ElevenLabs key in planner data, shell history, chat transcripts, or activity notes.
+Use the admin API key only from a trusted secret store. Never place it, a temporary password, the OpenAI key, the OpenRouter key, or the ElevenLabs key in planner data, shell history, chat transcripts, or activity notes.
 
 ### Reset a browser user's password
 
@@ -91,7 +91,7 @@ unset TEMP_PASSWORD
 
 Deliver the returned password once through an approved private channel. Do not write it to a file or repeat it in a later response. The admin API key cannot reset the built-in `admin` browser account; that requires an existing browser-admin session. The endpoint does not need `X-State-Version`.
 
-### Read or change the assistant's OpenRouter models and voice
+### Read or change the assistant's text provider, models, and voice
 
 Read the active configuration:
 
@@ -100,13 +100,22 @@ curl -H "X-API-Key: $ADMIN_API_KEY" \
   "$BASE_URL/api/admin/chat-settings"
 ```
 
-Switch only the primary chat model:
+Switch only the primary OpenAI chat model:
 
 ```bash
 curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
   -H "X-API-Key: $ADMIN_API_KEY" \
   -H "content-type: application/json" \
-  -d '{"primaryModel":"deepseek/deepseek-v4-flash-0731"}'
+  -d '{"primaryModel":"gpt-5.6-luna"}'
+```
+
+Switch the text provider for all users. Omitting model fields resets them to that provider's defaults:
+
+```bash
+curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"chatProvider":"openrouter"}'
 ```
 
 Voice buttons map to these persisted settings:
@@ -149,8 +158,9 @@ The complete shape is:
 
 ```json
 {
-  "primaryModel": "deepseek/deepseek-v4-flash-0731",
-  "fallbackModels": ["google/gemma-3-27b-it"],
+  "chatProvider": "openai",
+  "primaryModel": "gpt-5.6-luna",
+  "fallbackModels": ["gpt-5.6-terra"],
   "transcriptionModel": "nvidia/parakeet-tdt-0.6b-v3",
   "voiceModel": "fish-audio/s2.1-pro-free:free",
   "voiceName": "David Attenborough Dramatic",
@@ -163,9 +173,9 @@ The complete shape is:
 }
 ```
 
-`primaryModel`, `fallbackModels`, `transcriptionModel`, and `voiceModel` are OpenRouter model ids. `voiceName` is the OpenRouter provider voice identifier for button 4. `elevenLabsModel` is an ElevenLabs TTS model id, and `elevenLabsVoiceIds` contains the three ElevenLabs voice ids for buttons 1–3. `fallbackModels` is ordered, accepts up to five entries, and may be empty. A partial `PATCH` preserves omitted fields. Changes apply to new requests immediately and persist in `CHAT_SETTINGS_PATH` (by default `chat-settings.json` beside `USER_STORE_PATH`). The API validates identifier shape, but not provider availability, account access, price, tool-calling support, or voice/model compatibility. After changing a voice setting, read the settings back and make one spoken-response request with the changed button to verify it.
+`chatProvider` selects `openai` or `openrouter` for text responses. `primaryModel` and `fallbackModels` must be model ids for that provider. `transcriptionModel` and `voiceModel` remain OpenRouter model ids, and `voiceName` is the OpenRouter provider voice identifier for button 4. `elevenLabsModel` is an ElevenLabs TTS model id, and `elevenLabsVoiceIds` contains the three ElevenLabs voice ids for buttons 1–3. `fallbackModels` is ordered, accepts up to five entries, and may be empty. A partial `PATCH` preserves omitted fields, except that changing only `chatProvider` resets the text models to the new provider's defaults. Changes apply to new requests immediately and persist in `CHAT_SETTINGS_PATH` (by default `chat-settings.json` beside `USER_STORE_PATH`). The API validates identifier shape, but not provider availability, account access, price, tool-calling support, or voice/model compatibility. After changing a provider or voice setting, read the settings back and make one representative request with the changed path.
 
-Environment variables provide defaults only when no persisted settings exist: `OPENROUTER_PRIMARY_MODEL`, comma-separated `OPENROUTER_FALLBACK_MODELS`, `OPENROUTER_TRANSCRIPTION_MODEL`, `OPENROUTER_VOICE_MODEL`, `OPENROUTER_VOICE_NAME`, `ELEVENLABS_MODEL_ID`, and comma-separated `ELEVENLABS_VOICE_IDS`. `OPENROUTER_API_KEY` and `ELEVENLABS_API_KEY` remain environment-only and are never returned by this API.
+Environment variables provide defaults only when no persisted settings exist: `CHAT_PROVIDER`, `OPENAI_PRIMARY_MODEL`, comma-separated `OPENAI_FALLBACK_MODELS`, `OPENROUTER_PRIMARY_MODEL`, comma-separated `OPENROUTER_FALLBACK_MODELS`, `OPENROUTER_TRANSCRIPTION_MODEL`, `OPENROUTER_VOICE_MODEL`, `OPENROUTER_VOICE_NAME`, `ELEVENLABS_MODEL_ID`, and comma-separated `ELEVENLABS_VOICE_IDS`. `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and `ELEVENLABS_API_KEY` remain environment-only and are never returned by this API.
 
 ## Mental Model
 
@@ -568,7 +578,7 @@ These are useful follow-ups but are not implemented yet:
 
 - Scoped, rotatable API credentials instead of one broad admin key—for example `schedule:write`, `users:reset`, `assistant:configure`, and `integrations:sync`—with key id, expiry, last-used time, and revocation.
 - A model configuration test endpoint that makes a minimal tool-call request before promotion, plus an automatic rollback to the previous known-good configuration after repeated provider failures.
-- Read-only operational status for OpenRouter configuration, database connectivity, QGenda last sync, job health, and recent error counts without returning secrets.
+- Read-only operational status for OpenAI/OpenRouter configuration, database connectivity, QGenda last sync, job health, and recent error counts without returning secrets.
 - Admin-controlled chat quota limits and usage summaries. Return aggregate counts; avoid storing or exposing prompt text.
 - A backup/export and validated restore workflow for planner state, browser users, chat settings, and integration settings. Restores should require a dry run and explicit confirmation.
 - Idempotency keys and a batch mutation endpoint for multi-step schedule changes, so an agent can retry safely without creating duplicate entities or leaving half-applied updates.

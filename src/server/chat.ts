@@ -3,6 +3,7 @@ import { CoverageEntry, PlannerState, SessionUser } from "../shared/types";
 import { ChatModelSettings, getDefaultChatModelSettings } from "./chatSettingsStore";
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const OPENROUTER_TRANSCRIPTION_URL = "https://openrouter.ai/api/v1/audio/transcriptions";
 const OPENROUTER_SPEECH_URL = "https://openrouter.ai/api/v1/audio/speech";
 const ELEVENLABS_SPEECH_URL = "https://api.elevenlabs.io/v1/text-to-speech";
@@ -66,6 +67,31 @@ interface OpenRouterStreamChunk {
   };
 }
 
+interface OpenAIResponseOutputItem {
+  type?: string;
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  content?: string | Array<{ type?: string; text?: string }>;
+  [key: string]: unknown;
+}
+
+interface OpenAIResponsePayload {
+  model?: string;
+  output_text?: string;
+  output?: OpenAIResponseOutputItem[];
+  error?: { message?: string };
+}
+
+interface OpenAIStreamEvent {
+  type?: string;
+  delta?: string;
+  message?: string;
+  item?: OpenAIResponseOutputItem;
+  response?: OpenAIResponsePayload;
+  error?: { message?: string };
+}
+
 export interface AssistantContext {
   state: PlannerState;
   user: SessionUser;
@@ -96,6 +122,9 @@ export async function answerScheduleQuestion(
   modelSettings: ChatModelSettings = getDefaultChatModelSettings()
 ): Promise<ScheduleAnswer> {
   const modelMessages = buildModelMessages(messages, context);
+  if (modelSettings.chatProvider === "openai") {
+    return answerScheduleQuestionWithOpenAI(modelMessages, context, fetcher, modelSettings);
+  }
   const lookups: ScheduleLookup[] = [];
 
   let resolvedModel = modelSettings.primaryModel;
@@ -146,6 +175,17 @@ export async function streamScheduleQuestion(
   modelSettings: ChatModelSettings = getDefaultChatModelSettings()
 ): Promise<ScheduleAnswer> {
   const modelMessages = buildModelMessages(messages, context);
+  if (modelSettings.chatProvider === "openai") {
+    return streamScheduleQuestionWithOpenAI(
+      modelMessages,
+      context,
+      onDelta,
+      fetcher,
+      signal,
+      onReset,
+      modelSettings
+    );
+  }
   const lookups: ScheduleLookup[] = [];
   let resolvedModel = modelSettings.primaryModel;
 
@@ -339,6 +379,332 @@ function buildScheduleAnswer(
   };
 }
 
+async function answerScheduleQuestionWithOpenAI(
+  messages: ModelMessage[],
+  context: AssistantContext,
+  fetcher: typeof fetch,
+  modelSettings: ChatModelSettings
+): Promise<ScheduleAnswer> {
+  const input = buildOpenAIInput(messages);
+  const lookups: ScheduleLookup[] = [];
+  let activeModel = modelSettings.primaryModel;
+  let resolvedModel = activeModel;
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+    const result = await callOpenAIResponse(input, fetcher, modelSettings, activeModel);
+    activeModel = result.requestModel;
+    resolvedModel = result.response.model ?? activeModel;
+    const output = result.response.output ?? [];
+    const toolCalls = readOpenAIToolCalls(output);
+
+    if (!toolCalls.length) {
+      const content = readOpenAIOutputText(result.response).trim();
+      if (!content) throw new ChatRequestError(502, "The schedule assistant returned an empty response");
+      return buildScheduleAnswer(content, resolvedModel, context, lookups);
+    }
+
+    if (round === MAX_TOOL_ROUNDS) {
+      throw new ChatRequestError(502, "The schedule assistant requested too many data lookups");
+    }
+
+    input.push(...output);
+    for (const toolCall of toolCalls) {
+      const lookup = executeScheduleLookup(toolCall, context);
+      lookups.push(lookup);
+      input.push({
+        type: "function_call_output",
+        call_id: toolCall.id,
+        output: JSON.stringify(lookup.result)
+      });
+    }
+  }
+
+  throw new ChatRequestError(502, "The schedule assistant could not complete the request");
+}
+
+async function streamScheduleQuestionWithOpenAI(
+  messages: ModelMessage[],
+  context: AssistantContext,
+  onDelta: (delta: string) => void,
+  fetcher: typeof fetch,
+  signal: AbortSignal | undefined,
+  onReset: () => void,
+  modelSettings: ChatModelSettings
+): Promise<ScheduleAnswer> {
+  const input = buildOpenAIInput(messages);
+  const lookups: ScheduleLookup[] = [];
+  let activeModel = modelSettings.primaryModel;
+  let resolvedModel = activeModel;
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+    const result = await callOpenAIResponseStream(
+      input,
+      onDelta,
+      fetcher,
+      signal,
+      modelSettings,
+      activeModel
+    );
+    activeModel = result.requestModel;
+    resolvedModel = result.model ?? activeModel;
+
+    if (!result.toolCalls.length) {
+      const content = result.content.trim();
+      if (!content) throw new ChatRequestError(502, "The schedule assistant returned an empty response");
+      return buildScheduleAnswer(content, resolvedModel, context, lookups);
+    }
+
+    if (round === MAX_TOOL_ROUNDS) {
+      throw new ChatRequestError(502, "The schedule assistant requested too many data lookups");
+    }
+
+    if (result.emittedContent) onReset();
+    input.push(...result.output);
+    for (const toolCall of result.toolCalls) {
+      const lookup = executeScheduleLookup(toolCall, context);
+      lookups.push(lookup);
+      input.push({
+        type: "function_call_output",
+        call_id: toolCall.id,
+        output: JSON.stringify(lookup.result)
+      });
+    }
+  }
+
+  throw new ChatRequestError(502, "The schedule assistant could not complete the request");
+}
+
+function buildOpenAIInput(messages: ModelMessage[]): OpenAIResponseOutputItem[] {
+  const input: OpenAIResponseOutputItem[] = [];
+  for (const message of messages) {
+    if (message.role === "tool") {
+      input.push({
+        type: "function_call_output",
+        call_id: message.tool_call_id ?? "",
+        output: message.content ?? ""
+      });
+      continue;
+    }
+    if (message.content) {
+      input.push({
+        role: message.role === "system" ? "developer" : message.role,
+        content: message.content
+      });
+    }
+    for (const toolCall of message.tool_calls ?? []) {
+      input.push({
+        type: "function_call",
+        call_id: toolCall.id,
+        name: toolCall.function.name,
+        arguments: toolCall.function.arguments
+      });
+    }
+  }
+  return input;
+}
+
+async function callOpenAIResponse(
+  input: OpenAIResponseOutputItem[],
+  fetcher: typeof fetch,
+  modelSettings: ChatModelSettings,
+  preferredModel: string
+): Promise<{ response: OpenAIResponsePayload; requestModel: string }> {
+  const attempts = buildOpenAIModelAttempts(preferredModel, modelSettings);
+  let lastError: ChatRequestError | undefined;
+  for (const [index, model] of attempts.entries()) {
+    try {
+      const response = await fetchWithTimeout(
+        OPENAI_RESPONSES_URL,
+        {
+          method: "POST",
+          headers: openAIHeaders(),
+          body: JSON.stringify(buildOpenAIRequest(model, input, false))
+        },
+        fetcher
+      );
+      const payload = (await readJson(response)) as OpenAIResponsePayload;
+      if (response.ok) return { response: payload, requestModel: model };
+      lastError = openAIError(response.status, payload.error?.message);
+      if (index === attempts.length - 1 || !shouldTryOpenAIFallback(response.status)) throw lastError;
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      const requestError = error instanceof ChatRequestError
+        ? error
+        : new ChatRequestError(502, "The schedule assistant is temporarily unavailable");
+      lastError = requestError;
+      if (index === attempts.length - 1 || requestError.status !== 502) throw requestError;
+    }
+  }
+  throw lastError ?? new ChatRequestError(502, "The schedule assistant is temporarily unavailable");
+}
+
+async function callOpenAIResponseStream(
+  input: OpenAIResponseOutputItem[],
+  onDelta: (delta: string) => void,
+  fetcher: typeof fetch,
+  signal: AbortSignal | undefined,
+  modelSettings: ChatModelSettings,
+  preferredModel: string
+): Promise<{
+  content: string;
+  emittedContent: boolean;
+  model?: string;
+  output: OpenAIResponseOutputItem[];
+  requestModel: string;
+  toolCalls: ToolCall[];
+}> {
+  const attempts = buildOpenAIModelAttempts(preferredModel, modelSettings);
+  let response: Response | undefined;
+  let requestModel = preferredModel;
+  let lastError: ChatRequestError | undefined;
+
+  for (const [index, model] of attempts.entries()) {
+    try {
+      const candidate = await fetchWithTimeout(
+        OPENAI_RESPONSES_URL,
+        {
+          method: "POST",
+          headers: openAIHeaders(),
+          body: JSON.stringify(buildOpenAIRequest(model, input, true)),
+          signal
+        },
+        fetcher
+      );
+      if (candidate.ok) {
+        response = candidate;
+        requestModel = model;
+        break;
+      }
+      const payload = (await readJson(candidate)) as OpenAIResponsePayload;
+      lastError = openAIError(candidate.status, payload.error?.message);
+      if (index === attempts.length - 1 || !shouldTryOpenAIFallback(candidate.status)) throw lastError;
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) throw error;
+      const requestError = error instanceof ChatRequestError
+        ? error
+        : new ChatRequestError(502, "The schedule assistant is temporarily unavailable");
+      lastError = requestError;
+      if (index === attempts.length - 1 || requestError.status !== 502) throw requestError;
+    }
+  }
+
+  if (!response) throw lastError ?? new ChatRequestError(502, "The schedule assistant is temporarily unavailable");
+  if (!response.body) throw new ChatRequestError(502, "The schedule assistant returned an empty response");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const completedItems: OpenAIResponseOutputItem[] = [];
+  let completedResponse: OpenAIResponsePayload | undefined;
+  let buffer = "";
+  let content = "";
+  let emittedContent = false;
+
+  function processLines(final = false) {
+    const lines = buffer.split(/\r?\n/);
+    buffer = final ? "" : (lines.pop() ?? "");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      let event: OpenAIStreamEvent;
+      try {
+        event = JSON.parse(data) as OpenAIStreamEvent;
+      } catch {
+        continue;
+      }
+      if (event.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
+        content += event.delta;
+        emittedContent = true;
+        onDelta(event.delta);
+      } else if (event.type === "response.output_item.done" && event.item) {
+        completedItems.push(event.item);
+      } else if (event.type === "response.completed" && event.response) {
+        completedResponse = event.response;
+      } else if (event.type === "error" || event.type === "response.failed") {
+        throw openAIError(502, event.error?.message ?? event.message);
+      }
+    }
+  }
+
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException("The request was stopped", "AbortError");
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      processLines();
+    }
+    buffer += decoder.decode();
+    processLines(true);
+  } catch (error) {
+    void reader.cancel();
+    if (isAbortError(error) || signal?.aborted) throw error;
+    if (error instanceof ChatRequestError) throw error;
+    throw new ChatRequestError(502, "The schedule assistant stream was interrupted");
+  }
+
+  const output = completedResponse?.output ?? completedItems;
+  const completedText = completedResponse ? readOpenAIOutputText(completedResponse) : readOpenAIOutputItemsText(output);
+  if (!content && completedText) {
+    content = completedText;
+    emittedContent = true;
+    onDelta(completedText);
+  }
+  return {
+    content,
+    emittedContent,
+    model: completedResponse?.model,
+    output,
+    requestModel,
+    toolCalls: readOpenAIToolCalls(output)
+  };
+}
+
+function buildOpenAIRequest(model: string, input: OpenAIResponseOutputItem[], stream: boolean) {
+  return {
+    model,
+    input,
+    tools: OPENAI_SCHEDULE_TOOLS,
+    parallel_tool_calls: true,
+    max_output_tokens: 1100,
+    store: false,
+    include: ["reasoning.encrypted_content"],
+    stream
+  };
+}
+
+function buildOpenAIModelAttempts(preferredModel: string, settings: ChatModelSettings): string[] {
+  const configured = [settings.primaryModel, ...settings.fallbackModels];
+  const preferredIndex = configured.indexOf(preferredModel);
+  return [...new Set(preferredIndex >= 0 ? configured.slice(preferredIndex) : [preferredModel, ...configured])];
+}
+
+function readOpenAIToolCalls(output: OpenAIResponseOutputItem[]): ToolCall[] {
+  return output
+    .filter((item) => item.type === "function_call" && typeof item.name === "string")
+    .map((item, index) => ({
+      id: typeof item.call_id === "string" && item.call_id ? item.call_id : `call_${index}`,
+      type: "function" as const,
+      function: {
+        name: item.name as string,
+        arguments: typeof item.arguments === "string" ? item.arguments : "{}"
+      }
+    }));
+}
+
+function readOpenAIOutputText(response: OpenAIResponsePayload): string {
+  return typeof response.output_text === "string" ? response.output_text : readOpenAIOutputItemsText(response.output ?? []);
+}
+
+function readOpenAIOutputItemsText(output: OpenAIResponseOutputItem[]): string {
+  return output
+    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+    .filter((content) => content.type === "output_text" && typeof content.text === "string")
+    .map((content) => content.text)
+    .join("");
+}
+
 async function callOpenRouter(
   messages: ModelMessage[],
   fetcher: typeof fetch,
@@ -483,6 +849,15 @@ function openRouterHeaders(): HeadersInit {
   return headers;
 }
 
+function openAIHeaders(): HeadersInit {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new ChatRequestError(503, "The OpenAI schedule assistant is not configured yet");
+  return {
+    authorization: `Bearer ${apiKey}`,
+    "content-type": "application/json"
+  };
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, fetcher: typeof fetch): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
@@ -520,6 +895,24 @@ function openRouterError(status: number, providerMessage?: string): ChatRequestE
     ? "That conversation is too long. Start a new chat and try again"
     : "The schedule assistant could not process that request";
   return new ChatRequestError(502, safeMessage);
+}
+
+function openAIError(status: number, providerMessage?: string): ChatRequestError {
+  if (status === 401 || status === 403) {
+    return new ChatRequestError(503, "The OpenAI schedule assistant is not configured correctly");
+  }
+  if (status === 402) return new ChatRequestError(503, "The OpenAI account has no available model credits");
+  if (status === 408 || status === 409 || status === 429 || status >= 500) {
+    return new ChatRequestError(502, "The schedule assistant is busy. Please try again shortly");
+  }
+  const safeMessage = providerMessage?.toLowerCase().includes("context")
+    ? "That conversation is too long. Start a new chat and try again"
+    : "The schedule assistant could not process that request";
+  return new ChatRequestError(502, safeMessage);
+}
+
+function shouldTryOpenAIFallback(status: number): boolean {
+  return status === 404 || status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
 function elevenLabsError(status: number, providerMessage?: string): ChatRequestError {
@@ -1690,5 +2083,12 @@ const SCHEDULE_TOOLS = [
     }
   }
 ] as const;
+
+const OPENAI_SCHEDULE_TOOLS = SCHEDULE_TOOLS.map((tool) => ({
+  type: "function" as const,
+  name: tool.function.name,
+  description: tool.function.description,
+  parameters: tool.function.parameters
+}));
 
 const SCHEDULE_TOOL_NAMES = new Set<string>(SCHEDULE_TOOLS.map((tool) => tool.function.name));

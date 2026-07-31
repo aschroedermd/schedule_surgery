@@ -23,17 +23,21 @@ import {
 import { Fragment, FormEvent, KeyboardEvent, PointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 import {
   ChatConversationMessage,
+  ChatModelSettings,
+  ChatProvider,
   ChatLookup,
   ChatQuota,
   VoicePreset,
   VoiceQuota,
   fetchChatQuota,
+  fetchChatModelSettings,
   fetchVoiceQuota,
   refreshChatLookups,
   sendChatFeedback,
   streamChatMessage,
   synthesizeChatSpeech,
-  transcribeChatAudio
+  transcribeChatAudio,
+  updateChatModelSettings
 } from "./api";
 
 const MAX_RECORDING_MS = 60_000;
@@ -112,12 +116,14 @@ interface ScheduleCard {
 export function ChatTab({
   token,
   displayName,
+  isAdmin,
   serviceLine,
   plannerVersion,
   onOpenPlanner
 }: {
   token: string;
   displayName: string;
+  isAdmin: boolean;
   serviceLine: string;
   plannerVersion: number;
   onOpenPlanner: (tab: ChatPlannerTab, date?: string) => void;
@@ -138,6 +144,12 @@ export function ChatTab({
   const [voiceMode, setVoiceMode] = useState(false);
   const [voicePreset, setVoicePreset] = useState<VoicePreset>(1);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [adminChatSettings, setAdminChatSettings] = useState<ChatModelSettings>();
+  const [adminFallbackModels, setAdminFallbackModels] = useState("");
+  const [adminSettingsLoading, setAdminSettingsLoading] = useState(false);
+  const [adminSettingsSaving, setAdminSettingsSaving] = useState(false);
+  const [adminSettingsError, setAdminSettingsError] = useState<string>();
+  const [adminSettingsNotice, setAdminSettingsNotice] = useState<string>();
   const [speechStatus, setSpeechStatus] = useState<SpeechStatus>("idle");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string>();
@@ -190,6 +202,30 @@ export function ChatTab({
       cancelled = true;
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!isAdmin || !chatSettingsOpen || adminChatSettings || adminSettingsLoading) return;
+    let cancelled = false;
+    setAdminSettingsLoading(true);
+    setAdminSettingsError(undefined);
+    fetchChatModelSettings(token)
+      .then((settings) => {
+        if (cancelled) return;
+        setAdminChatSettings(settings);
+        setAdminFallbackModels(settings.fallbackModels.join(", "));
+      })
+      .catch((settingsError) => {
+        if (!cancelled) {
+          setAdminSettingsError(settingsError instanceof Error ? settingsError.message : "Unable to load text model settings");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAdminSettingsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [adminChatSettings, adminSettingsLoading, chatSettingsOpen, isAdmin, token]);
 
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
@@ -725,6 +761,39 @@ export function ChatTab({
     }
   }
 
+  function changeAdminChatProvider(chatProvider: ChatProvider) {
+    if (!adminChatSettings) return;
+    const defaults = chatProvider === "openai"
+      ? { primaryModel: "gpt-5.6-luna", fallbackModels: ["gpt-5.6-terra"] }
+      : { primaryModel: "deepseek/deepseek-v4-flash", fallbackModels: ["google/gemma-3-27b-it"] };
+    setAdminChatSettings({ ...adminChatSettings, chatProvider, ...defaults });
+    setAdminFallbackModels(defaults.fallbackModels.join(", "));
+    setAdminSettingsError(undefined);
+    setAdminSettingsNotice(undefined);
+  }
+
+  async function saveAdminChatSettings() {
+    if (!adminChatSettings || adminSettingsSaving) return;
+    setAdminSettingsSaving(true);
+    setAdminSettingsError(undefined);
+    setAdminSettingsNotice(undefined);
+    try {
+      const fallbackModels = adminFallbackModels.split(",").map((model) => model.trim()).filter(Boolean);
+      const settings = await updateChatModelSettings(token, {
+        chatProvider: adminChatSettings.chatProvider,
+        primaryModel: adminChatSettings.primaryModel.trim(),
+        fallbackModels
+      });
+      setAdminChatSettings(settings);
+      setAdminFallbackModels(settings.fallbackModels.join(", "));
+      setAdminSettingsNotice("Text model settings saved for all users.");
+    } catch (settingsError) {
+      setAdminSettingsError(settingsError instanceof Error ? settingsError.message : "Unable to save text model settings");
+    } finally {
+      setAdminSettingsSaving(false);
+    }
+  }
+
   return (
     <section className="chat-page" aria-label="Schedule assistant">
       <div className="chat-surface">
@@ -759,7 +828,12 @@ export function ChatTab({
             <Settings size={17} />
           </button>
           {chatSettingsOpen && (
-            <div id="chatbot-settings-panel" className="chat-settings-panel" role="dialog" aria-label="Chatbot settings">
+            <div
+              id="chatbot-settings-panel"
+              className={`chat-settings-panel${isAdmin ? " admin" : ""}`}
+              role="dialog"
+              aria-label="Chatbot settings"
+            >
               <strong>Chatbot settings</strong>
               <div className="chat-settings-row">
                 <span>Voice</span>
@@ -783,6 +857,60 @@ export function ChatTab({
                   ))}
                 </div>
               </div>
+              {isAdmin && (
+                <div className="chat-settings-admin">
+                  <span className="chat-settings-section-label">Text model · all users</span>
+                  {adminSettingsLoading && <span className="chat-settings-help">Loading…</span>}
+                  {adminChatSettings && (
+                    <>
+                      <label>
+                        <span>Provider</span>
+                        <select
+                          value={adminChatSettings.chatProvider}
+                          disabled={adminSettingsSaving}
+                          onChange={(event) => changeAdminChatProvider(event.target.value as ChatProvider)}
+                        >
+                          <option value="openai">OpenAI API</option>
+                          <option value="openrouter">OpenRouter</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Primary model</span>
+                        <input
+                          value={adminChatSettings.primaryModel}
+                          disabled={adminSettingsSaving}
+                          onChange={(event) => {
+                            setAdminChatSettings({ ...adminChatSettings, primaryModel: event.target.value });
+                            setAdminSettingsNotice(undefined);
+                          }}
+                        />
+                      </label>
+                      <label>
+                        <span>Fallback models</span>
+                        <input
+                          value={adminFallbackModels}
+                          placeholder="Comma-separated model IDs"
+                          disabled={adminSettingsSaving}
+                          onChange={(event) => {
+                            setAdminFallbackModels(event.target.value);
+                            setAdminSettingsNotice(undefined);
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="chat-settings-save"
+                        disabled={adminSettingsSaving || !adminChatSettings.primaryModel.trim()}
+                        onClick={() => void saveAdminChatSettings()}
+                      >
+                        {adminSettingsSaving ? "Saving…" : "Save for all users"}
+                      </button>
+                    </>
+                  )}
+                  {adminSettingsError && <span className="chat-settings-error">{adminSettingsError}</span>}
+                  {adminSettingsNotice && <span className="chat-settings-success">{adminSettingsNotice}</span>}
+                </div>
+              )}
             </div>
           )}
         </div>

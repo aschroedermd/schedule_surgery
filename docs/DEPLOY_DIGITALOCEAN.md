@@ -109,7 +109,13 @@ USER_STORE_PATH=/data/users.json
 ADMIN_API_KEY=<long random admin API key>
 VIEWER_API_KEY=<long random viewer API key>
 
-# Required for the schedule assistant, voice transcription, and voice 4.
+# Required for the default text assistant.
+OPENAI_API_KEY=<OpenAI project API key>
+CHAT_PROVIDER=openai
+OPENAI_PRIMARY_MODEL=gpt-5.6-luna
+OPENAI_FALLBACK_MODELS=gpt-5.6-terra
+
+# Required for voice transcription and voice 4; also supports the optional OpenRouter text provider.
 OPENROUTER_API_KEY=<OpenRouter API key>
 CHAT_SETTINGS_PATH=/data/chat-settings.json
 OPENROUTER_PRIMARY_MODEL=deepseek/deepseek-v4-flash

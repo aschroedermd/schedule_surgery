@@ -119,6 +119,7 @@ export function getOpenApiDocument() {
         ChatModelSettings: {
           type: "object",
           required: [
+            "chatProvider",
             "primaryModel",
             "fallbackModels",
             "transcriptionModel",
@@ -129,12 +130,13 @@ export function getOpenApiDocument() {
             "updatedAt"
           ],
           properties: {
-            primaryModel: { type: "string", example: "deepseek/deepseek-v4-flash-0731" },
+            chatProvider: { type: "string", enum: ["openai", "openrouter"], example: "openai" },
+            primaryModel: { type: "string", example: "gpt-5.6-luna" },
             fallbackModels: {
               type: "array",
               maxItems: 5,
               items: { type: "string" },
-              description: "Ordered OpenRouter fallback model ids. May be empty."
+              description: "Ordered fallback model ids for the selected text provider. May be empty."
             },
             transcriptionModel: { type: "string", example: "nvidia/parakeet-tdt-0.6b-v3" },
             voiceModel: { type: "string", example: "fish-audio/s2.1-pro-free:free" },
@@ -334,8 +336,8 @@ export function getOpenApiDocument() {
       },
       "/api/admin/chat-settings": {
         get: {
-          summary: "Get the assistant's OpenRouter model settings",
-          description: "Requires an admin browser session or the admin X-API-Key. Does not expose the OpenRouter API key.",
+          summary: "Get the assistant's text and voice provider settings",
+          description: "Requires an admin browser session or the admin X-API-Key. Does not expose provider API keys.",
           responses: {
             "200": {
               description: "Current persisted model settings",
@@ -345,7 +347,7 @@ export function getOpenApiDocument() {
           }
         },
         patch: {
-          summary: "Update the assistant's OpenRouter models",
+          summary: "Update the assistant's text and voice provider settings",
           description:
             "Requires an admin browser session or the admin X-API-Key. Send one or more fields. Changes apply to new chat, transcription, or speech requests and persist across restarts.",
           requestBody: {
@@ -355,6 +357,7 @@ export function getOpenApiDocument() {
                 schema: {
                   type: "object",
                   properties: {
+                    chatProvider: { type: "string", enum: ["openai", "openrouter"] },
                     primaryModel: { type: "string" },
                     fallbackModels: { type: "array", maxItems: 5, items: { type: "string" } },
                     transcriptionModel: { type: "string" },
@@ -377,7 +380,7 @@ export function getOpenApiDocument() {
               description: "Updated persisted model settings",
               content: { "application/json": { schema: { $ref: "#/components/schemas/ChatModelSettings" } } }
             },
-            "400": { description: "Invalid OpenRouter model settings" },
+            "400": { description: "Invalid assistant provider settings" },
             "403": { description: "Admin access required" }
           }
         }

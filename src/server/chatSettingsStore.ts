@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDefaultUserStorePath } from "./userStore";
 
+export type ChatProvider = "openai" | "openrouter";
+
 export interface ChatModelSettings {
+  chatProvider: ChatProvider;
   primaryModel: string;
   fallbackModels: string[];
   transcriptionModel: string;
@@ -17,7 +20,7 @@ export interface StoredChatModelSettings extends ChatModelSettings {
 }
 
 interface ChatSettingsData {
-  version: 1;
+  version: 2;
   settings: StoredChatModelSettings;
 }
 
@@ -42,9 +45,13 @@ export class FileChatSettingsStore implements ChatSettingsStore {
 
   async update(patch: Partial<ChatModelSettings>): Promise<StoredChatModelSettings> {
     const current = await this.get();
+    const chatProvider = patch.chatProvider ?? current.chatProvider;
+    const providerChanged = patch.chatProvider !== undefined && patch.chatProvider !== current.chatProvider;
+    const providerDefaults = getProviderModelDefaults(chatProvider);
     const settings = normalizeSettings({
-      primaryModel: patch.primaryModel ?? current.primaryModel,
-      fallbackModels: patch.fallbackModels ?? current.fallbackModels,
+      chatProvider,
+      primaryModel: patch.primaryModel ?? (providerChanged ? providerDefaults.primaryModel : current.primaryModel),
+      fallbackModels: patch.fallbackModels ?? (providerChanged ? providerDefaults.fallbackModels : current.fallbackModels),
       transcriptionModel: patch.transcriptionModel ?? current.transcriptionModel,
       voiceModel: patch.voiceModel ?? current.voiceModel,
       voiceName: patch.voiceName ?? current.voiceName,
@@ -52,18 +59,27 @@ export class FileChatSettingsStore implements ChatSettingsStore {
       elevenLabsVoiceIds: patch.elevenLabsVoiceIds ?? current.elevenLabsVoiceIds,
       updatedAt: new Date().toISOString()
     });
-    await this.save({ version: 1, settings });
+    await this.save({ version: 2, settings });
     return settings;
   }
 
   private async load(): Promise<ChatSettingsData> {
     try {
-      const loaded = JSON.parse(await fs.readFile(this.filePath, "utf8")) as ChatSettingsData;
-      if (loaded?.version !== 1) throw new ChatSettingsValidationError("Unsupported chat settings file version");
-      return { version: 1, settings: normalizeSettings(loaded.settings) };
+      const loaded = JSON.parse(await fs.readFile(this.filePath, "utf8")) as {
+        version?: unknown;
+        settings?: StoredChatModelSettings;
+      };
+      if (loaded?.version === 1) {
+        return {
+          version: 2,
+          settings: normalizeSettings({ ...loaded.settings, chatProvider: "openrouter" } as StoredChatModelSettings)
+        };
+      }
+      if (loaded?.version !== 2) throw new ChatSettingsValidationError("Unsupported chat settings file version");
+      return { version: 2, settings: normalizeSettings(loaded.settings as StoredChatModelSettings) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return { version: 1, settings: getDefaultChatModelSettings() };
+      return { version: 2, settings: getDefaultChatModelSettings() };
     }
   }
 
@@ -86,7 +102,17 @@ export class MemoryChatSettingsStore implements ChatSettingsStore {
   }
 
   async update(patch: Partial<ChatModelSettings>): Promise<StoredChatModelSettings> {
-    this.settings = normalizeSettings({ ...this.settings, ...patch, updatedAt: new Date().toISOString() });
+    const chatProvider = patch.chatProvider ?? this.settings.chatProvider;
+    const providerChanged = patch.chatProvider !== undefined && patch.chatProvider !== this.settings.chatProvider;
+    const providerDefaults = getProviderModelDefaults(chatProvider);
+    this.settings = normalizeSettings({
+      ...this.settings,
+      ...patch,
+      chatProvider,
+      primaryModel: patch.primaryModel ?? (providerChanged ? providerDefaults.primaryModel : this.settings.primaryModel),
+      fallbackModels: patch.fallbackModels ?? (providerChanged ? providerDefaults.fallbackModels : this.settings.fallbackModels),
+      updatedAt: new Date().toISOString()
+    });
     return this.get();
   }
 }
@@ -100,9 +126,12 @@ export function getDefaultChatSettingsPath(): string {
 }
 
 export function getDefaultChatModelSettings(): StoredChatModelSettings {
+  const chatProvider = normalizeChatProvider(process.env.CHAT_PROVIDER ?? "openai");
+  const providerDefaults = getProviderModelDefaults(chatProvider);
   return normalizeSettings({
-    primaryModel: process.env.OPENROUTER_PRIMARY_MODEL || "deepseek/deepseek-v4-flash",
-    fallbackModels: splitFallbackModels(process.env.OPENROUTER_FALLBACK_MODELS) || ["google/gemma-3-27b-it"],
+    chatProvider,
+    primaryModel: providerDefaults.primaryModel,
+    fallbackModels: providerDefaults.fallbackModels,
     transcriptionModel: process.env.OPENROUTER_TRANSCRIPTION_MODEL || "nvidia/parakeet-tdt-0.6b-v3",
     voiceModel: process.env.OPENROUTER_VOICE_MODEL || "fish-audio/s2.1-pro-free:free",
     voiceName: process.env.OPENROUTER_VOICE_NAME || "David Attenborough Dramatic",
@@ -114,19 +143,27 @@ export function getDefaultChatModelSettings(): StoredChatModelSettings {
 
 function normalizeSettings(input: StoredChatModelSettings): StoredChatModelSettings {
   if (!input || typeof input !== "object") throw new ChatSettingsValidationError("Invalid chat settings");
-  const primaryModel = normalizeModelId(input.primaryModel, "primaryModel");
+  const chatProvider = normalizeChatProvider(input.chatProvider);
+  const primaryModel = normalizeChatModelId(input.primaryModel, "primaryModel", chatProvider);
   const fallbackModels = Array.isArray(input.fallbackModels)
-    ? [...new Set(input.fallbackModels.map((model, index) => normalizeModelId(model, `fallbackModels[${index}]`)))]
+    ? [
+        ...new Set(
+          input.fallbackModels.map((model, index) =>
+            normalizeChatModelId(model, `fallbackModels[${index}]`, chatProvider)
+          )
+        )
+      ]
     : invalidFallbackModels();
   if (fallbackModels.length > 5) throw new ChatSettingsValidationError("fallbackModels can contain at most 5 models");
   if (fallbackModels.includes(primaryModel)) {
     throw new ChatSettingsValidationError("fallbackModels cannot include primaryModel");
   }
   return {
+    chatProvider,
     primaryModel,
     fallbackModels,
-    transcriptionModel: normalizeModelId(input.transcriptionModel, "transcriptionModel"),
-    voiceModel: normalizeModelId(input.voiceModel ?? process.env.OPENROUTER_VOICE_MODEL ?? "fish-audio/s2.1-pro-free:free", "voiceModel"),
+    transcriptionModel: normalizeOpenRouterModelId(input.transcriptionModel, "transcriptionModel"),
+    voiceModel: normalizeOpenRouterModelId(input.voiceModel ?? process.env.OPENROUTER_VOICE_MODEL ?? "fish-audio/s2.1-pro-free:free", "voiceModel"),
     voiceName: normalizeVoiceName(input.voiceName ?? process.env.OPENROUTER_VOICE_NAME ?? "David Attenborough Dramatic"),
     elevenLabsModel: normalizeProviderId(
       input.elevenLabsModel ?? process.env.ELEVENLABS_MODEL_ID ?? "eleven_multilingual_v2",
@@ -173,7 +210,22 @@ function normalizeVoiceName(value: unknown): string {
   return voiceName;
 }
 
-function normalizeModelId(value: unknown, field: string): string {
+function normalizeChatProvider(value: unknown): ChatProvider {
+  if (value === "openai" || value === "openrouter") return value;
+  throw new ChatSettingsValidationError("chatProvider must be openai or openrouter");
+}
+
+function normalizeChatModelId(value: unknown, field: string, provider: ChatProvider): string {
+  if (provider === "openrouter") return normalizeOpenRouterModelId(value, field);
+  if (typeof value !== "string" || !value.trim()) throw new ChatSettingsValidationError(`${field} is required`);
+  const model = value.trim();
+  if (model.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(model)) {
+    throw new ChatSettingsValidationError(`${field} must be an OpenAI model id such as gpt-5.6-luna`);
+  }
+  return model;
+}
+
+function normalizeOpenRouterModelId(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) throw new ChatSettingsValidationError(`${field} is required`);
   const model = value.trim();
   if (model.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(model)) {
@@ -188,5 +240,18 @@ function splitFallbackModels(value: string | undefined): string[] | undefined {
 }
 
 function invalidFallbackModels(): never {
-  throw new ChatSettingsValidationError("fallbackModels must be an array of OpenRouter model ids");
+  throw new ChatSettingsValidationError("fallbackModels must be an array of model ids");
+}
+
+function getProviderModelDefaults(provider: ChatProvider): { primaryModel: string; fallbackModels: string[] } {
+  if (provider === "openrouter") {
+    return {
+      primaryModel: process.env.OPENROUTER_PRIMARY_MODEL || "deepseek/deepseek-v4-flash",
+      fallbackModels: splitFallbackModels(process.env.OPENROUTER_FALLBACK_MODELS) || ["google/gemma-3-27b-it"]
+    };
+  }
+  return {
+    primaryModel: process.env.OPENAI_PRIMARY_MODEL || "gpt-5.6-luna",
+    fallbackModels: splitFallbackModels(process.env.OPENAI_FALLBACK_MODELS) || ["gpt-5.6-terra"]
+  };
 }

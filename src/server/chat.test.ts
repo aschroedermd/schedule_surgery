@@ -13,6 +13,17 @@ const user: SessionUser = {
   mustChangePassword: false
 };
 
+const openAISettings = {
+  chatProvider: "openai" as const,
+  primaryModel: "gpt-5.6-luna",
+  fallbackModels: ["gpt-5.6-terra"],
+  transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",
+  voiceModel: "fish-audio/s2.1-pro-free:free",
+  voiceName: "David Attenborough Dramatic",
+  elevenLabsModel: "eleven_multilingual_v2",
+  elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"] as [string, string, string]
+};
+
 async function captureSystemPrompt(question: string, state = createInitialState()): Promise<string> {
   let systemPrompt = "";
   const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
@@ -35,6 +46,8 @@ async function captureSystemPrompt(question: string, state = createInitialState(
 
 describe("schedule assistant", () => {
   beforeEach(() => {
+    process.env.CHAT_PROVIDER = "openrouter";
+    process.env.OPENAI_API_KEY = "test-openai-key";
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
     process.env.ELEVENLABS_API_KEY = "test-elevenlabs-key";
     process.env.CHAT_QUOTA_TIME_ZONE = "America/New_York";
@@ -173,6 +186,7 @@ describe("schedule assistant", () => {
       { state: createInitialState(), user, serviceLine: "Davies" },
       fetcher,
       {
+        chatProvider: "openrouter",
         primaryModel: "deepseek/deepseek-v4-flash-0731",
         fallbackModels: ["anthropic/claude-sonnet-4", "google/gemma-3-27b-it"],
         transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",
@@ -184,6 +198,117 @@ describe("schedule assistant", () => {
     );
 
     expect(result.model).toBe("deepseek/deepseek-v4-flash-0731");
+  });
+
+  it("uses OpenAI Responses and falls back from Luna to Terra", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe("https://api.openai.com/v1/responses");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-openai-key");
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return Response.json({ error: { message: "Primary model is temporarily busy" } }, { status: 429 });
+      }
+      return Response.json({
+        model: "gpt-5.6-terra",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Terra answered." }] }]
+      });
+    }) as typeof fetch;
+
+    const result = await answerScheduleQuestion(
+      [{ role: "user", content: "Who is on call?" }],
+      { state: createInitialState(), user, serviceLine: "Davies" },
+      fetcher,
+      openAISettings
+    );
+
+    expect(requests.map((request) => request.model)).toEqual(["gpt-5.6-luna", "gpt-5.6-terra"]);
+    expect(requests[0]).toMatchObject({
+      store: false,
+      max_output_tokens: 1100,
+      include: ["reasoning.encrypted_content"]
+    });
+    expect(requests[0].input).toEqual(expect.arrayContaining([expect.objectContaining({ role: "developer" })]));
+    expect(requests[0].tools).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "function", name: "get_call_schedule" })])
+    );
+    expect(result).toMatchObject({ message: "Terra answered.", model: "gpt-5.6-terra" });
+  });
+
+  it("replays OpenAI response items and tool outputs across lookup rounds", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const reasoningItem = { type: "reasoning", id: "reasoning_1", encrypted_content: "encrypted" };
+    const functionCall = {
+      type: "function_call",
+      id: "fc_1",
+      call_id: "call_1",
+      name: "get_call_schedule",
+      arguments: JSON.stringify({ start_date: "2026-08-01", end_date: "2026-08-02" })
+    };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return Response.json({ model: "gpt-5.6-luna", output: [reasoningItem, functionCall] });
+      }
+      return Response.json({
+        model: "gpt-5.6-luna",
+        output_text: "The call schedule is ready.",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "The call schedule is ready." }] }]
+      });
+    }) as typeof fetch;
+
+    const result = await answerScheduleQuestion(
+      [{ role: "user", content: "Who is on call this weekend?" }],
+      { state: createInitialState(), user, serviceLine: "Davies" },
+      fetcher,
+      openAISettings
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1].input).toEqual(
+      expect.arrayContaining([
+        reasoningItem,
+        functionCall,
+        expect.objectContaining({ type: "function_call_output", call_id: "call_1" })
+      ])
+    );
+    expect(result.message).toBe("The call schedule is ready.");
+    expect(result.lookups).toHaveLength(1);
+  });
+
+  it("streams OpenAI Responses API text", async () => {
+    const deltas: string[] = [];
+    const messageItem = {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Luna answered." }]
+    };
+    const fetcher = vi.fn(async () => new Response(
+      [
+        `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Luna " })}`,
+        `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "answered." })}`,
+        `data: ${JSON.stringify({ type: "response.output_item.done", item: messageItem })}`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { model: "gpt-5.6-luna", output: [messageItem] } })}`,
+        "data: [DONE]",
+        ""
+      ].join("\n"),
+      { headers: { "content-type": "text/event-stream" } }
+    )) as typeof fetch;
+
+    const result = await streamScheduleQuestion(
+      [{ role: "user", content: "Who is on call?" }],
+      { state: createInitialState(), user, serviceLine: "Davies" },
+      (delta) => deltas.push(delta),
+      fetcher,
+      undefined,
+      () => undefined,
+      openAISettings
+    );
+
+    expect(deltas).toEqual(["Luna ", "answered."]);
+    expect(result).toMatchObject({ message: "Luna answered.", model: "gpt-5.6-luna" });
   });
 
   it("injects a detailed service-and-date-sorted case summary for case questions", async () => {
@@ -339,6 +464,7 @@ describe("schedule assistant", () => {
     }) as typeof fetch;
 
     await synthesizeScheduleSpeech("A concise answer.", 4, fetcher, {
+      chatProvider: "openrouter",
       primaryModel: "deepseek/deepseek-v4-flash",
       fallbackModels: ["google/gemma-3-27b-it"],
       transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",

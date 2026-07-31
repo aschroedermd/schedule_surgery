@@ -225,7 +225,8 @@ export function createApp(
 
   app.post("/api/chat", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
-      if (!process.env.OPENROUTER_API_KEY) {
+      const modelSettings = await chatSettingsStore.get();
+      if (!isChatProviderConfigured(modelSettings)) {
         res.status(503).json({ error: "The schedule assistant is not configured yet" });
         return;
       }
@@ -249,7 +250,6 @@ export function createApp(
         return;
       }
       const state = filterStateForUser(await store.load(), req.user);
-      const modelSettings = await chatSettingsStore.get();
       const answer = await answerScheduleQuestion(
         messages,
         {
@@ -279,7 +279,14 @@ export function createApp(
   });
 
   app.post("/api/chat/stream", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
-    if (!process.env.OPENROUTER_API_KEY) {
+    let modelSettings: ChatModelSettings;
+    try {
+      modelSettings = await chatSettingsStore.get();
+    } catch (error) {
+      next(error);
+      return;
+    }
+    if (!isChatProviderConfigured(modelSettings)) {
       res.status(503).json({ error: "The schedule assistant is not configured yet" });
       return;
     }
@@ -305,7 +312,6 @@ export function createApp(
         return;
       }
       const state = filterStateForUser(await store.load(), req.user);
-      const modelSettings = await chatSettingsStore.get();
       const abortController = new AbortController();
       res.on("close", () => {
         if (!res.writableEnded) abortController.abort();
@@ -2658,6 +2664,13 @@ function readChatModelSettingsPatch(body: unknown): Partial<ChatModelSettings> {
   }
   const input = body as Record<string, unknown>;
   const patch: Partial<ChatModelSettings> = {};
+  if ("chatProvider" in input) {
+    const chatProvider = readRequiredString(input.chatProvider, "chatProvider");
+    if (chatProvider !== "openai" && chatProvider !== "openrouter") {
+      throw new HttpError(400, "chatProvider must be openai or openrouter");
+    }
+    patch.chatProvider = chatProvider;
+  }
   if ("primaryModel" in input) patch.primaryModel = readRequiredString(input.primaryModel, "primaryModel");
   if ("fallbackModels" in input) {
     if (!Array.isArray(input.fallbackModels)) throw new HttpError(400, "fallbackModels must be an array");
@@ -2684,10 +2697,16 @@ function readChatModelSettingsPatch(body: unknown): Partial<ChatModelSettings> {
   if (Object.keys(patch).length === 0) {
     throw new HttpError(
       400,
-      "Provide primaryModel, fallbackModels, transcriptionModel, voiceModel, voiceName, elevenLabsModel, or elevenLabsVoiceIds"
+      "Provide chatProvider, primaryModel, fallbackModels, transcriptionModel, voiceModel, voiceName, elevenLabsModel, or elevenLabsVoiceIds"
     );
   }
   return patch;
+}
+
+function isChatProviderConfigured(settings: ChatModelSettings): boolean {
+  return settings.chatProvider === "openai"
+    ? Boolean(process.env.OPENAI_API_KEY)
+    : Boolean(process.env.OPENROUTER_API_KEY);
 }
 
 function readVoicePreset(value: unknown): VoicePreset {

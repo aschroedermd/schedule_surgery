@@ -696,6 +696,7 @@ export function App() {
         <ChatTab
           token={session.token}
           displayName={session.displayName || session.username}
+          isAdmin={isAdmin}
           serviceLine={selectedService}
           plannerVersion={state.version}
           onOpenPlanner={(tab, date) => void handleChatOpenPlanner(tab, date)}
