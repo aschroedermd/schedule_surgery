@@ -1,15 +1,17 @@
 # Agent Guide: Resident OR Coverage Planner API
 
-Use this guide when an AI agent, script, or MCP server needs to read or update the schedule.
+Use this guide when an AI agent, script, or MCP server needs to read or update the schedule or perform supported webapp administration.
 
 Live app/API base URL: `http://159.89.226.139`. Set `BASE_URL=http://159.89.226.139` when using the curl examples below. If a domain name or HTTPS endpoint is added later, prefer the current configured `PUBLIC_BASE_URL`.
+
+Security prerequisite: the numeric live URL currently shown here is plain HTTP. Do not send an admin API key, bearer token, or temporary password over it from an untrusted network. Configure the documented HTTPS domain first (preferred), or use a trusted SSH tunnel, then set `BASE_URL` to that protected endpoint.
 
 ## Ground Rules
 
 - Store no PHI. Never send patient names, MRNs, DOBs, room numbers tied to patients, or identifiers. Use procedure labels such as `EGD`, `Lap chole`, or `Open ventral hernia`.
 - Use exact ISO dates (`YYYY-MM-DD`) and 24-hour times (`HH:MM`). Validate weekday/date pairs before writing; for example, in 2026, `2026-07-29` is Wednesday, not Monday.
 - Before a planner-state mutation, fetch `GET /api/state` and resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state. Browser-account endpoints are a separate user store and do not use `state.version`.
-- Include `X-State-Version: state.version` on planner-state mutations (`/api/entities`, assignments, coverage entries/requests, claims, Gold Stars, and suggestions). On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate. Do not send this header to login, password, or browser-user management endpoints.
+- Include `X-State-Version: state.version` on planner-state mutations (`/api/entities`, assignments, coverage entries/requests, claims, Gold Stars, and suggestions). On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate. Do not send this header to login, password, browser-user management, or chat-settings endpoints.
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
 - If API keys are configured, use the admin API key only for intentional writes and the viewer API key for read-only tools. Otherwise use browser-session bearer tokens.
 - After writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings.
@@ -24,7 +26,7 @@ curl -H "X-API-Key: $ADMIN_API_KEY" "$BASE_URL/api/state"
 
 Authentication roles:
 
-- `admin`: full planner access. A browser-session admin can manage all browser users. The admin API key can create new `user` or `attending` browser accounts, but cannot list, update, delete, or reset browser users.
+- `admin`: full planner access. A browser-session admin can manage all browser users. The admin API key can create accounts, reset passwords, and manage assistant model settings, but cannot list, update, or delete browser users.
 - `attending`: browser-session account linked to exactly one existing `attendings[]` record. It can create, update, and delete that attending's OR blocks and cases without a service edit grant. It cannot use that ownership exception for clinics, resident assignments, coverage entries, suggestions, or account management; those require the normal service privilege or admin role.
 - `viewer`: read access unless a browser user has explicit per-service `request` or `edit` privileges.
 
@@ -40,7 +42,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
 
 Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
 
-Only a logged-in admin browser session can call `GET /api/users`, `PATCH/DELETE /api/users/{username}`, or `PATCH /api/users/{username}/password`. An admin API key can also call `POST /api/users` and `POST /api/users/bulk` to create new accounts only. API-key creations use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"` (`user` is stored as the browser `viewer` role); a medical-student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
+Only a logged-in admin browser session can call `GET /api/users` or `PATCH/DELETE /api/users/{username}`. An admin API key can call `POST /api/users`, `POST /api/users/bulk`, and `PATCH /api/users/{username}/password`. API-key creations use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"` (`user` is stored as the browser `viewer` role); a medical-student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
 
 Example attending account creation (with an admin API key):
 
@@ -61,6 +63,109 @@ GET /api/openapi.json
 ```
 
 Browser clients can watch state changes with `GET /api/events?token=<browser-token>` using Server-Sent Events. External tools can also poll `/api/state` and compare `version`.
+
+## Admin API Quick Reference
+
+Use the admin API key only from a trusted secret store. Never place it, a temporary password, the OpenRouter key, or the ElevenLabs key in planner data, shell history, chat transcripts, or activity notes.
+
+### Reset a browser user's password
+
+Omit the body to generate a random temporary password. The response returns `temporaryPassword` once, stores only its hash, invalidates the user's existing bearer sessions, and sets `mustChangePassword: true`:
+
+```bash
+curl -X PATCH "$BASE_URL/api/users/cblue/password" \
+  -H "X-API-Key: $ADMIN_API_KEY"
+```
+
+To choose the temporary password, prompt for it so the value is not written into shell history, then send it to the API:
+
+```bash
+read -s "TEMP_PASSWORD?Temporary password: "
+echo
+curl -X PATCH "$BASE_URL/api/users/cblue/password" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  --data-binary "$(jq -nc --arg password "$TEMP_PASSWORD" '{temporaryPassword:$password}')"
+unset TEMP_PASSWORD
+```
+
+Deliver the returned password once through an approved private channel. Do not write it to a file or repeat it in a later response. The admin API key cannot reset the built-in `admin` browser account; that requires an existing browser-admin session. The endpoint does not need `X-State-Version`.
+
+### Read or change the assistant's OpenRouter models and voice
+
+Read the active configuration:
+
+```bash
+curl -H "X-API-Key: $ADMIN_API_KEY" \
+  "$BASE_URL/api/admin/chat-settings"
+```
+
+Switch only the primary chat model:
+
+```bash
+curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"primaryModel":"deepseek/deepseek-v4-flash-0731"}'
+```
+
+Voice buttons map to these persisted settings:
+
+- Voice 1 (default): ElevenLabs, default voice id `kSvMZug5ZFM9sKGpLAei` (James).
+- Voice 2: ElevenLabs, default voice id `dWAnId3mzfl4fTszwtOG`.
+- Voice 3: ElevenLabs, default voice id `0rEo3eAjssGDUCXHYENf`.
+- Voice 4: OpenRouter, using `voiceModel` and `voiceName` (Fish Audio by default).
+
+Switch the OpenRouter model and voice used by button 4 without changing chat or transcription:
+
+```bash
+curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"voiceModel":"fish-audio/s2.1-pro-free:free","voiceName":"David Attenborough Dramatic"}'
+```
+
+`voiceName` must be the provider's exact voice identifier for the selected `voiceModel`. Confirm supported voices on that model's OpenRouter page before changing it; the built-in defaults are [Fish Audio S2.1 Pro Free](https://openrouter.ai/fish-audio/s2.1-pro-free:free) and `David Attenborough Dramatic`.
+
+Switch the ElevenLabs model and all three ElevenLabs button voices:
+
+```bash
+curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "elevenLabsModel":"eleven_multilingual_v2",
+    "elevenLabsVoiceIds":[
+      "kSvMZug5ZFM9sKGpLAei",
+      "dWAnId3mzfl4fTszwtOG",
+      "0rEo3eAjssGDUCXHYENf"
+    ]
+  }'
+```
+
+`elevenLabsVoiceIds` must contain exactly three ids in button order. ElevenLabs requests use `POST /v1/text-to-speech/{voice_id}` and the server-only `ELEVENLABS_API_KEY`; see the [ElevenLabs API introduction](https://elevenlabs.io/docs/api-reference/introduction) and [text-to-speech endpoint](https://elevenlabs.io/docs/api-reference/text-to-speech/convert).
+
+The complete shape is:
+
+```json
+{
+  "primaryModel": "deepseek/deepseek-v4-flash-0731",
+  "fallbackModels": ["google/gemma-3-27b-it"],
+  "transcriptionModel": "nvidia/parakeet-tdt-0.6b-v3",
+  "voiceModel": "fish-audio/s2.1-pro-free:free",
+  "voiceName": "David Attenborough Dramatic",
+  "elevenLabsModel": "eleven_multilingual_v2",
+  "elevenLabsVoiceIds": [
+    "kSvMZug5ZFM9sKGpLAei",
+    "dWAnId3mzfl4fTszwtOG",
+    "0rEo3eAjssGDUCXHYENf"
+  ]
+}
+```
+
+`primaryModel`, `fallbackModels`, `transcriptionModel`, and `voiceModel` are OpenRouter model ids. `voiceName` is the OpenRouter provider voice identifier for button 4. `elevenLabsModel` is an ElevenLabs TTS model id, and `elevenLabsVoiceIds` contains the three ElevenLabs voice ids for buttons 1–3. `fallbackModels` is ordered, accepts up to five entries, and may be empty. A partial `PATCH` preserves omitted fields. Changes apply to new requests immediately and persist in `CHAT_SETTINGS_PATH` (by default `chat-settings.json` beside `USER_STORE_PATH`). The API validates identifier shape, but not provider availability, account access, price, tool-calling support, or voice/model compatibility. After changing a voice setting, read the settings back and make one spoken-response request with the changed button to verify it.
+
+Environment variables provide defaults only when no persisted settings exist: `OPENROUTER_PRIMARY_MODEL`, comma-separated `OPENROUTER_FALLBACK_MODELS`, `OPENROUTER_TRANSCRIPTION_MODEL`, `OPENROUTER_VOICE_MODEL`, `OPENROUTER_VOICE_NAME`, `ELEVENLABS_MODEL_ID`, and comma-separated `ELEVENLABS_VOICE_IDS`. `OPENROUTER_API_KEY` and `ELEVENLABS_API_KEY` remain environment-only and are never returned by this API.
 
 ## Mental Model
 
@@ -136,11 +241,13 @@ GET    /api/healthz
 GET    /api/openapi.json
 GET    /api/session
 GET    /api/events?token=<browser-token>
+GET    /api/admin/chat-settings           (admin browser session or admin API key)
+PATCH  /api/admin/chat-settings           (admin browser session or admin API key)
 GET    /api/users                         (admin browser session only)
-POST   /api/users                         (admin browser session only)
-POST   /api/users/bulk                    (admin browser session only)
+POST   /api/users                         (admin browser session or admin API key)
+POST   /api/users/bulk                    (admin browser session or admin API key)
 PATCH  /api/users/{username}              (admin browser session only)
-PATCH  /api/users/{username}/password     (admin browser session only)
+PATCH  /api/users/{username}/password     (admin browser session or admin API key)
 DELETE /api/users/{username}              (admin browser session only)
 PATCH  /api/me/password
 GET    /api/state
@@ -454,6 +561,18 @@ Assign Adeleke to that case:
 - Warnings are allowed. The scheduler intentionally permits manual overrides while surfacing off-day, overlap, and cross-hospital travel risks.
 - For uncovered coverage requests, prefer the built-in message endpoint instead of writing custom wording.
 - For future MCP tools, expose separate read-only and write tools. Require an explicit confirmation or dry-run summary before destructive deletes.
+
+## Recommended Next Admin APIs
+
+These are useful follow-ups but are not implemented yet:
+
+- Scoped, rotatable API credentials instead of one broad admin key—for example `schedule:write`, `users:reset`, `assistant:configure`, and `integrations:sync`—with key id, expiry, last-used time, and revocation.
+- A model configuration test endpoint that makes a minimal tool-call request before promotion, plus an automatic rollback to the previous known-good configuration after repeated provider failures.
+- Read-only operational status for OpenRouter configuration, database connectivity, QGenda last sync, job health, and recent error counts without returning secrets.
+- Admin-controlled chat quota limits and usage summaries. Return aggregate counts; avoid storing or exposing prompt text.
+- A backup/export and validated restore workflow for planner state, browser users, chat settings, and integration settings. Restores should require a dry run and explicit confirmation.
+- Idempotency keys and a batch mutation endpoint for multi-step schedule changes, so an agent can retry safely without creating duplicate entities or leaving half-applied updates.
+- Full API-key user lifecycle management only after scoped keys and stronger audit logging exist. Until then, keep user listing, privilege changes, and deletion restricted to browser-admin sessions.
 
 ## Smoke Test Pattern
 

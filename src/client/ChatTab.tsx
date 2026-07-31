@@ -10,10 +10,13 @@ import {
   Mic,
   Pencil,
   RotateCcw,
+  Settings,
   Square,
   ThumbsDown,
   ThumbsUp,
   UserRound,
+  Volume2,
+  VolumeX,
   X
 } from "lucide-react";
 import { Fragment, FormEvent, KeyboardEvent, PointerEvent, ReactNode, useEffect, useRef, useState } from "react";
@@ -21,10 +24,14 @@ import {
   ChatConversationMessage,
   ChatLookup,
   ChatQuota,
+  VoicePreset,
+  VoiceQuota,
   fetchChatQuota,
+  fetchVoiceQuota,
   refreshChatLookups,
   sendChatFeedback,
   streamChatMessage,
+  synthesizeChatSpeech,
   transcribeChatAudio
 } from "./api";
 
@@ -34,6 +41,13 @@ const HOLD_TO_SEND_MS = 400;
 const COLLAPSED_MESSAGE_LENGTH = 560;
 const MAX_VISIBLE_CARDS = 4;
 const INPUT_PREFERENCE_KEY = "schedule-chat-input-preference";
+const SILENT_AUDIO_DATA_URL = "data:audio/wav;base64,UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA";
+const VOICE_PRESETS: Array<{ id: VoicePreset; description: string }> = [
+  { id: 1, description: "James · ElevenLabs" },
+  { id: 2, description: "Voice 2 · ElevenLabs" },
+  { id: 3, description: "Voice 3 · ElevenLabs" },
+  { id: 4, description: "Fish Audio · OpenRouter" }
+];
 
 const WORKING_MESSAGES = [
   "I'll look into that…",
@@ -64,6 +78,7 @@ const ALMOST_DONE_MESSAGES = [
 ];
 
 type ChatStatus = "idle" | "thinking" | "streaming" | "requesting-mic" | "recording" | "transcribing";
+type SpeechStatus = "idle" | "generating" | "playing";
 type ChatPlannerTab = "board" | "my" | "calendar" | "call";
 
 interface ChatUiMessage extends ChatConversationMessage {
@@ -118,6 +133,11 @@ export function ChatTab({
   ]);
   const [draft, setDraft] = useState("");
   const [quota, setQuota] = useState<ChatQuota>();
+  const [voiceQuota, setVoiceQuota] = useState<VoiceQuota>();
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [voicePreset, setVoicePreset] = useState<VoicePreset>(1);
+  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState<SpeechStatus>("idle");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string>();
   const [lastFailedQuestion, setLastFailedQuestion] = useState<string>();
@@ -128,6 +148,7 @@ export function ChatTab({
   const threadRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const chatSettingsRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder>();
   const streamRef = useRef<MediaStream>();
   const chunksRef = useRef<Blob[]>([]);
@@ -138,6 +159,9 @@ export function ChatTab({
   const recordingIntervalRef = useRef<number>();
   const responseDelayTimeoutRef = useRef<number>();
   const responseAbortRef = useRef<AbortController>();
+  const speechAudioRef = useRef<HTMLAudioElement>();
+  const speechUrlRef = useRef<string>();
+  const speechPlaybackPrimeRef = useRef<Promise<void>>();
   const workingMessageQueueRef = useRef<string[]>([]);
   const almostDoneMessageQueueRef = useRef<string[]>([]);
   const shouldAutoScrollRef = useRef(true);
@@ -146,13 +170,17 @@ export function ChatTab({
   const isAnswering = status === "thinking" || status === "streaming";
   const isVoiceBusy = status === "requesting-mic" || status === "recording" || status === "transcribing";
   const isBusy = status !== "idle";
-  const quotaExhausted = quota?.remaining === 0;
+  const quotaExhausted = quota?.remaining === 0 && !quota.unlimited;
+  const voiceQuotaExhausted = voiceQuota?.remaining === 0 && !voiceQuota.unlimited;
 
   useEffect(() => {
     let cancelled = false;
-    fetchChatQuota(token)
-      .then((nextQuota) => {
-        if (!cancelled) setQuota(nextQuota);
+    Promise.all([fetchChatQuota(token), fetchVoiceQuota(token)])
+      .then(([nextQuota, nextVoiceQuota]) => {
+        if (!cancelled) {
+          setQuota(nextQuota);
+          setVoiceQuota(nextVoiceQuota);
+        }
       })
       .catch((quotaError) => {
         if (!cancelled) setError(quotaError instanceof Error ? quotaError.message : "Unable to load assistant allowance");
@@ -188,6 +216,7 @@ export function ChatTab({
       window.clearInterval(recordingIntervalRef.current);
       window.clearTimeout(responseDelayTimeoutRef.current);
       responseAbortRef.current?.abort();
+      stopSpeech(true);
       if (recorderRef.current?.state === "recording") {
         recorderRef.current.onstop = null;
         recorderRef.current.stop();
@@ -195,6 +224,25 @@ export function ChatTab({
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
+
+  useEffect(() => {
+    if (voiceQuotaExhausted && speechStatus === "idle") setVoiceMode(false);
+  }, [speechStatus, voiceQuotaExhausted]);
+
+  useEffect(() => {
+    if (!chatSettingsOpen) return;
+    function closeChatSettings(event: MouseEvent | globalThis.KeyboardEvent) {
+      if (event.type === "keydown" && (event as globalThis.KeyboardEvent).key !== "Escape") return;
+      if (event.type === "mousedown" && chatSettingsRef.current?.contains(event.target as Node)) return;
+      setChatSettingsOpen(false);
+    }
+    document.addEventListener("mousedown", closeChatSettings);
+    window.addEventListener("keydown", closeChatSettings);
+    return () => {
+      document.removeEventListener("mousedown", closeChatSettings);
+      window.removeEventListener("keydown", closeChatSettings);
+    };
+  }, [chatSettingsOpen]);
 
   useEffect(() => {
     if (!plannerVersion) return;
@@ -271,6 +319,8 @@ export function ChatTab({
       setResponseStatusMessage(nextRandomizedMessage(ALMOST_DONE_MESSAGES, almostDoneMessageQueueRef));
     }, RESPONSE_DELAY_MS);
     const controller = new AbortController();
+    const shouldSpeak = voiceMode && !voiceQuotaExhausted;
+    const selectedVoicePreset = voicePreset;
     responseAbortRef.current = controller;
     const requestStartedAt = Date.now();
     let assistantMessageId: string | undefined;
@@ -287,7 +337,8 @@ export function ChatTab({
               used: meta.used,
               remaining: meta.remaining,
               limit: meta.limit,
-              warningThreshold: meta.warningThreshold
+              warningThreshold: meta.warningThreshold,
+              unlimited: meta.unlimited
             });
           },
           onReset: () => {
@@ -336,7 +387,8 @@ export function ChatTab({
             );
           }
         },
-        controller.signal
+        controller.signal,
+        shouldSpeak
       );
       const completedId = assistantMessageId ?? createChatMessageId();
       setMessages((current) => {
@@ -359,8 +411,25 @@ export function ChatTab({
         used: response.used,
         remaining: response.remaining,
         limit: response.limit,
-        warningThreshold: response.warningThreshold
+        warningThreshold: response.warningThreshold,
+        unlimited: response.unlimited
       });
+      if (shouldSpeak) {
+        setSpeechStatus("generating");
+        try {
+          const speech = await synthesizeChatSpeech(token, response.message, selectedVoicePreset);
+          setVoiceQuota(speech.quota);
+          await playSpeech(speech.audio);
+        } catch (speechError) {
+          setSpeechStatus("idle");
+          setError(
+            speechError instanceof Error
+              ? `The answer is ready, but it could not be spoken: ${speechError.message}`
+              : "The answer is ready, but it could not be spoken"
+          );
+          void fetchVoiceQuota(token).then(setVoiceQuota).catch(() => undefined);
+        }
+      }
     } catch (sendError) {
       if (assistantMessageId) {
         setMessages((current) => current.filter((message) => message.id !== assistantMessageId));
@@ -383,6 +452,80 @@ export function ChatTab({
 
   function stopResponse() {
     responseAbortRef.current?.abort();
+  }
+
+  function toggleVoiceMode() {
+    if (voiceQuotaExhausted || isBusy) return;
+    if (voiceMode) {
+      stopSpeech();
+    } else {
+      primeSpeechPlayback();
+    }
+    setVoiceMode((current) => !current);
+    setError(undefined);
+  }
+
+  function getSpeechAudio(): HTMLAudioElement {
+    if (!speechAudioRef.current) {
+      speechAudioRef.current = new Audio();
+      speechAudioRef.current.preload = "auto";
+    }
+    return speechAudioRef.current;
+  }
+
+  function primeSpeechPlayback() {
+    const audio = getSpeechAudio();
+    audio.onended = null;
+    audio.onerror = null;
+    audio.muted = true;
+    audio.src = SILENT_AUDIO_DATA_URL;
+    speechPlaybackPrimeRef.current = audio.play()
+      .then(() => {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        audio.muted = false;
+      })
+      .catch(() => {
+        audio.muted = false;
+      });
+  }
+
+  async function playSpeech(blob: Blob) {
+    await speechPlaybackPrimeRef.current;
+    stopSpeech();
+    const url = URL.createObjectURL(blob);
+    const audio = getSpeechAudio();
+    audio.src = url;
+    audio.muted = false;
+    speechUrlRef.current = url;
+    audio.onended = () => stopSpeech();
+    audio.onerror = () => stopSpeech();
+    setSpeechStatus("playing");
+    try {
+      await audio.play();
+    } catch {
+      stopSpeech();
+      throw new Error("Your browser blocked automatic audio playback");
+    }
+  }
+
+  function stopSpeech(releaseAudio = false) {
+    const audio = speechAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.onended = null;
+      audio.onerror = null;
+      audio.removeAttribute("src");
+      audio.load();
+      audio.muted = false;
+      if (releaseAudio) speechAudioRef.current = undefined;
+    }
+    if (speechUrlRef.current) {
+      URL.revokeObjectURL(speechUrlRef.current);
+      speechUrlRef.current = undefined;
+    }
+    setSpeechStatus("idle");
   }
 
   async function beginRecording() {
@@ -564,6 +707,64 @@ export function ChatTab({
   return (
     <section className="chat-page" aria-label="Schedule assistant">
       <div className="chat-surface">
+        <div className="chat-voice-controls" aria-label="Spoken response controls" ref={chatSettingsRef}>
+          <button
+            type="button"
+            className={`chat-voice-mode-button${voiceMode ? " active" : ""}${speechStatus === "playing" ? " speaking" : ""}`}
+            aria-label={
+              voiceQuotaExhausted
+                ? "Daily spoken response limit reached"
+                : voiceMode
+                  ? "Turn off spoken responses"
+                  : "Turn on spoken responses"
+            }
+            aria-pressed={voiceMode}
+            title={voiceModeTitle(voiceMode, voiceQuota, speechStatus, voicePreset)}
+            disabled={voiceQuotaExhausted || isBusy}
+            onClick={toggleVoiceMode}
+          >
+            {voiceMode ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </button>
+          <button
+            type="button"
+            className={`chat-settings-button${chatSettingsOpen ? " active" : ""}`}
+            aria-label="Chatbot settings"
+            aria-haspopup="dialog"
+            aria-expanded={chatSettingsOpen}
+            aria-controls="chatbot-settings-panel"
+            title="Chatbot settings"
+            onClick={() => setChatSettingsOpen((open) => !open)}
+          >
+            <Settings size={17} />
+          </button>
+          {chatSettingsOpen && (
+            <div id="chatbot-settings-panel" className="chat-settings-panel" role="dialog" aria-label="Chatbot settings">
+              <strong>Chatbot settings</strong>
+              <div className="chat-settings-row">
+                <span>Voice</span>
+                <div className="chat-voice-presets" role="group" aria-label="Select spoken response voice">
+                  {VOICE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={voicePreset === preset.id ? "active" : ""}
+                      aria-label={`Select ${preset.description}`}
+                      aria-pressed={voicePreset === preset.id}
+                      title={preset.description}
+                      disabled={voiceQuotaExhausted || isBusy}
+                      onClick={() => {
+                        setVoicePreset(preset.id);
+                        setChatSettingsOpen(false);
+                      }}
+                    >
+                      {preset.id}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="chat-thread" aria-live="polite" ref={threadRef} onScroll={handleThreadScroll}>
           {messages.map((message, index) => (
             <article className={`chat-message ${message.role}${message.streaming ? " streaming" : ""}`} key={message.id}>
@@ -681,6 +882,9 @@ export function ChatTab({
           {status === "transcribing" && (
             <div className="chat-processing-pill" role="status">Transcribing your recording…</div>
           )}
+          {speechStatus === "generating" && (
+            <div className="chat-processing-pill" role="status">Preparing spoken response…</div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -790,7 +994,11 @@ export function ChatTab({
                     : "Enter sends · tap the mic for voice"}
             </span>
             <span className={quota && quota.remaining > quota.warningThreshold ? "chat-quota-subtle" : ""}>
-              {quota ? `${quota.remaining} of ${quota.limit} requests left today` : "20 requests per day"}
+              {quota?.unlimited
+                ? "Unlimited assistant requests"
+                : quota
+                  ? `${quota.remaining} of ${quota.limit} requests left today`
+                  : "20 requests per day"}
             </span>
           </div>
         </div>
@@ -1127,6 +1335,23 @@ function formatCardDate(value: string): string {
 function formatDuration(milliseconds: number): string {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function voiceModeTitle(
+  voiceMode: boolean,
+  quota: VoiceQuota | undefined,
+  status: SpeechStatus,
+  voicePreset: VoicePreset
+): string {
+  if (quota && quota.remaining === 0 && !quota.unlimited) return "Spoken response limit reached for today";
+  if (status === "generating") return "Preparing spoken response";
+  if (status === "playing") return "Speaking response — click to stop voice mode";
+  const allowance = quota?.unlimited
+    ? "unlimited uses"
+    : quota
+      ? `${quota.remaining} of ${quota.limit} spoken responses left today`
+      : "3 spoken responses per day";
+  return `${voiceMode ? "Spoken responses on" : "Spoken responses off"} · voice ${voicePreset} · ${allowance}`;
 }
 
 function formatScheduleKind(kind: string): string {

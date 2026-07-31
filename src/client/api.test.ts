@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchState, streamChatMessage } from "./api";
+import { fetchState, streamChatMessage, synthesizeChatSpeech } from "./api";
 
 describe("client API requests", () => {
   afterEach(() => {
@@ -75,5 +75,28 @@ describe("client API requests", () => {
     expect(deltas).toEqual(["Checking…", "On call: ", "Dr. Blue"]);
     expect(resets).toBe(1);
     expect(response).toMatchObject({ message: "On call: Dr. Blue", stateVersion: 7, remaining: 19 });
+  });
+
+  it("returns generated speech and its daily allowance from response headers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        expect(JSON.parse(String(init?.body))).toEqual({ input: "You are on call Saturday.", voicePreset: 1 });
+        return new Response(new Uint8Array([73, 68, 51]), {
+          headers: {
+            "content-type": "audio/mpeg",
+            "x-voice-used": "3",
+            "x-voice-remaining": "0",
+            "x-voice-limit": "3",
+            "x-voice-unlimited": "false"
+          }
+        });
+      })
+    );
+
+    const result = await synthesizeChatSpeech("token", "You are on call Saturday.", 1);
+
+    expect(result.audio.type).toBe("audio/mpeg");
+    expect(result.quota).toEqual({ used: 3, remaining: 0, limit: 3, unlimited: false });
   });
 });

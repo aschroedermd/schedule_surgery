@@ -50,7 +50,7 @@ export interface UserStore {
   createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]>;
   updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges">>): Promise<UserSummary>;
   deleteUser(username: string): Promise<void>;
-  resetPassword(username: string): Promise<PasswordResetResult>;
+  resetPassword(username: string, temporaryPassword?: string): Promise<PasswordResetResult>;
   changePassword(username: string, currentPassword: string, nextPassword: string): Promise<UserSummary>;
 }
 
@@ -127,11 +127,12 @@ export class FileUserStore implements UserStore {
     await this.save(data);
   }
 
-  async resetPassword(username: string): Promise<PasswordResetResult> {
+  async resetPassword(username: string, requestedTemporaryPassword?: string): Promise<PasswordResetResult> {
     const data = await this.load();
     const user = requireStoredUser(data, username);
     const now = new Date().toISOString();
-    const temporaryPassword = generateTemporaryPassword();
+    const temporaryPassword = readOptionalString(requestedTemporaryPassword) ?? generateTemporaryPassword();
+    assertUsableSecret(temporaryPassword, "Temporary password");
     user.passwordHash = hashSecret(temporaryPassword);
     user.passwordUpdatedAt = now;
     user.updatedAt = now;

@@ -3,12 +3,13 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app";
 import { createInitialState } from "./sampleData";
 import { MemoryStateStore, normalizePlannerState } from "./store";
 import { addDays, getCurrentMonday } from "../shared/date";
 import { ServicePrivilege } from "../shared/types";
+import { MemoryChatSettingsStore } from "./chatSettingsStore";
 
 const TEST_SEED_USER_PASSWORD = "resident-dev-password";
 
@@ -135,6 +136,153 @@ describe("planner API", () => {
       .set("x-api-key", "test-admin-api-key")
       .send({ username: "apiadmin", role: "admin" })
       .expect(403);
+  });
+
+  it("lets the admin API key reset passwords and manage chat models", async () => {
+    const chatSettingsStore = new MemoryChatSettingsStore();
+    const app = createApp(new MemoryStateStore(createInitialState()), { chatSettingsStore });
+
+    await request(app)
+      .patch("/api/users/cblue/password")
+      .set("x-api-key", "test-viewer-api-key")
+      .send({ temporaryPassword: "DeniedReset-2026" })
+      .expect(403);
+
+    await request(app)
+      .patch("/api/users/admin/password")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ temporaryPassword: "NoPrivilegeEscalation-2026" })
+      .expect(403);
+
+    const chosenReset = await request(app)
+      .patch("/api/users/cblue/password")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ temporaryPassword: "TempReset-2026" })
+      .expect(200);
+    expect(chosenReset.body).toEqual(
+      expect.objectContaining({
+        temporaryPassword: "TempReset-2026",
+        user: expect.objectContaining({ username: "cblue", mustChangePassword: true })
+      })
+    );
+    expect(chosenReset.body).not.toHaveProperty("users");
+    await request(app)
+      .post("/api/auth/login")
+      .send({ username: "cblue", password: "TempReset-2026" })
+      .expect(200);
+
+    const generatedReset = await request(app)
+      .patch("/api/users/tcao/password")
+      .set("x-api-key", "test-admin-api-key")
+      .send({})
+      .expect(200);
+    expect(generatedReset.body.temporaryPassword).toMatch(/^[A-Za-z0-9]{14}$/);
+
+    await request(app)
+      .get("/api/admin/chat-settings")
+      .set("x-api-key", "test-viewer-api-key")
+      .expect(403);
+
+    const updated = await request(app)
+      .patch("/api/admin/chat-settings")
+      .set("x-api-key", "test-admin-api-key")
+      .send({
+        primaryModel: "deepseek/deepseek-v4-flash-0731",
+        fallbackModels: ["google/gemma-3-27b-it"],
+        voiceModel: "fish-audio/s2-pro",
+        voiceName: "Custom Narrator",
+        elevenLabsModel: "eleven_flash_v2_5",
+        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+      })
+      .expect(200);
+    expect(updated.body).toEqual(
+      expect.objectContaining({
+        primaryModel: "deepseek/deepseek-v4-flash-0731",
+        fallbackModels: ["google/gemma-3-27b-it"],
+        transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",
+        voiceModel: "fish-audio/s2-pro",
+        voiceName: "Custom Narrator",
+        elevenLabsModel: "eleven_flash_v2_5",
+        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+      })
+    );
+
+    await request(app)
+      .patch("/api/admin/chat-settings")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ primaryModel: "not-a-model-id" })
+      .expect(400);
+
+    const current = await request(app)
+      .get("/api/admin/chat-settings")
+      .set("x-api-key", "test-admin-api-key")
+      .expect(200);
+    expect(current.body.primaryModel).toBe("deepseek/deepseek-v4-flash-0731");
+  });
+
+  it("gives regular users three spoken responses per day and makes admin OpenRouter quotas unlimited", async () => {
+    const store = new MemoryStateStore(createInitialState());
+    const app = createApp(store);
+    const viewerToken = await loginOnApp(app, "cblue");
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+
+    const viewerVoiceQuota = await request(app)
+      .get("/api/chat/voice/quota")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(200);
+    expect(viewerVoiceQuota.body).toEqual({ used: 0, remaining: 3, limit: 3, unlimited: false });
+
+    const adminVoiceQuota = await request(app)
+      .get("/api/chat/voice/quota")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(adminVoiceQuota.body).toEqual({ used: 0, remaining: 3, limit: 3, unlimited: true });
+
+    const adminChatQuota = await request(app)
+      .get("/api/chat/quota")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(adminChatQuota.body).toMatchObject({ used: 0, remaining: 20, limit: 20, unlimited: true });
+
+    const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    const previousElevenLabsKey = process.env.ELEVENLABS_API_KEY;
+    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    process.env.ELEVENLABS_API_KEY = "test-elevenlabs-key";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } }))
+    );
+    try {
+      for (let use = 1; use <= 3; use += 1) {
+        const speech = await request(app)
+          .post("/api/chat/speech")
+          .set("authorization", `Bearer ${viewerToken}`)
+          .send({ input: `Spoken answer ${use}`, voicePreset: use })
+          .expect(200);
+        expect(speech.headers["x-voice-remaining"]).toBe(String(3 - use));
+        expect(speech.headers["x-voice-preset"]).toBe(String(use));
+      }
+      await request(app)
+        .post("/api/chat/speech")
+        .set("authorization", `Bearer ${viewerToken}`)
+        .send({ input: "One too many", voicePreset: 4 })
+        .expect(429);
+
+      for (let use = 1; use <= 4; use += 1) {
+        const speech = await request(app)
+          .post("/api/chat/speech")
+          .set("authorization", `Bearer ${adminToken}`)
+          .send({ input: `Unlimited admin answer ${use}`, voicePreset: use })
+          .expect(200);
+        expect(speech.headers["x-voice-unlimited"]).toBe("true");
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
+      if (previousElevenLabsKey === undefined) delete process.env.ELEVENLABS_API_KEY;
+      else process.env.ELEVENLABS_API_KEY = previousElevenLabsKey;
+    }
   });
 
   it("records login activity with user names and hides activity from non-admin state", async () => {

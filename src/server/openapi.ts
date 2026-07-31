@@ -116,6 +116,40 @@ export function getOpenApiDocument() {
             }
           }
         },
+        ChatModelSettings: {
+          type: "object",
+          required: [
+            "primaryModel",
+            "fallbackModels",
+            "transcriptionModel",
+            "voiceModel",
+            "voiceName",
+            "elevenLabsModel",
+            "elevenLabsVoiceIds",
+            "updatedAt"
+          ],
+          properties: {
+            primaryModel: { type: "string", example: "deepseek/deepseek-v4-flash-0731" },
+            fallbackModels: {
+              type: "array",
+              maxItems: 5,
+              items: { type: "string" },
+              description: "Ordered OpenRouter fallback model ids. May be empty."
+            },
+            transcriptionModel: { type: "string", example: "nvidia/parakeet-tdt-0.6b-v3" },
+            voiceModel: { type: "string", example: "fish-audio/s2.1-pro-free:free" },
+            voiceName: { type: "string", example: "David Attenborough Dramatic" },
+            elevenLabsModel: { type: "string", example: "eleven_multilingual_v2" },
+            elevenLabsVoiceIds: {
+              type: "array",
+              minItems: 3,
+              maxItems: 3,
+              items: { type: "string" },
+              example: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+            },
+            updatedAt: { type: ["string", "null"], format: "date-time" }
+          }
+        },
         ErrorResponse: {
           type: "object",
           properties: {
@@ -298,6 +332,56 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/admin/chat-settings": {
+        get: {
+          summary: "Get the assistant's OpenRouter model settings",
+          description: "Requires an admin browser session or the admin X-API-Key. Does not expose the OpenRouter API key.",
+          responses: {
+            "200": {
+              description: "Current persisted model settings",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ChatModelSettings" } } }
+            },
+            "403": { description: "Admin access required" }
+          }
+        },
+        patch: {
+          summary: "Update the assistant's OpenRouter models",
+          description:
+            "Requires an admin browser session or the admin X-API-Key. Send one or more fields. Changes apply to new chat, transcription, or speech requests and persist across restarts.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    primaryModel: { type: "string" },
+                    fallbackModels: { type: "array", maxItems: 5, items: { type: "string" } },
+                    transcriptionModel: { type: "string" },
+                    voiceModel: { type: "string" },
+                    voiceName: { type: "string" },
+                    elevenLabsModel: { type: "string" },
+                    elevenLabsVoiceIds: {
+                      type: "array",
+                      minItems: 3,
+                      maxItems: 3,
+                      items: { type: "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            "200": {
+              description: "Updated persisted model settings",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ChatModelSettings" } } }
+            },
+            "400": { description: "Invalid OpenRouter model settings" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
       "/api/events": {
         get: {
           summary: "Subscribe to planner state updates",
@@ -344,7 +428,7 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": {
-              description: "Created user, optional temporary password, and refreshed user list",
+              description: "Created user and optional temporary password. Browser-admin sessions also receive the refreshed user list.",
               content: {
                 "application/json": {
                   schema: {
@@ -386,7 +470,7 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": {
-              description: "Created users and refreshed user list",
+              description: "Created users. Browser-admin sessions also receive the refreshed user list.",
               content: {
                 "application/json": {
                   schema: {
@@ -427,11 +511,41 @@ export function getOpenApiDocument() {
         patch: {
           summary: "Generate a temporary password",
           description:
-            "Requires a logged-in admin browser session. API keys are not accepted for browser-user management. Generates a temporary password, returns it once, stores only its hash, and requires the user to change it on next login.",
+            "Requires a logged-in admin browser session or the admin X-API-Key. The API key cannot reset the built-in browser admin account. Omit temporaryPassword to generate one, or send temporaryPassword to choose it. The response returns the temporary password once, only its hash is stored, existing sessions are invalidated, and the user must change it on a later login.",
           parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    temporaryPassword: { type: "string", minLength: 4 }
+                  }
+                }
+              }
+            }
+          },
           responses: {
-            "200": { description: "Temporary password, updated user, and refreshed user list" },
-            "403": { description: "Non-admin user or API-key auth" }
+            "200": {
+              description: "Temporary password and updated user. Browser-admin sessions also receive the refreshed user list.",
+              content: {
+                "application/json": {
+                  schema: {
+                    allOf: [
+                      { $ref: "#/components/schemas/UserCreationResult" },
+                      {
+                        type: "object",
+                        properties: {
+                          users: { type: "array", items: { $ref: "#/components/schemas/UserSummary" } }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "403": { description: "Admin access required" }
           }
         }
       },

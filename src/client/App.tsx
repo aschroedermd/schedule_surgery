@@ -1909,6 +1909,7 @@ function CallShiftsTab({
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
+  const [attendingCalendarView, setAttendingCalendarView] = useState<"night" | "weekly" | null>(null);
   const nightTeamSegments = getNightTeamSegments(state, month);
   const weekendRows = getWeekendCallRows(state, month);
   const today = getTodayDate();
@@ -1935,13 +1936,43 @@ function CallShiftsTab({
         </div>
       </div>
 
-      <AttendingCoveragePanel
-        state={state}
-        month={month}
-        token={token}
-        isAdmin={isAdmin}
-        onMutate={onMutate}
-      />
+      <div className="call-attending-view-actions" aria-label="Attending schedule views">
+        <button
+          type="button"
+          className={attendingCalendarView === "night" ? "secondary-button is-active" : "secondary-button"}
+          aria-expanded={attendingCalendarView === "night"}
+          aria-controls="attending-night-schedule"
+          onClick={() => setAttendingCalendarView((current) => current === "night" ? null : "night")}
+        >
+          Attending Night Schedule
+        </button>
+        <button
+          type="button"
+          className={attendingCalendarView === "weekly" ? "secondary-button is-active" : "secondary-button"}
+          aria-expanded={attendingCalendarView === "weekly"}
+          aria-controls="attending-weekly-schedule"
+          onClick={() => setAttendingCalendarView((current) => current === "weekly" ? null : "weekly")}
+        >
+          Attending Weekly Schedule
+        </button>
+      </div>
+
+      {attendingCalendarView === "night" && (
+        <AttendingNightCalendar state={state} month={month} />
+      )}
+
+      {attendingCalendarView === "weekly" && (
+        <>
+          <AttendingWeeklyCalendar state={state} month={month} />
+          <AttendingCoveragePanel
+            state={state}
+            month={month}
+            token={token}
+            isAdmin={isAdmin}
+            onMutate={onMutate}
+          />
+        </>
+      )}
 
       <section className="call-night-panel">
         {nightTeamSegments.length === 0 ? (
@@ -1999,6 +2030,7 @@ function CallShiftsTab({
                           <strong>{group.residentNames}</strong>
                         </div>
                       ))}
+                      <AttendingCallSummary state={state} date={day.date} entry={day.attendingCallEntry} />
                     </div>
                   </section>
                 ))}
@@ -2008,6 +2040,104 @@ function CallShiftsTab({
         )}
       </div>
     </section>
+  );
+}
+
+const ATTENDING_CALENDAR_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const ATTENDING_WEEKLY_COVERAGE_ROWS: ReadonlyArray<{
+  label: string;
+  line: AttendingCoverageLine;
+  shift: AttendingCoverageShift;
+  role: AttendingCoverageRole;
+}> = [
+  { label: "EGS", line: "EGS", shift: "day", role: "primary" },
+  { label: "Trauma", line: "Trauma", shift: "day", role: "primary" },
+  { label: "SCC", line: "SCC", shift: "day", role: "primary" },
+  { label: "Night", line: "ACS", shift: "night", role: "primary" },
+  { label: "Backup-Night", line: "ACS", shift: "night", role: "backup" }
+];
+
+function AttendingNightCalendar({ state, month }: { state: PlannerState; month: string }) {
+  return (
+    <section id="attending-night-schedule" className="attending-calendar-panel" aria-label="Attending Night Schedule">
+      <header className="attending-calendar-heading">
+        <div>
+          <p className="eyebrow">Attending Night Schedule</p>
+          <h3>ACS call · {formatMonthLabel(month)}</h3>
+        </div>
+        <span>EGS Night · Trauma Night · SCC Night</span>
+      </header>
+      <AttendingMonthCalendar
+        month={month}
+        renderDate={(date) => {
+          const attending = getAttendingNightScheduleForDate(state, date);
+          return attending ? (
+            <div className="attending-night-calendar-entry" title={attending.fullName}>
+              <span>Night</span>
+              <strong>{attending.displayName}</strong>
+            </div>
+          ) : <span className="attending-calendar-empty">Not listed</span>;
+        }}
+      />
+    </section>
+  );
+}
+
+function AttendingWeeklyCalendar({ state, month }: { state: PlannerState; month: string }) {
+  return (
+    <section id="attending-weekly-schedule" className="attending-calendar-panel" aria-label="Attending Weekly Schedule">
+      <header className="attending-calendar-heading">
+        <div>
+          <p className="eyebrow">Attending Weekly Schedule</p>
+          <h3>ACS service coverage · {formatMonthLabel(month)}</h3>
+        </div>
+        <span>Night represents combined ACS call</span>
+      </header>
+      <AttendingMonthCalendar
+        month={month}
+        dense
+        renderDate={(date) => (
+          <div className="attending-weekly-calendar-entries">
+            {getAttendingWeeklyScheduleForDate(state, date).map((coverage) => (
+              <div key={coverage.label} className="attending-weekly-calendar-entry" title={coverage.fullName}>
+                <span>{coverage.label}</span>
+                <strong className={coverage.displayName ? "" : "attending-calendar-empty"}>
+                  {coverage.displayName || "—"}
+                </strong>
+              </div>
+            ))}
+          </div>
+        )}
+      />
+    </section>
+  );
+}
+
+function AttendingMonthCalendar({
+  month,
+  dense = false,
+  renderDate
+}: {
+  month: string;
+  dense?: boolean;
+  renderDate: (date: string) => React.ReactNode;
+}) {
+  const today = getTodayDate();
+  return (
+    <div className="attending-calendar-scroll">
+      <div className={`attending-month-calendar${dense ? " is-dense" : ""}`}>
+        {ATTENDING_CALENDAR_WEEKDAYS.map((weekday) => (
+          <div key={weekday} className="attending-calendar-weekday">{weekday}</div>
+        ))}
+        {getAttendingMonthCalendarCells(month).map((date, index) => date ? (
+          <article key={date} className={`attending-calendar-day${date === today ? " today" : ""}`}>
+            <header>{parseLocalDate(date).getDate()}</header>
+            {renderDate(date)}
+          </article>
+        ) : <div key={`blank-${index}`} className="attending-calendar-day is-blank" aria-hidden="true" />)}
+      </div>
+    </div>
   );
 }
 
@@ -2217,20 +2347,15 @@ function formatSyncTime(value: string): string {
   return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function AttendingCallSummary({ state, entry }: { state: PlannerState; entry?: CoverageEntry }) {
-  const dayAttending = state.attendings.find((attending) => attending.id === entry?.dayAttendingId);
-  const nightAttending = state.attendings.find((attending) => attending.id === entry?.nightAttendingId);
-  const dayName = dayAttending ? getResidentLastName(dayAttending.name) : "Not listed";
-  const nightName = nightAttending ? getResidentLastName(nightAttending.name) : "Not listed";
-  const attendingNames =
-    !entry || entry.dayAttendingId === entry.nightAttendingId
-      ? dayName
-      : `${dayName} (day), ${nightName} (night)`;
+function AttendingCallSummary({ state, date, entry }: { state: PlannerState; date: string; entry?: CoverageEntry }) {
+  const nightAttending = getAttendingNightScheduleForDate(state, date);
+  const legacyDayAttending = state.attendings.find((attending) => attending.id === entry?.dayAttendingId);
+  const attendingName = nightAttending?.displayName ?? (legacyDayAttending ? getResidentLastName(legacyDayAttending.name) : "Not listed");
 
   return (
     <div className="call-duty-line attending-call-duty">
       <span className="call-duty-label">Attending</span>
-      <strong>{attendingNames}</strong>
+      <strong>{attendingName}</strong>
     </div>
   );
 }
@@ -4270,6 +4395,64 @@ function getMonthBounds(month: string): { startDate: string; endDate: string } {
   const end = new Date(year, monthNumber, 0);
   const endDate = `${year}-${String(monthNumber).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
   return { startDate, endDate };
+}
+
+function getAttendingMonthCalendarCells(month: string): Array<string | undefined> {
+  const { startDate } = getMonthBounds(month);
+  const dates = getDatesInMonth(month);
+  const leadingBlanks = Array<string | undefined>(parseLocalDate(startDate).getDay()).fill(undefined);
+  const cells: Array<string | undefined> = [...leadingBlanks, ...dates];
+  while (cells.length % 7 !== 0) cells.push(undefined);
+  return cells;
+}
+
+interface AttendingScheduleDisplay {
+  displayName: string;
+  fullName: string;
+}
+
+export function getAttendingNightScheduleForDate(
+  state: PlannerState,
+  date: string
+): AttendingScheduleDisplay | undefined {
+  const assignment = state.attendingCoverageAssignments.find(
+    (candidate) =>
+      candidate.date === date &&
+      candidate.line === "ACS" &&
+      candidate.shift === "night" &&
+      candidate.role === "primary"
+  );
+  const legacyEntry = state.coverageEntries.find((entry) => entry.date === date && entry.kind === "attending-call");
+  const attendingId = assignment?.attendingId ?? legacyEntry?.nightAttendingId;
+  return getAttendingScheduleDisplay(state, attendingId);
+}
+
+export function getAttendingWeeklyScheduleForDate(
+  state: PlannerState,
+  date: string
+): Array<{ label: string; displayName: string; fullName: string }> {
+  return ATTENDING_WEEKLY_COVERAGE_ROWS.map((row) => {
+    if (row.label === "Night") {
+      const attending = getAttendingNightScheduleForDate(state, date);
+      return { label: row.label, displayName: attending?.displayName ?? "", fullName: attending?.fullName ?? "" };
+    }
+    const assignment = state.attendingCoverageAssignments.find(
+      (candidate) =>
+        candidate.date === date &&
+        candidate.line === row.line &&
+        candidate.shift === row.shift &&
+        candidate.role === row.role
+    );
+    const attending = getAttendingScheduleDisplay(state, assignment?.attendingId);
+    return { label: row.label, displayName: attending?.displayName ?? "", fullName: attending?.fullName ?? "" };
+  });
+}
+
+function getAttendingScheduleDisplay(state: PlannerState, attendingId: string | undefined): AttendingScheduleDisplay | undefined {
+  if (!attendingId) return undefined;
+  const attending = state.attendings.find((candidate) => candidate.id === attendingId);
+  if (!attending) return undefined;
+  return { displayName: getResidentLastName(attending.name), fullName: attending.name };
 }
 
 function getWeekendAnchorDate(date: string): string {

@@ -61,11 +61,19 @@ import {
   answerScheduleQuestion,
   ChatMessage,
   ChatRequestError,
+  VoicePreset,
   getChatQuotaDateKey,
   refreshScheduleLookups,
   streamScheduleQuestion,
+  synthesizeScheduleSpeech,
   transcribeScheduleAudio
 } from "./chat";
+import {
+  ChatModelSettings,
+  ChatSettingsStore,
+  ChatSettingsValidationError,
+  createDefaultChatSettingsStore
+} from "./chatSettingsStore";
 import { StateConflictError, StateStore } from "./store";
 import { UpsertUserInput, UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
 import { syncQgenda } from "./qgenda";
@@ -73,6 +81,7 @@ import { syncQgenda } from "./qgenda";
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
 const DAILY_CHAT_LIMIT = 20;
+const DAILY_VOICE_LIMIT = 3;
 
 const collections: CollectionName[] = [
   "hospitals",
@@ -87,9 +96,13 @@ const collections: CollectionName[] = [
 type ScheduleEditableCollection = "attendingBlocks" | "cases" | "clinicSessions";
 const scheduleEditableCollections = new Set<CollectionName>(["attendingBlocks", "cases", "clinicSessions"]);
 
-export function createApp(store: StateStore, options: { userStore?: UserStore } = {}) {
+export function createApp(
+  store: StateStore,
+  options: { userStore?: UserStore; chatSettingsStore?: ChatSettingsStore } = {}
+) {
   const app = express();
   const userStore = options.userStore ?? createDefaultUserStore();
+  const chatSettingsStore = options.chatSettingsStore ?? createDefaultChatSettingsStore();
   const requireAuth = authenticate(userStore);
   const loginLimiter = createRateLimiter(8, 15 * 60 * 1000);
   const transcriptionLimiter = createRateLimiter(25, 24 * 60 * 60 * 1000);
@@ -170,10 +183,41 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     res.json(req.user);
   });
 
+  app.get("/api/admin/chat-settings", requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res, next) => {
+    try {
+      res.json(await chatSettingsStore.get());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/admin/chat-settings", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      res.json(await chatSettingsStore.update(readChatModelSettingsPatch(req.body)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/chat/quota", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
-      const quota = await store.getChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
-      res.json({ ...quota, limit: DAILY_CHAT_LIMIT, warningThreshold: 5 });
+      const unlimited = req.user!.role === "admin";
+      const quota = unlimited
+        ? { used: 0, remaining: DAILY_CHAT_LIMIT }
+        : await store.getChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
+      res.json({ ...quota, limit: DAILY_CHAT_LIMIT, warningThreshold: 5, unlimited });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/chat/voice/quota", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const unlimited = req.user!.role === "admin";
+      const quota = unlimited
+        ? { used: 0, remaining: DAILY_VOICE_LIMIT }
+        : await store.getVoiceQuota(req.user!.username, getChatQuotaDateKey(), DAILY_VOICE_LIMIT);
+      res.json({ ...quota, limit: DAILY_VOICE_LIMIT, unlimited });
     } catch (error) {
       next(error);
     }
@@ -191,7 +235,10 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         res.status(400).json({ error: "Current service is required" });
         return;
       }
-      const quota = await store.consumeChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
+      const unlimited = req.user!.role === "admin";
+      const quota = unlimited
+        ? { allowed: true, used: 0, remaining: DAILY_CHAT_LIMIT }
+        : await store.consumeChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
       if (!quota.allowed) {
         res.status(429).json({
           error: "Daily assistant limit reached. Try again after midnight Eastern time.",
@@ -202,17 +249,25 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         return;
       }
       const state = filterStateForUser(await store.load(), req.user);
-      const answer = await answerScheduleQuestion(messages, {
-        state,
-        user: req.user!,
-        serviceLine
-      });
+      const modelSettings = await chatSettingsStore.get();
+      const answer = await answerScheduleQuestion(
+        messages,
+        {
+          state,
+          user: req.user!,
+          serviceLine,
+          voiceMode: req.body.voiceMode === true
+        },
+        fetch,
+        modelSettings
+      );
       res.json({
         ...answer,
         used: quota.used,
         remaining: quota.remaining,
         limit: DAILY_CHAT_LIMIT,
-        warningThreshold: 5
+        warningThreshold: 5,
+        unlimited
       });
     } catch (error) {
       if (error instanceof ChatRequestError) {
@@ -236,7 +291,10 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
 
     try {
-      const quota = await store.consumeChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
+      const unlimited = req.user!.role === "admin";
+      const quota = unlimited
+        ? { allowed: true, used: 0, remaining: DAILY_CHAT_LIMIT }
+        : await store.consumeChatQuota(req.user!.username, getChatQuotaDateKey(), DAILY_CHAT_LIMIT);
       if (!quota.allowed) {
         res.status(429).json({
           error: "Daily assistant limit reached. Try again after midnight Eastern time.",
@@ -247,6 +305,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         return;
       }
       const state = filterStateForUser(await store.load(), req.user);
+      const modelSettings = await chatSettingsStore.get();
       const abortController = new AbortController();
       res.on("close", () => {
         if (!res.writableEnded) abortController.abort();
@@ -262,17 +321,19 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         remaining: quota.remaining,
         limit: DAILY_CHAT_LIMIT,
         warningThreshold: 5,
+        unlimited,
         checkedAt: new Date().toISOString(),
         dataUpdatedAt: state.updatedAt,
         stateVersion: state.version
       });
       const answer = await streamScheduleQuestion(
         messages,
-        { state, user: req.user!, serviceLine },
+        { state, user: req.user!, serviceLine, voiceMode: req.body.voiceMode === true },
         (delta) => writeChatStreamEvent(res, { type: "delta", delta }),
         fetch,
         abortController.signal,
-        () => writeChatStreamEvent(res, { type: "reset" })
+        () => writeChatStreamEvent(res, { type: "reset" }),
+        modelSettings
       );
       writeChatStreamEvent(res, {
         type: "complete",
@@ -280,7 +341,8 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         used: quota.used,
         remaining: quota.remaining,
         limit: DAILY_CHAT_LIMIT,
-        warningThreshold: 5
+        warningThreshold: 5,
+        unlimited
       });
       res.end();
     } catch (error) {
@@ -361,20 +423,74 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   app.post("/api/chat/transcribe", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const dateKey = getChatQuotaDateKey();
-      const quota = await store.getChatQuota(req.user!.username, dateKey, DAILY_CHAT_LIMIT);
-      if (quota.remaining === 0) {
+      const unlimited = req.user!.role === "admin";
+      const quota = unlimited
+        ? { used: 0, remaining: DAILY_CHAT_LIMIT }
+        : await store.getChatQuota(req.user!.username, dateKey, DAILY_CHAT_LIMIT);
+      if (!unlimited && quota.remaining === 0) {
         res.status(429).json({ error: "Daily assistant limit reached. Try again after midnight Eastern time." });
         return;
       }
-      if (!transcriptionLimiter.tryConsume(`${req.user!.username}:${dateKey}`)) {
+      if (!unlimited && !transcriptionLimiter.tryConsume(`${req.user!.username}:${dateKey}`)) {
         res.status(429).json({ error: "Daily voice recording limit reached. Try again tomorrow." });
         return;
       }
-      const text = await transcribeScheduleAudio({
-        data: typeof req.body.data === "string" ? req.body.data : "",
-        format: typeof req.body.format === "string" ? req.body.format : undefined
-      });
+      const text = await transcribeScheduleAudio(
+        {
+          data: typeof req.body.data === "string" ? req.body.data : "",
+          format: typeof req.body.format === "string" ? req.body.format : undefined
+        },
+        fetch,
+        await chatSettingsStore.get()
+      );
       res.json({ text });
+    } catch (error) {
+      if (error instanceof ChatRequestError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/speech", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const input = typeof req.body.input === "string" ? req.body.input.trim() : "";
+      if (!input) {
+        res.status(400).json({ error: "Speech text is required" });
+        return;
+      }
+      const voicePreset = readVoicePreset(req.body.voicePreset);
+      if (voicePreset === 4 && !process.env.OPENROUTER_API_KEY) {
+        res.status(503).json({ error: "OpenRouter voice is not configured yet" });
+        return;
+      }
+      if (voicePreset !== 4 && !process.env.ELEVENLABS_API_KEY) {
+        res.status(503).json({ error: "ElevenLabs voice is not configured yet" });
+        return;
+      }
+      const unlimited = req.user!.role === "admin";
+      const quota = unlimited
+        ? { allowed: true, used: 0, remaining: DAILY_VOICE_LIMIT }
+        : await store.consumeVoiceQuota(req.user!.username, getChatQuotaDateKey(), DAILY_VOICE_LIMIT);
+      if (!quota.allowed) {
+        res.status(429).json({
+          error: "Daily voice limit reached. Try again after midnight Eastern time.",
+          ...quota,
+          limit: DAILY_VOICE_LIMIT,
+          unlimited
+        });
+        return;
+      }
+      const speech = await synthesizeScheduleSpeech(input, voicePreset, fetch, await chatSettingsStore.get());
+      res.setHeader("content-type", speech.contentType);
+      res.setHeader("cache-control", "no-store");
+      res.setHeader("x-voice-used", String(quota.used));
+      res.setHeader("x-voice-remaining", String(quota.remaining));
+      res.setHeader("x-voice-limit", String(DAILY_VOICE_LIMIT));
+      res.setHeader("x-voice-unlimited", String(unlimited));
+      res.setHeader("x-voice-preset", String(voicePreset));
+      res.send(Buffer.from(speech.audio));
     } catch (error) {
       if (error instanceof ChatRequestError) {
         res.status(error.status).json({ error: error.message });
@@ -427,7 +543,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         entityId: created.user.username
       });
       await commitState(req, nextState);
-      res.status(201).json({ ...created, users: await userStore.listUsers() });
+      res.status(201).json({ ...created, ...(await sessionUserList(req)) });
     } catch (error) {
       next(error);
     }
@@ -449,7 +565,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         entityId: created.map((item) => item.user.username).join(",")
       });
       await commitState(req, nextState);
-      res.status(201).json({ created, users: await userStore.listUsers() });
+      res.status(201).json({ created, ...(await sessionUserList(req)) });
     } catch (error) {
       next(error);
     }
@@ -490,9 +606,14 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
-  app.patch("/api/users/:username/password", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/users/:username/password", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
-      const reset = await userStore.resetPassword(getParam(req.params.username));
+      const username = getParam(req.params.username);
+      if (req.user?.authType === "apiKey" && username.trim().toLowerCase() === "admin") {
+        throw new HttpError(403, "The admin API key cannot reset the built-in browser admin account");
+      }
+      const requestedTemporaryPassword = readRequestedTemporaryPassword(req.body);
+      const reset = await userStore.resetPassword(username, requestedTemporaryPassword);
       await recordActivity({
         ...requestActivityActor(req),
         activityType: "account",
@@ -501,7 +622,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
         entityType: "user",
         entityId: reset.user.username
       });
-      res.json({ ...reset, users: await userStore.listUsers() });
+      res.json({ ...reset, ...(await sessionUserList(req)) });
     } catch (error) {
       next(error);
     }
@@ -1195,6 +1316,10 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     throw new Error("Unable to record activity");
   }
 
+  async function sessionUserList(req: AuthenticatedRequest): Promise<{ users?: Awaited<ReturnType<UserStore["listUsers"]>> }> {
+    return req.user?.authType === "session" ? { users: await userStore.listUsers() } : {};
+  }
+
   const clientDist = path.resolve(process.cwd(), "dist/client");
   app.use(express.static(clientDist, { index: false }));
   app.get("*", async (req, res, next) => {
@@ -1223,6 +1348,10 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
     if (error instanceof HttpError) {
       res.status(error.status).json({ error: error.message });
+      return;
+    }
+    if (error instanceof ChatSettingsValidationError) {
+      res.status(400).json({ error: error.message });
       return;
     }
     res.status(500).json({ error: error instanceof Error ? error.message : "Internal server error" });
@@ -2513,6 +2642,60 @@ function assertDate(value: unknown): string {
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readRequestedTemporaryPassword(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || !("temporaryPassword" in body)) return undefined;
+  const temporaryPassword = readOptionalString((body as { temporaryPassword?: unknown }).temporaryPassword);
+  if (!temporaryPassword) throw new HttpError(400, "temporaryPassword must be a non-empty string");
+  if (temporaryPassword.length < 4) throw new HttpError(400, "Temporary password must be at least 4 characters");
+  return temporaryPassword;
+}
+
+function readChatModelSettingsPatch(body: unknown): Partial<ChatModelSettings> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new HttpError(400, "Chat settings must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const patch: Partial<ChatModelSettings> = {};
+  if ("primaryModel" in input) patch.primaryModel = readRequiredString(input.primaryModel, "primaryModel");
+  if ("fallbackModels" in input) {
+    if (!Array.isArray(input.fallbackModels)) throw new HttpError(400, "fallbackModels must be an array");
+    patch.fallbackModels = input.fallbackModels.map((model, index) =>
+      readRequiredString(model, `fallbackModels[${index}]`)
+    );
+  }
+  if ("transcriptionModel" in input) {
+    patch.transcriptionModel = readRequiredString(input.transcriptionModel, "transcriptionModel");
+  }
+  if ("voiceModel" in input) patch.voiceModel = readRequiredString(input.voiceModel, "voiceModel");
+  if ("voiceName" in input) patch.voiceName = readRequiredString(input.voiceName, "voiceName");
+  if ("elevenLabsModel" in input) {
+    patch.elevenLabsModel = readRequiredString(input.elevenLabsModel, "elevenLabsModel");
+  }
+  if ("elevenLabsVoiceIds" in input) {
+    if (!Array.isArray(input.elevenLabsVoiceIds) || input.elevenLabsVoiceIds.length !== 3) {
+      throw new HttpError(400, "elevenLabsVoiceIds must contain exactly 3 voice ids");
+    }
+    patch.elevenLabsVoiceIds = input.elevenLabsVoiceIds.map((voiceId, index) =>
+      readRequiredString(voiceId, `elevenLabsVoiceIds[${index}]`)
+    ) as [string, string, string];
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new HttpError(
+      400,
+      "Provide primaryModel, fallbackModels, transcriptionModel, voiceModel, voiceName, elevenLabsModel, or elevenLabsVoiceIds"
+    );
+  }
+  return patch;
+}
+
+function readVoicePreset(value: unknown): VoicePreset {
+  const preset = value === undefined ? 1 : Number(value);
+  if (!Number.isInteger(preset) || preset < 1 || preset > 4) {
+    throw new HttpError(400, "voicePreset must be 1, 2, 3, or 4");
+  }
+  return preset as VoicePreset;
 }
 
 function readRequiredString(value: unknown, field: string): string {

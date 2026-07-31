@@ -29,7 +29,17 @@ export interface ChatQuota {
   remaining: number;
   limit: number;
   warningThreshold: number;
+  unlimited?: boolean;
 }
+
+export interface VoiceQuota {
+  used: number;
+  remaining: number;
+  limit: number;
+  unlimited?: boolean;
+}
+
+export type VoicePreset = 1 | 2 | 3 | 4;
 
 export interface ChatConversationMessage {
   role: "user" | "assistant";
@@ -126,15 +136,20 @@ export async function fetchChatQuota(token: string): Promise<ChatQuota> {
   return request<ChatQuota>("/api/chat/quota", { token });
 }
 
+export async function fetchVoiceQuota(token: string): Promise<VoiceQuota> {
+  return request<VoiceQuota>("/api/chat/voice/quota", { token });
+}
+
 export async function sendChatMessage(
   token: string,
   messages: ChatConversationMessage[],
-  serviceLine: string
+  serviceLine: string,
+  voiceMode = false
 ): Promise<ChatResponse> {
   return request<ChatResponse>("/api/chat", {
     method: "POST",
     token,
-    body: JSON.stringify({ messages, serviceLine })
+    body: JSON.stringify({ messages, serviceLine, voiceMode })
   });
 }
 
@@ -147,7 +162,8 @@ export async function streamChatMessage(
     onMeta?: (meta: ChatStreamMeta) => void;
     onReset?: () => void;
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  voiceMode = false
 ): Promise<ChatResponse> {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
@@ -155,7 +171,7 @@ export async function streamChatMessage(
       authorization: `Bearer ${token}`,
       "content-type": "application/json"
     },
-    body: JSON.stringify({ messages, serviceLine }),
+    body: JSON.stringify({ messages, serviceLine, voiceMode }),
     signal
   });
   if (!response.ok) {
@@ -233,6 +249,38 @@ export async function transcribeChatAudio(token: string, data: string, format = 
     token,
     body: JSON.stringify({ data, format })
   });
+}
+
+export async function synthesizeChatSpeech(
+  token: string,
+  input: string,
+  voicePreset: VoicePreset
+): Promise<{ audio: Blob; quota: VoiceQuota }> {
+  const response = await fetch("/api/chat/speech", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ input, voicePreset })
+  });
+  if (!response.ok) {
+    const payload = await readOptionalJson<{ error?: string }>(response);
+    if (response.status === 401) throw new UnauthorizedError(payload?.error);
+    throw new Error(payload?.error ?? `Request failed: ${response.status}`);
+  }
+  const used = Number(response.headers.get("x-voice-used") ?? 0);
+  const remaining = Number(response.headers.get("x-voice-remaining") ?? 0);
+  const limit = Number(response.headers.get("x-voice-limit") ?? 3);
+  return {
+    audio: await response.blob(),
+    quota: {
+      used: Number.isFinite(used) ? used : 0,
+      remaining: Number.isFinite(remaining) ? remaining : 0,
+      limit: Number.isFinite(limit) ? limit : 3,
+      unlimited: response.headers.get("x-voice-unlimited") === "true"
+    }
+  };
 }
 
 export async function fetchSchedule(token: string, weekId: string, serviceLine?: string): Promise<WeekSchedule> {

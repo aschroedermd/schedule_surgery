@@ -33,7 +33,7 @@ The admin Users tab can add/delete users one at a time or in bulk, generate temp
 - `request`: can submit coverage calendar edit requests for that service.
 - `edit`: can directly edit service assignments and coverage entries, and approve/deny requests for that service.
 
-User listing and later account changes require a logged-in admin browser-session bearer token. The admin API key may create new `user`, `attending`, or `medical-student` accounts only; it cannot list, update, delete, or reset browser users:
+User listing, privilege changes, and deletion require a logged-in admin browser-session bearer token. The admin API key may create new `user`, `attending`, or `medical-student` accounts and reset an existing user's password; it cannot list, update, or delete browser users:
 
 ```text
 GET    /api/users
@@ -45,6 +45,12 @@ DELETE /api/users/:username
 ```
 
 For `POST /api/users` and `POST /api/users/bulk`, use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"`; `user` is stored internally as the browser `viewer` role. A medical-student account automatically creates a linked, case-assignable Medical Student roster entry and cannot be assigned to blocks, clinics, call, or rounding. Set permissions with `servicePrivileges`. An `attending` account must include an existing planner `attendingId`. Set `temporaryPassword` to choose the first-login password. If both `password` and `temporaryPassword` are omitted, the temporary password is `schroeder1`, returned once, and opens the password-change screen on every login until the user changes it. `POST /api/me/password/skip` lets that current session use the planner without changing the stored requirement.
+
+`PATCH /api/users/:username/password` accepts an admin browser token or `ADMIN_API_KEY`. The API key cannot reset the built-in `admin` browser account. Omit the body to generate a random temporary password, or send `{ "temporaryPassword": "..." }` to choose it. The response returns the temporary password once and invalidates existing bearer sessions for that user.
+
+Admins can read and partially update the assistant's persisted AI settings with `GET/PATCH /api/admin/chat-settings`. Supported fields are `primaryModel`, ordered `fallbackModels`, `transcriptionModel`, `voiceModel`, `voiceName`, `elevenLabsModel`, and `elevenLabsVoiceIds`; provider API keys remain environment-only.
+
+Spoken assistant output uses `GET /api/chat/voice/quota` for the signed-in user's allowance and `POST /api/chat/speech` with `{ "input": "final assistant text", "voicePreset": 1 }` to return an MP3. Presets 1–3 use the configured ElevenLabs model and ordered voice ids; preset 4 uses the configured OpenRouter model and voice. Regular users receive three spoken responses per Eastern-time day; admins are unlimited. See the [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert), [Fish Audio S2.1 Pro page](https://fish.audio/blog/s2-1-pro-free-api/), and [OpenRouter TTS guide](https://openrouter.ai/docs/guides/overview/multimodal/tts).
 
 Create a regular user with the admin API key:
 

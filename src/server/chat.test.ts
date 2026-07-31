@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createInitialState } from "./sampleData";
-import { answerScheduleQuestion, streamScheduleQuestion, transcribeScheduleAudio } from "./chat";
+import { answerScheduleQuestion, streamScheduleQuestion, synthesizeScheduleSpeech, transcribeScheduleAudio } from "./chat";
 import { MemoryStateStore } from "./store";
 import { SessionUser } from "../shared/types";
 
@@ -36,6 +36,7 @@ async function captureSystemPrompt(question: string, state = createInitialState(
 describe("schedule assistant", () => {
   beforeEach(() => {
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    process.env.ELEVENLABS_API_KEY = "test-elevenlabs-key";
     process.env.CHAT_QUOTA_TIME_ZONE = "America/New_York";
   });
 
@@ -153,6 +154,36 @@ describe("schedule assistant", () => {
     );
     expect(callTool?.function.parameters.properties).toHaveProperty("attending_name");
     expect(callTool?.function.parameters.properties).not.toHaveProperty("service");
+  });
+
+  it("uses the configured primary and fallback OpenRouter models", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: "deepseek/deepseek-v4-flash-0731",
+        models: ["anthropic/claude-sonnet-4", "google/gemma-3-27b-it"]
+      });
+      return Response.json({
+        model: "deepseek/deepseek-v4-flash-0731",
+        choices: [{ message: { role: "assistant", content: "Configured model answered." } }]
+      });
+    }) as typeof fetch;
+
+    const result = await answerScheduleQuestion(
+      [{ role: "user", content: "Who is on call?" }],
+      { state: createInitialState(), user, serviceLine: "Davies" },
+      fetcher,
+      {
+        primaryModel: "deepseek/deepseek-v4-flash-0731",
+        fallbackModels: ["anthropic/claude-sonnet-4", "google/gemma-3-27b-it"],
+        transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",
+        voiceModel: "fish-audio/s2.1-pro-free:free",
+        voiceName: "David Attenborough Dramatic",
+        elevenLabsModel: "eleven_multilingual_v2",
+        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+      }
+    );
+
+    expect(result.model).toBe("deepseek/deepseek-v4-flash-0731");
   });
 
   it("injects a detailed service-and-date-sorted case summary for case questions", async () => {
@@ -280,6 +311,82 @@ describe("schedule assistant", () => {
     );
   });
 
+  it("uses Fish Audio S2.1 Pro with the requested dramatic voice", async () => {
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe("https://openrouter.ai/api/v1/audio/speech");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        model: "fish-audio/s2.1-pro-free:free",
+        input: "You are on call Saturday.",
+        voice: "David Attenborough Dramatic",
+        response_format: "mp3"
+      });
+      return new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } });
+    }) as typeof fetch;
+
+    const result = await synthesizeScheduleSpeech("You are on call Saturday.", 4, fetcher);
+
+    expect(result.contentType).toBe("audio/mpeg");
+    expect([...result.audio]).toEqual([73, 68, 51]);
+  });
+
+  it("uses the configured speech model and voice", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: "fish-audio/s2-pro",
+        voice: "Custom Narrator"
+      });
+      return new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } });
+    }) as typeof fetch;
+
+    await synthesizeScheduleSpeech("A concise answer.", 4, fetcher, {
+      primaryModel: "deepseek/deepseek-v4-flash",
+      fallbackModels: ["google/gemma-3-27b-it"],
+      transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",
+      voiceModel: "fish-audio/s2-pro",
+      voiceName: "Custom Narrator",
+      elevenLabsModel: "eleven_multilingual_v2",
+      elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+    });
+  });
+
+  it("uses ElevenLabs for presets 1 through 3", async () => {
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        "https://api.elevenlabs.io/v1/text-to-speech/dWAnId3mzfl4fTszwtOG?output_format=mp3_44100_128"
+      );
+      expect(new Headers(init?.headers).get("xi-api-key")).toBe("test-elevenlabs-key");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        text: "A concise answer.",
+        model_id: "eleven_multilingual_v2"
+      });
+      return new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } });
+    }) as typeof fetch;
+
+    await synthesizeScheduleSpeech("A concise answer.", 2, fetcher);
+  });
+
+  it("instructs voice-mode answers to be short spoken dialogue without visual formatting", async () => {
+    let systemPrompt = "";
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content: string }> };
+      systemPrompt = body.messages.find((message) => message.role === "system")?.content ?? "";
+      return Response.json({
+        model: "deepseek/deepseek-v4-flash",
+        choices: [{ message: { role: "assistant", content: "You are on call Saturday." } }]
+      });
+    }) as typeof fetch;
+
+    await answerScheduleQuestion(
+      [{ role: "user", content: "Am I on call Saturday?" }],
+      { state: createInitialState(), user, serviceLine: "Davies", voiceMode: true },
+      fetcher
+    );
+
+    expect(systemPrompt).toContain("Voice mode is enabled");
+    expect(systemPrompt).toContain("one to three short sentences");
+    expect(systemPrompt).toContain("Do not use Markdown, tables, bullets, headings, figures");
+  });
+
   it("streams answer text and returns the schedule version it checked", async () => {
     const deltas: string[] = [];
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
@@ -401,5 +508,22 @@ describe("daily chat quota", () => {
       remaining: 0
     });
     await expect(store.getChatQuota("cblue", "2026-07-29", 20)).resolves.toEqual({ used: 0, remaining: 20 });
+  });
+
+  it("allows exactly 3 spoken responses per user and date", async () => {
+    const store = new MemoryStateStore(createInitialState());
+    for (let requestNumber = 1; requestNumber <= 3; requestNumber += 1) {
+      await expect(store.consumeVoiceQuota("cblue", "2026-07-28", 3)).resolves.toMatchObject({
+        allowed: true,
+        used: requestNumber,
+        remaining: 3 - requestNumber
+      });
+    }
+    await expect(store.consumeVoiceQuota("cblue", "2026-07-28", 3)).resolves.toEqual({
+      allowed: false,
+      used: 3,
+      remaining: 0
+    });
+    await expect(store.getVoiceQuota("cblue", "2026-07-29", 3)).resolves.toEqual({ used: 0, remaining: 3 });
   });
 });

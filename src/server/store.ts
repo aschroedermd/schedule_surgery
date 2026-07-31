@@ -35,11 +35,14 @@ export interface StateStore {
   save(state: PlannerState, options?: SaveOptions): Promise<PlannerState>;
   getChatQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }>;
   consumeChatQuota(username: string, dateKey: string, limit: number): Promise<{ allowed: boolean; used: number; remaining: number }>;
+  getVoiceQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }>;
+  consumeVoiceQuota(username: string, dateKey: string, limit: number): Promise<{ allowed: boolean; used: number; remaining: number }>;
 }
 
 export class MemoryStateStore implements StateStore {
   private state: PlannerState;
   private chatUsage = new Map<string, number>();
+  private voiceUsage = new Map<string, number>();
 
   constructor(initialState: PlannerState = createInitialState()) {
     this.state = normalizePlannerState(initialState);
@@ -78,6 +81,25 @@ export class MemoryStateStore implements StateStore {
     if (used >= limit) return { allowed: false, used, remaining: 0 };
     const nextUsed = used + 1;
     this.chatUsage.set(key, nextUsed);
+    return { allowed: true, used: nextUsed, remaining: limit - nextUsed };
+  }
+
+  async getVoiceQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }> {
+    const key = `${username}:${dateKey}`;
+    const used = this.voiceUsage.get(key) ?? 0;
+    return { used, remaining: Math.max(0, limit - used) };
+  }
+
+  async consumeVoiceQuota(
+    username: string,
+    dateKey: string,
+    limit: number
+  ): Promise<{ allowed: boolean; used: number; remaining: number }> {
+    const key = `${username}:${dateKey}`;
+    const used = this.voiceUsage.get(key) ?? 0;
+    if (used >= limit) return { allowed: false, used, remaining: 0 };
+    const nextUsed = used + 1;
+    this.voiceUsage.set(key, nextUsed);
     return { allowed: true, used: nextUsed, remaining: limit - nextUsed };
   }
 }
@@ -164,6 +186,39 @@ export class PostgresStateStore implements StateStore {
     return { allowed: false, ...quota };
   }
 
+  async getVoiceQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }> {
+    await this.ensureInitialized();
+    const result = await this.pool.query<{ request_count: number }>(
+      "select request_count from voice_daily_usage where username = $1 and usage_date = $2",
+      [username, dateKey]
+    );
+    const used = Number(result.rows[0]?.request_count ?? 0);
+    return { used, remaining: Math.max(0, limit - used) };
+  }
+
+  async consumeVoiceQuota(
+    username: string,
+    dateKey: string,
+    limit: number
+  ): Promise<{ allowed: boolean; used: number; remaining: number }> {
+    await this.ensureInitialized();
+    const result = await this.pool.query<{ request_count: number }>(
+      `insert into voice_daily_usage (username, usage_date, request_count, updated_at)
+       values ($1, $2, 1, now())
+       on conflict (username, usage_date) do update
+       set request_count = voice_daily_usage.request_count + 1, updated_at = now()
+       where voice_daily_usage.request_count < $3
+       returning request_count`,
+      [username, dateKey, limit]
+    );
+    if (result.rows[0]) {
+      const used = Number(result.rows[0].request_count);
+      return { allowed: true, used, remaining: Math.max(0, limit - used) };
+    }
+    const quota = await this.getVoiceQuota(username, dateKey, limit);
+    return { allowed: false, ...quota };
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -181,6 +236,16 @@ export class PostgresStateStore implements StateStore {
     await this.pool.query("alter table planner_state add column if not exists version bigint not null default 1");
     await this.pool.query(`
       create table if not exists chat_daily_usage (
+        username text not null,
+        usage_date date not null,
+        request_count integer not null default 0,
+        updated_at timestamptz not null default now(),
+        primary key (username, usage_date),
+        check (request_count >= 0)
+      )
+    `);
+    await this.pool.query(`
+      create table if not exists voice_daily_usage (
         username text not null,
         usage_date date not null,
         request_count integer not null default 0,

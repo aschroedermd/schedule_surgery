@@ -109,8 +109,17 @@ USER_STORE_PATH=/data/users.json
 ADMIN_API_KEY=<long random admin API key>
 VIEWER_API_KEY=<long random viewer API key>
 
-# Required for the schedule assistant and voice transcription.
+# Required for the schedule assistant, voice transcription, and voice 4.
 OPENROUTER_API_KEY=<OpenRouter API key>
+CHAT_SETTINGS_PATH=/data/chat-settings.json
+OPENROUTER_PRIMARY_MODEL=deepseek/deepseek-v4-flash
+OPENROUTER_FALLBACK_MODELS=google/gemma-3-27b-it
+OPENROUTER_TRANSCRIPTION_MODEL=nvidia/parakeet-tdt-0.6b-v3
+
+# Required for spoken-response voices 1–3.
+ELEVENLABS_API_KEY=<ElevenLabs API key>
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+ELEVENLABS_VOICE_IDS=kSvMZug5ZFM9sKGpLAei,dWAnId3mzfl4fTszwtOG,0rEo3eAjssGDUCXHYENf
 CHAT_QUOTA_TIME_ZONE=America/New_York
 ```
 

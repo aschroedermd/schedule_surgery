@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { shouldApplyScheduleLoad } from "./App";
+import {
+  getAttendingNightScheduleForDate,
+  getAttendingWeeklyScheduleForDate,
+  shouldApplyScheduleLoad
+} from "./App";
+import type { AttendingCoverageAssignment, PlannerState } from "../shared/types";
+import { createInitialState } from "../server/sampleData";
 import {
   canEditScheduleForSelectedService,
   getNavigationTabs,
@@ -89,3 +95,55 @@ describe("schedule load coordination", () => {
     expect(shouldApplyScheduleLoad(2, 2, "Berry", "Berry")).toBe(true);
   });
 });
+
+describe("attending call calendars", () => {
+  it("uses consolidated ACS night coverage for both the night and weekly calendars", () => {
+    const assignments: AttendingCoverageAssignment[] = [
+      attendingCoverage("night", "ACS", "night", "primary", "att_night"),
+      attendingCoverage("egs", "EGS", "day", "primary", "att_egs"),
+      attendingCoverage("trauma", "Trauma", "day", "primary", "att_trauma"),
+      attendingCoverage("scc", "SCC", "day", "primary", "att_scc"),
+      attendingCoverage("backup", "ACS", "night", "backup", "att_backup")
+    ];
+    const state: PlannerState = createInitialState();
+    state.attendings = [
+      { id: "att_night", name: "Dr. Night", service: "Davies", priority: 3 },
+      { id: "att_egs", name: "Dr. Egs", service: "Davies", priority: 3 },
+      { id: "att_trauma", name: "Dr. Trauma", service: "Davies", priority: 3 },
+      { id: "att_scc", name: "Dr. Scc", service: "Davies", priority: 3 },
+      { id: "att_backup", name: "Dr. Backup", service: "Davies", priority: 3 }
+    ];
+    state.attendingCoverageAssignments = assignments;
+    state.coverageEntries = [];
+
+    expect(getAttendingNightScheduleForDate(state, "2026-08-07")?.displayName).toBe("Night");
+    expect(getAttendingWeeklyScheduleForDate(state, "2026-08-07").map(({ label, displayName }) => [label, displayName])).toEqual([
+      ["EGS", "Egs"],
+      ["Trauma", "Trauma"],
+      ["SCC", "Scc"],
+      ["Night", "Night"],
+      ["Backup-Night", "Backup"]
+    ]);
+  });
+});
+
+function attendingCoverage(
+  id: string,
+  line: AttendingCoverageAssignment["line"],
+  shift: AttendingCoverageAssignment["shift"],
+  role: AttendingCoverageAssignment["role"],
+  attendingId: string
+): AttendingCoverageAssignment {
+  return {
+    id,
+    date: "2026-08-07",
+    line,
+    shift,
+    role,
+    attendingId,
+    source: "qgenda",
+    note: "",
+    createdAt: "2026-08-01T03:00:00.000Z",
+    updatedAt: "2026-08-01T03:00:00.000Z"
+  };
+}
