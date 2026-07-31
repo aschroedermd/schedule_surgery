@@ -1130,6 +1130,47 @@ describe("planner API", () => {
       .expect(400);
   });
 
+  it("stores dedicated attending service, ACS call, and manual practice coverage", async () => {
+    const { app, token } = await loginAs("admin");
+
+    const egs = await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-06", line: "EGS", shift: "day", role: "primary", attendingId: "att_chen", note: "" })
+      .expect(201);
+    expect(egs.body.attendingCoverageAssignments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ line: "EGS", shift: "day", source: "manual" })])
+    );
+
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-06", line: "ACS", shift: "night", role: "primary", attendingId: "att_patel", note: "" })
+      .expect(201);
+
+    const practice = await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-06", line: "Practice", shift: "24h", role: "primary", attendingId: "att_morris", note: "" })
+      .expect(201);
+    expect(practice.body.attendingCoverageAssignments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ line: "Practice", shift: "24h", source: "api" })])
+    );
+
+    const duplicate = await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-06", line: "Practice", shift: "24h", role: "primary", attendingId: "att_chen", note: "" })
+      .expect(409);
+    expect(duplicate.body.error).toMatch(/already assigned/i);
+
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-06", line: "EGS", shift: "night", role: "primary", attendingId: "att_chen", note: "" })
+      .expect(400);
+  });
+
   it("keeps surgery call entries resident-only and capped at three plus one SCC/ICU resident", async () => {
     const { app, token } = await loginAs("admin");
 

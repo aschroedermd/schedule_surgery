@@ -154,6 +154,8 @@ export function createInitialState(): PlannerState {
       }
     ],
     assignments: [],
+    attendingCoverageAssignments: [],
+    qgendaSync: { enabled: false },
     coverageEntries: createSeedCoverageEntries(),
     coverageRequests: [],
     goldStarAwards: [],

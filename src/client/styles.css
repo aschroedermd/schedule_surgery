@@ -229,6 +229,31 @@ textarea {
   resize: vertical;
 }
 
+.attending-line-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+}
+
+.attending-lines-editor {
+  position: relative;
+}
+
+.attending-lines-popover {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(270px, 80vw);
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
 h1,
 h2,
 p {
@@ -4185,6 +4210,154 @@ h2 {
   font-weight: 800;
 }
 
+.attending-coverage-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  padding: 14px;
+}
+
+.attending-coverage-heading,
+.attending-sync-status,
+.attending-coverage-line {
+  display: flex;
+  align-items: center;
+}
+
+.attending-coverage-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.attending-sync-status {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sync-state {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.sync-state.sync-error {
+  color: var(--color-danger);
+}
+
+.attending-coverage-help {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.attending-coverage-form {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 0.85fr 0.85fr 1.3fr 1.3fr auto;
+  align-items: end;
+  gap: 8px;
+  border-radius: 7px;
+  background: var(--bg-surface-hover);
+  padding: 10px;
+}
+
+.attending-coverage-list {
+  display: grid;
+  border-top: 1px solid var(--border-color);
+}
+
+.attending-coverage-day {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  border-bottom: 1px solid var(--border-color);
+  padding: 9px 0;
+}
+
+.attending-coverage-date {
+  display: grid;
+  align-content: start;
+  gap: 1px;
+}
+
+.attending-coverage-date strong {
+  color: var(--text-main);
+  font-size: 0.86rem;
+}
+
+.attending-coverage-date span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.attending-coverage-assignments {
+  display: grid;
+  gap: 6px;
+}
+
+.attending-coverage-line {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.attending-coverage-line > strong {
+  min-width: 95px;
+  color: var(--text-main);
+  font-size: 0.9rem;
+}
+
+.attending-coverage-line > span:not(.coverage-line-badge):not(.qgenda-badge) {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.coverage-line-badge,
+.qgenda-badge {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.coverage-line-badge {
+  min-width: 72px;
+  background: var(--color-primary-light);
+  color: var(--color-primary-hover);
+  text-align: center;
+}
+
+.line-trauma {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.line-scc {
+  background: var(--bg-note-chip, var(--bg-chip-note));
+  color: var(--text-chip-note);
+}
+
+.line-practice,
+.line-vascular,
+.line-pediatrics {
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+
+.qgenda-badge {
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+
+.coverage-note {
+  font-style: italic;
+}
+
 .call-night-panel p {
   margin: 0;
 }
@@ -4362,6 +4535,10 @@ h2 {
   .call-shifts-toolbar {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .attending-coverage-form {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
@@ -4391,6 +4568,20 @@ h2 {
   }
 
   .call-weekend-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .attending-coverage-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .attending-sync-status {
+    justify-content: flex-start;
+  }
+
+  .attending-coverage-form,
+  .attending-coverage-day {
     grid-template-columns: minmax(0, 1fr);
   }
 }

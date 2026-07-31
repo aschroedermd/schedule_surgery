@@ -116,11 +116,53 @@ GET /api/events?token=<browser bearer token>
 
 `/api/residents/:residentId/calendar.ics` returns a resident-specific ICS feed containing OR, clinic, call, rounding, off, and note entries. Admins can export any resident; non-admin browser users can export only the resident linked by `residents[].username`. Residents also support editable `aliases` for alternate display names.
 
-The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one `service`; residents have editable `serviceTags` plus a dated `rotationSchedule`. Off-service residents can also carry `rosterKind: "off-service"`, `sourceProgram`, `sourceProgramAbbreviation` such as `EM` or `Pl Sx`, and `accountEligible: false` when they should be manually selectable without seeded login accounts.
+The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one OR `service` plus optional `coverageLines`, `email`, aliases, and `qgendaStaffId`; residents have editable `serviceTags` plus a dated `rotationSchedule`. An attending login account links to one of these records through `attendingId`. Off-service residents can also carry `rosterKind: "off-service"`, `sourceProgram`, `sourceProgramAbbreviation` such as `EM` or `Pl Sx`, and `accountEligible: false` when they should be manually selectable without seeded login accounts.
 
 Calendar call entries are shared across all services. Surgery call uses `kind: "call"` with one `residentId` from `state.residents` for each `callPosition`: `senior`, `mid-level`, and `intern`. The one SCC/ICU resident is an additional call entry with `note: "SCC"` or `note: "ICU"` and no `callPosition`. Call `note` must otherwise be blank; do not store role labels, source text, or pasted names there.
 
-Attending call uses one `kind: "attending-call"` entry per Friday-Sunday date with both `dayAttendingId` and `nightAttendingId`. Set both fields to the same attending for the common all-day assignment, or use different attending IDs for split day/night coverage.
+Legacy `kind: "attending-call"` entries are migrated into the dedicated attending-coverage collection. New integrations should use `/api/attending-coverage`.
+
+## Attending Coverage And QGenda
+
+`state.attendingCoverageAssignments` is the canonical attending call roster. Its coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`; roles are `primary` or `backup`; shifts are `day`, `night`, or `24h`. The EGS Night, Trauma Night, and SCC Night tasks are represented once as primary `ACS` night call. Practice, Vascular, and Pediatrics coverage is available on the Call tab and to the schedule assistant, but is intentionally excluded from the rounding calendar.
+
+```text
+POST   /api/attending-coverage
+PATCH  /api/attending-coverage/:id
+DELETE /api/attending-coverage/:id
+POST   /api/integrations/qgenda/sync
+```
+
+Create a practice-call assignment with an admin API key:
+
+```bash
+curl -X POST https://your-domain.example/api/attending-coverage \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "date":"2026-08-03",
+    "line":"Practice",
+    "shift":"24h",
+    "role":"primary",
+    "attendingId":"att_9f4a9822",
+    "note":""
+  }'
+```
+
+API-key entries receive `source: "api"`; entries created in the admin UI receive `source: "manual"`. A date/line/shift/role slot may only be assigned once. QGenda-owned entries cannot be patched or deleted locally because the next sync would replace them; make those changes in QGenda and sync again.
+
+The server reads the configured published QGenda schedule daily around 03:00 in `QGENDA_SYNC_TIME_ZONE` (default `America/New_York`). The supplied schedule's EGS Day, Trauma Day, SCC Day, EGS/Trauma/SCC Night, Backup Day, and Backup Night tasks are normalized into this collection. Each import is transactional: an invalid or inconsistent ACS-night triplet leaves the prior assignments unchanged and records the failed sync status in `state.qgendaSync`.
+
+```dotenv
+QGENDA_SYNC_ENABLED=true
+QGENDA_PUBLIC_LINK_URL=https://app.qgenda.com/Link/view?linkKey=...
+QGENDA_SYNC_TIME_ZONE=America/New_York
+QGENDA_SYNC_MONTHS_PAST=1
+QGENDA_SYNC_MONTHS_FUTURE=3
+QGENDA_SYNC_ON_START=true
+```
+
+The server also synchronizes once on every process startup, including after a rebuild or deployment restart. This is enabled by default; set `QGENDA_SYNC_ON_START=false` only when startup synchronization must be suppressed. Admins can use the Call tab's **Sync now** action or call `POST /api/integrations/qgenda/sync`. If QGenda changes task or staff identifiers, override the checked-in defaults with `QGENDA_PUBLIC_TASK_MAP_JSON` or `QGENDA_PUBLIC_STAFF_MAP_JSON` rather than changing importer code.
 
 Calendar `rounding` entries are service-specific and can have multiple residents on the same Saturday-Sunday date; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. Create additional coverage entries with `POST /api/coverage-entries`; patch or delete a specific `coverageEntries[].id` to change an existing assignment.
 

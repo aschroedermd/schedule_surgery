@@ -1,4 +1,4 @@
-import { CALL_POSITIONS, SERVICE_LINES } from "../shared/types";
+import { ATTENDING_COVERAGE_LINES, CALL_POSITIONS, SERVICE_LINES } from "../shared/types";
 
 export function getOpenApiDocument() {
   return {
@@ -180,6 +180,22 @@ export function getOpenApiDocument() {
               type: "string",
               description: "For call entries, omit this unless marking the one SCC/ICU resident with exactly SCC or ICU."
             }
+          }
+        },
+        AttendingCoverageInput: {
+          type: "object",
+          required: ["date", "line", "shift", "role", "attendingId"],
+          properties: {
+            date: { type: "string", format: "date" },
+            line: {
+              type: "string",
+              enum: [...ATTENDING_COVERAGE_LINES],
+              description: "Use ACS for the shared EGS/Trauma/SCC primary night assignment."
+            },
+            shift: { type: "string", enum: ["day", "night", "24h"] },
+            role: { type: "string", enum: ["primary", "backup"] },
+            attendingId: { type: "string" },
+            note: { type: "string", description: "Optional no-PHI scheduling note." }
           }
         },
         VacationBlockInput: {
@@ -698,6 +714,65 @@ export function getOpenApiDocument() {
           responses: {
             "200": { description: "Updated PlannerState" },
             "403": { description: "Edit privilege required" }
+          }
+        }
+      },
+      "/api/attending-coverage": {
+        post: {
+          summary: "Create an attending coverage assignment",
+          description:
+            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice, Vascular, and Pediatrics are supported here without adding entries to the rounding calendar.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AttendingCoverageInput" }
+              }
+            }
+          },
+          responses: {
+            "201": { description: "Updated PlannerState" },
+            "400": { description: "Invalid assignment" },
+            "409": { description: "Coverage slot is already assigned" }
+          }
+        }
+      },
+      "/api/attending-coverage/{id}": {
+        patch: {
+          summary: "Patch a manual or API attending coverage assignment",
+          description: "Admin only. QGenda-owned assignments return 409 and must be changed in QGenda.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AttendingCoverageInput" }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "409": { description: "QGenda-owned assignment or duplicate slot" }
+          }
+        },
+        delete: {
+          summary: "Delete a manual or API attending coverage assignment",
+          description: "Admin only. QGenda-owned assignments return 409 and must be changed in QGenda.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "409": { description: "QGenda-owned assignment" }
+          }
+        }
+      },
+      "/api/integrations/qgenda/sync": {
+        post: {
+          summary: "Run the QGenda attending-coverage sync now",
+          description:
+            "Admin only. Reads the configured published QGenda link, replaces QGenda-managed slots in the sync window, preserves manual/API-only lines, and returns the updated state plus import counts.",
+          responses: {
+            "200": { description: "QGenda sync result" },
+            "500": { description: "QGenda fetch or validation failed; the prior assignments remain in place" }
           }
         }
       },

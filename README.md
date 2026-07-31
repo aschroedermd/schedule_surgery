@@ -35,11 +35,13 @@ DATABASE_URL=memory npm run dev
 - The signed-in landing page is a schedule assistant powered by `deepseek/deepseek-v4-flash`, with `google/gemma-3-27b-it` as its automatic fallback. It can read OR/clinic, call, calendar, and vacation context through permission-aware tools. Each user has 20 requests per Eastern-time day and receives a warning at five remaining.
 - Hold-to-record voice messages are transcribed server-side with `nvidia/parakeet-tdt-0.6b-v3`; set `OPENROUTER_API_KEY` privately before starting the app.
 - No `guest` account is seeded. `admin` starts with the private `ADMIN_PASSWORD` configured when the user store is first created.
-- Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, and granting per-service `view`, `request`, or `edit` privileges. The `ADMIN_API_KEY` can also create new `user` or `attending` accounts with per-service privileges.
+- Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, linking attending accounts to roster records, and granting per-service `view`, `request`, or `edit` privileges. The `ADMIN_API_KEY` can also create new `user` or `attending` accounts with per-service privileges.
 - New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. If neither `password` nor `temporaryPassword` is supplied, the temporary password is `schroeder1`; it is shown once and opens the password-change screen on every login until the user chooses a new password. Users can select `Skip for now` to continue in the current session; a fresh login shows the screen again.
 - Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` instead of plaintext, so current passwords are not viewable; admin resets and generated new-user passwords are temporary and shown once.
 - Weekly Monday-Friday board with OR blocks, turnover-aware sequential case timing, clinic sessions, warnings, and activity feed.
 - Monthly rounding calendar with resident colors, shared Friday-Sunday call-team summaries, service-specific Saturday-Sunday rounders, weekday off/note entries, and red weekend blocks when the visible service has neither an on-service call resident nor an assigned rounder.
+- Dedicated attending coverage on the Call tab for EGS, Trauma, SCC, consolidated ACS night call, day/night backup, Practice, Vascular, and Pediatrics. Practice/Vascular/Pediatrics stay out of the rounding calendar but remain available to the schedule assistant.
+- QGenda published-schedule synchronization on every server startup and daily around 03:00 Eastern, with an admin **Sync now** action, persisted success/failure status, transactional ACS-night validation, and manual/API coverage endpoints.
 - Request-privileged calendar edits are submitted as requests; users with edit privilege for that service can approve or deny them from the Requests tab.
 - Manual setup for hospitals, attendings, residents/fellows, off-service rotators, resident block rotations, unavailable time, case defaults, OR blocks, cases, and clinic sessions.
 - Auto-suggestion that preserves non-suggestion assignments and prioritizes safe OR coverage before clinic assignment; assignable-only off-service rotators stay out of suggestions unless they are account-eligible.
@@ -68,3 +70,4 @@ The app is designed for no-PHI scheduling metadata only. Do not enter patient na
 - DigitalOcean deployment guide: [docs/DEPLOY_DIGITALOCEAN.md](docs/DEPLOY_DIGITALOCEAN.md)
 - API/MCP guide: [docs/API.md](docs/API.md)
 - OpenAPI is served at `/api/openapi.json` when the app is running.
+- Configure the QGenda poller with `QGENDA_SYNC_ENABLED`, `QGENDA_PUBLIC_LINK_URL`, and the optional sync-window/time-zone variables documented in [docs/API.md](docs/API.md#attending-coverage-and-qgenda).

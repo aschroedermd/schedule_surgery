@@ -468,8 +468,9 @@ Current signed-in user:
 - Today: ${today}
 
 Scheduling domain rules:
-- "Call" means the General Surgery call schedule. It is shared across every service and is never filtered by the user's current service.
-- General Surgery call shifts occur only on Friday, Saturday, and Sunday. Each listed shift has attending coverage plus a three-resident team with senior, mid-level, and intern positions. Attending coverage may be all-day or split into day and night attendings.
+- Resident "Call" means the General Surgery call schedule (Friday-Sunday) and is shared across services.
+- Attending coverage is tracked separately for EGS day, Trauma day, SCC day, ACS night call, backup day/night, practice call, vascular call, and pediatrics call. EGS Night, Trauma Night, and SCC Night are the same attending and appear as one ACS call assignment.
+- Practice, vascular, and pediatrics attending call belongs on the Call tab and in assistant answers, not on the rounding calendar.
 - For any call question, first use FAST_CALL_SCHEDULE when it is present and sufficient. Otherwise use get_call_schedule. Do not ask which service the user means and do not describe call as belonging to ${serviceLine} or any other service.
 - The current service is useful context for service-specific rounding, off/note calendar entries, and the default OR/clinic schedule.
 - An attending's OR cases may be on any service. When the user names an attending, pass attending_name to get_or_schedule so it searches across services unless the user explicitly names a service.
@@ -501,7 +502,9 @@ function buildFastScheduleContext(latestQuestion: string, context: AssistantCont
   const wantsAvailability =
     /\bavailab(?:le|ility)\b|\bwho (?:is|can be) free\b|\bcan (?:cover|work)\b|\bfree to (?:cover|work)\b|\bconflicts?\b/i.test(latestQuestion);
 
-  if (/\bcalls?\b/i.test(latestQuestion)) sections.push(buildFastCallContext(context, scope));
+  if (/\bcalls?\b|\bEGS\b|\btrauma\b|\bSCC\b|\bpractice\b|\bvascular\b|\bpediatrics?\b|\bbackup\b/i.test(latestQuestion)) {
+    sections.push(buildFastCallContext(context, scope));
+  }
   if (wantsCases) sections.push(buildFastCaseContext(context, scope));
   if (wantsClinics || /\bprocedures?\b/i.test(latestQuestion)) sections.push(buildFastClinicContext(context, scope));
   if (wantsAbsences) sections.push(buildFastAbsenceContext(context, scope));
@@ -563,7 +566,8 @@ function buildFastCallContext(context: AssistantContext, scope: FastContextScope
       (entry.kind === "call" || entry.kind === "attending-call") &&
       dateInFastScope(entry.date, scope)
   );
-  const dates = [...new Set(callEntries.map((entry) => entry.date))].sort();
+  const attendingCoverage = context.state.attendingCoverageAssignments.filter((entry) => dateInFastScope(entry.date, scope));
+  const dates = [...new Set([...callEntries.map((entry) => entry.date), ...attendingCoverage.map((entry) => entry.date)])].sort();
   const lines = dates.map((date) => {
     const entries = callEntries.filter((entry) => entry.date === date);
     const attendingEntry = entries.find((entry) => entry.kind === "attending-call");
@@ -587,9 +591,13 @@ function buildFastCallContext(context: AssistantContext, scope: FastContextScope
         const assignment = entry.callPosition || entry.note || "supplemental";
         return `${fastValue(assignment)}:${fastValue(name)}`;
       });
+    const attendingLines = attendingCoverage
+      .filter((entry) => entry.date === date)
+      .map((entry) => `${fastValue(entry.line)}_${entry.shift}_${entry.role}:${fastValue(attendingName(context.state, entry.attendingId))}`);
     return [
       `date=${date}`,
       attending || "attending=not listed",
+      `attending_coverage=${attendingLines.length ? attendingLines.join(", ") : "not listed"}`,
       `residents=${residents.length ? residents.join(", ") : "not listed"}`
     ].join("|");
   });
@@ -1257,7 +1265,14 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
       entry.date >= range.start &&
       entry.date <= range.end
   );
-  const dates = [...new Set(entries.map((entry) => entry.date))].sort();
+  const requestedCoverageLine = readOptionalString(args.coverage_line)?.toLowerCase();
+  const attendingCoverage = context.state.attendingCoverageAssignments.filter(
+    (assignment) =>
+      assignment.date >= range.start &&
+      assignment.date <= range.end &&
+      (!requestedCoverageLine || assignment.line.toLowerCase() === requestedCoverageLine)
+  );
+  const dates = [...new Set([...entries.map((entry) => entry.date), ...attendingCoverage.map((entry) => entry.date)])].sort();
   const shifts = dates
     .map((date) => {
       const attendingEntry = entries.find((entry) => entry.date === date && entry.kind === "attending-call");
@@ -1285,6 +1300,16 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
           resident: entry.residentId ? residentName(context.state, entry.residentId) : undefined,
           assignment: entry.note || "Supplemental call"
         }));
+      const attendingAssignments = attendingCoverage
+        .filter((assignment) => assignment.date === date)
+        .map((assignment) => ({
+          line: assignment.line,
+          shift: assignment.shift,
+          role: assignment.role,
+          attending: attendingName(context.state, assignment.attendingId),
+          source: assignment.source,
+          note: assignment.note || undefined
+        }));
       return {
         date,
         weekday: getWeekday(date),
@@ -1293,11 +1318,15 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
             ? { all_day: dayAttending }
             : { day: dayAttending, night: nightAttending },
         residents,
-        supplemental_coverage: supplementalCoverage
+        supplemental_coverage: supplementalCoverage,
+        attending_coverage: attendingAssignments
       };
     })
     .filter((shift) => {
-      const attendingNames = Object.values(shift.attending).filter((name): name is string => Boolean(name));
+      const attendingNames = [
+        ...Object.values(shift.attending).filter((name): name is string => Boolean(name)),
+        ...shift.attending_coverage.map((assignment) => assignment.attending)
+      ];
       const residentNames = [
         ...shift.residents.senior,
         ...shift.residents.mid_level,
@@ -1313,6 +1342,7 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
     schedule: "General Surgery call",
     service_scope: "All General Surgery services",
     call_days: ["Friday", "Saturday", "Sunday"],
+    attending_coverage_lines: ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics"],
     range,
     attending_filter: requestedAttending,
     resident_filter: requestedResident,
@@ -1523,12 +1553,13 @@ const SCHEDULE_TOOLS = [
     function: {
       name: "get_call_schedule",
       description:
-        "Read the shared General Surgery Friday-Sunday call schedule, including attending day/night coverage and the senior, mid-level, and intern resident team. Call is never service-specific.",
+        "Read resident General Surgery call plus attending EGS, Trauma, SCC, ACS night, backup, practice, vascular, and pediatrics coverage. EGS/Trauma/SCC night is consolidated as ACS call.",
       parameters: {
         type: "object",
         properties: {
           ...dateProperties,
           attending_name: { type: "string", description: "Optional attending name filter, such as Harnois." },
+          coverage_line: { type: "string", enum: ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics"], description: "Optional attending coverage line filter." },
           resident_name: { type: "string", description: "Optional resident name filter." }
         }
       }

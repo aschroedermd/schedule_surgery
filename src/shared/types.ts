@@ -48,9 +48,50 @@ export interface Hospital {
 export interface Attending {
   id: string;
   name: string;
+  aliases?: string[];
+  email?: string;
   service: string;
+  coverageLines?: AttendingCoverageLine[];
+  qgendaStaffId?: string;
   priority: Priority;
   defaultHospitalId?: string;
+}
+
+export const ATTENDING_COVERAGE_LINES = ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics"] as const;
+
+export type AttendingCoverageLine = (typeof ATTENDING_COVERAGE_LINES)[number];
+
+export type AttendingCoverageShift = "day" | "night" | "24h";
+
+export type AttendingCoverageRole = "primary" | "backup";
+
+export type AttendingCoverageSource = "manual" | "api" | "qgenda";
+
+export interface AttendingCoverageAssignment {
+  id: string;
+  date: string;
+  line: AttendingCoverageLine;
+  shift: AttendingCoverageShift;
+  role: AttendingCoverageRole;
+  attendingId: string;
+  source: AttendingCoverageSource;
+  externalId?: string;
+  externalModifiedAt?: string;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QgendaSyncStatus {
+  enabled: boolean;
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastError?: string;
+  lastChangedCount?: number;
+  lastImportedCount?: number;
+  skippedCount?: number;
+  windowStart?: string;
+  windowEnd?: string;
 }
 
 export interface AvailabilityBlock {
@@ -243,6 +284,8 @@ export interface PlannerState {
   cases: SurgeryCase[];
   clinicSessions: ClinicSession[];
   assignments: Assignment[];
+  attendingCoverageAssignments: AttendingCoverageAssignment[];
+  qgendaSync: QgendaSyncStatus;
   coverageEntries: CoverageEntry[];
   coverageRequests: CoverageChangeRequest[];
   goldStarAwards: GoldStarAward[];

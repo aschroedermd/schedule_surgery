@@ -22,6 +22,11 @@ import {
 import { isResidentOnService } from "../shared/services";
 import {
   CALL_POSITIONS,
+  ATTENDING_COVERAGE_LINES,
+  AttendingCoverageAssignment,
+  AttendingCoverageLine,
+  AttendingCoverageRole,
+  AttendingCoverageShift,
   AttendingBlock,
   CallPosition,
   ClaimRequest,
@@ -63,6 +68,7 @@ import {
 } from "./chat";
 import { StateConflictError, StateStore } from "./store";
 import { UpsertUserInput, UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
+import { syncQgenda } from "./qgenda";
 
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
@@ -89,6 +95,7 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
   const transcriptionLimiter = createRateLimiter(25, 24 * 60 * 60 * 1000);
   const chatFeedbackLimiter = createRateLimiter(50, 24 * 60 * 60 * 1000);
   const stateSubscribers = new Set<express.Response>();
+  app.locals.broadcastPlannerState = (state: PlannerState) => broadcastStateEvent(stateSubscribers, state);
 
   app.set("trust proxy", 1);
   app.use(securityHeaders);
@@ -896,6 +903,91 @@ export function createApp(store: StateStore, options: { userStore?: UserStore } 
     }
   });
 
+  app.post("/api/attending-coverage", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const assignment = buildAttendingCoverageAssignment(state, req.body, undefined, req.user?.authType === "apiKey" ? "api" : "manual");
+      assertUniqueAttendingCoverageSlot(state, assignment);
+      const nextState = addActivity(
+        { ...state, attendingCoverageAssignments: [...state.attendingCoverageAssignments, assignment].sort(compareAttendingCoverageAssignments) },
+        {
+          ...requestActivityActor(req),
+          activityType: "calendar",
+          action: "updated attending coverage",
+          details: `Set ${describeAttendingCoverage(state, assignment)}`,
+          entityType: "attendingCoverageAssignment",
+          entityId: assignment.id
+        }
+      );
+      res.status(201).json(await commitState(req, nextState));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/attending-coverage/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const existing = requireAttendingCoverageAssignment(state, id);
+      if (existing.source === "qgenda") throw new HttpError(409, "QGenda assignments are managed by the daily sync");
+      const assignment = buildAttendingCoverageAssignment(state, { ...existing, ...req.body, id }, existing, existing.source);
+      assertUniqueAttendingCoverageSlot(state, assignment);
+      const nextState = addActivity(
+        {
+          ...state,
+          attendingCoverageAssignments: state.attendingCoverageAssignments
+            .map((candidate) => (candidate.id === id ? assignment : candidate))
+            .sort(compareAttendingCoverageAssignments)
+        },
+        {
+          ...requestActivityActor(req),
+          activityType: "calendar",
+          action: "updated attending coverage",
+          details: `Updated ${describeAttendingCoverage(state, assignment)}`,
+          entityType: "attendingCoverageAssignment",
+          entityId: assignment.id
+        }
+      );
+      res.json(await commitState(req, nextState));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/attending-coverage/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const existing = requireAttendingCoverageAssignment(state, id);
+      if (existing.source === "qgenda") throw new HttpError(409, "QGenda assignments are managed by the daily sync");
+      const nextState = addActivity(
+        { ...state, attendingCoverageAssignments: state.attendingCoverageAssignments.filter((candidate) => candidate.id !== id) },
+        {
+          ...requestActivityActor(req),
+          activityType: "calendar",
+          action: "updated attending coverage",
+          details: `Cleared ${describeAttendingCoverage(state, existing)}`,
+          entityType: "attendingCoverageAssignment",
+          entityId: id
+        }
+      );
+      res.json(await commitState(req, nextState));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/integrations/qgenda/sync", requireAuth, requirePasswordReady, requireAdmin, async (_req, res, next) => {
+    try {
+      const result = await syncQgenda(store);
+      broadcastStateEvent(stateSubscribers, result.state);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/coverage-requests", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
@@ -1670,6 +1762,9 @@ function deleteAttending(state: PlannerState, attendingId: string): PlannerState
       {
         ...state,
         attendings: state.attendings.filter((attending) => attending.id !== attendingId),
+        attendingCoverageAssignments: state.attendingCoverageAssignments.filter(
+          (assignment) => assignment.attendingId !== attendingId
+        ),
         coverageEntries: state.coverageEntries.filter(
           (entry) => entry.dayAttendingId !== attendingId && entry.nightAttendingId !== attendingId
         )
@@ -2301,6 +2396,92 @@ function requireCoverageEntry(state: PlannerState, id: string): CoverageEntry {
   const entry = state.coverageEntries.find((candidate) => candidate.id === id);
   if (!entry) throw new Error(`Coverage entry not found: ${id}`);
   return entry;
+}
+
+function requireAttendingCoverageAssignment(state: PlannerState, id: string): AttendingCoverageAssignment {
+  const assignment = state.attendingCoverageAssignments.find((candidate) => candidate.id === id);
+  if (!assignment) throw new HttpError(404, `Attending coverage assignment not found: ${id}`);
+  return assignment;
+}
+
+function buildAttendingCoverageAssignment(
+  state: PlannerState,
+  input: Partial<AttendingCoverageAssignment>,
+  existing?: AttendingCoverageAssignment,
+  source: AttendingCoverageAssignment["source"] = "manual"
+): AttendingCoverageAssignment {
+  const now = new Date().toISOString();
+  const date = assertDate(input.date ?? existing?.date);
+  const line = assertAttendingCoverageLine(input.line ?? existing?.line);
+  const shift = assertAttendingCoverageShift(input.shift ?? existing?.shift);
+  const role = assertAttendingCoverageRole(input.role ?? existing?.role);
+  const attendingId = readRequiredString(input.attendingId ?? existing?.attendingId, "attendingId");
+  if (!state.attendings.some((attending) => attending.id === attendingId)) throw new HttpError(400, "Attending not found");
+  if (role === "primary" && shift === "night" && line !== "ACS") {
+    throw new HttpError(400, "Night EGS, Trauma, and SCC coverage is one ACS call assignment; use line ACS");
+  }
+  if (line === "ACS" && role === "primary" && shift !== "night") {
+    throw new HttpError(400, "Primary ACS call is a night assignment");
+  }
+  const note = typeof input.note === "string" ? input.note.trim() : existing?.note ?? "";
+  assertNoPhiText(note, "attending coverage note");
+  return {
+    id: input.id || existing?.id || createId("attcov"),
+    date,
+    line,
+    shift,
+    role,
+    attendingId,
+    source,
+    note,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now
+  };
+}
+
+function assertUniqueAttendingCoverageSlot(state: PlannerState, assignment: AttendingCoverageAssignment): void {
+  const conflict = state.attendingCoverageAssignments.find(
+    (candidate) =>
+      candidate.id !== assignment.id &&
+      candidate.date === assignment.date &&
+      candidate.line === assignment.line &&
+      candidate.shift === assignment.shift &&
+      candidate.role === assignment.role
+  );
+  if (conflict) throw new HttpError(409, "That attending coverage slot is already assigned");
+}
+
+function assertAttendingCoverageLine(value: unknown): AttendingCoverageLine {
+  if (typeof value === "string" && ATTENDING_COVERAGE_LINES.includes(value as AttendingCoverageLine)) {
+    return value as AttendingCoverageLine;
+  }
+  throw new HttpError(400, "Invalid attending coverage line");
+}
+
+function assertAttendingCoverageShift(value: unknown): AttendingCoverageShift {
+  if (value === "day" || value === "night" || value === "24h") return value;
+  throw new HttpError(400, "Invalid attending coverage shift");
+}
+
+function assertAttendingCoverageRole(value: unknown): AttendingCoverageRole {
+  if (value === "primary" || value === "backup") return value;
+  throw new HttpError(400, "Invalid attending coverage role");
+}
+
+function compareAttendingCoverageAssignments(a: AttendingCoverageAssignment, b: AttendingCoverageAssignment): number {
+  return (
+    a.date.localeCompare(b.date) ||
+    ATTENDING_COVERAGE_LINES.indexOf(a.line) - ATTENDING_COVERAGE_LINES.indexOf(b.line) ||
+    a.role.localeCompare(b.role) ||
+    a.shift.localeCompare(b.shift) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+function describeAttendingCoverage(state: PlannerState, assignment: AttendingCoverageAssignment): string {
+  const attending = state.attendings.find((candidate) => candidate.id === assignment.attendingId)?.name ?? "attending";
+  const line = assignment.line === "ACS" && assignment.role === "primary" ? "ACS call" : assignment.line;
+  return `${line} ${assignment.shift} ${assignment.role} on ${assignment.date}: ${attending}`;
 }
 
 function requireCoverageRequest(state: PlannerState, id: string): CoverageChangeRequest {

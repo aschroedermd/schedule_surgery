@@ -1,7 +1,18 @@
 import { Pool } from "pg";
 import { buildResidentUsername, isPlaceholderResidentUsername } from "../shared/id";
 import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
-import { ActivityEvent, ActivityEventType, Attending, ClinicSession, GoldStarAward, PlannerState, Resident } from "../shared/types";
+import {
+  ATTENDING_COVERAGE_LINES,
+  ActivityEvent,
+  ActivityEventType,
+  Attending,
+  AttendingCoverageAssignment,
+  ClinicSession,
+  CoverageEntry,
+  GoldStarAward,
+  PlannerState,
+  Resident
+} from "../shared/types";
 import { createInitialState, createSeedCoverageEntries } from "./sampleData";
 import { createRotationResidents, getRotationResidentMatchNames, getSeedMigrationBlockNumbers } from "./residentRotationSeed";
 
@@ -236,6 +247,13 @@ export function normalizePlannerState(
     cases: partial.cases ?? [],
     clinicSessions: normalizeClinicSessions(partial.clinicSessions ?? []),
     assignments: partial.assignments ?? [],
+    attendingCoverageAssignments: normalizeAttendingCoverageAssignments(
+      partial.attendingCoverageAssignments ?? migrateLegacyAttendingCall(partial.coverageEntries ?? [])
+    ),
+    qgendaSync: {
+      enabled: Boolean(partial.qgendaSync?.enabled),
+      ...partial.qgendaSync
+    },
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
     coverageRequests: partial.coverageRequests ?? [],
     goldStarAwards: normalizeGoldStarAwards(partial.goldStarAwards ?? []),
@@ -496,8 +514,90 @@ function mergeSeedMigrationBlocks(rotationSchedule: Resident["rotationSchedule"]
 function normalizeAttendings(attendings: Attending[]): Attending[] {
   return attendings.map((attending) => {
     const service = normalizeLegacyService(attending.service);
-    return { ...attending, service };
+    const coverageLines = [...new Set((attending.coverageLines ?? []).filter((line) => ATTENDING_COVERAGE_LINES.includes(line)))];
+    return {
+      ...attending,
+      aliases: normalizeResidentAliases(attending.aliases),
+      email: normalizeOptionalString(attending.email),
+      qgendaStaffId: normalizeOptionalString(attending.qgendaStaffId),
+      coverageLines,
+      service
+    };
   });
+}
+
+function normalizeAttendingCoverageAssignments(assignments: AttendingCoverageAssignment[]): AttendingCoverageAssignment[] {
+  return assignments
+    .filter(
+      (assignment) =>
+        assignment &&
+        isIsoDate(assignment.date) &&
+        ATTENDING_COVERAGE_LINES.includes(assignment.line) &&
+        (assignment.shift === "day" || assignment.shift === "night" || assignment.shift === "24h") &&
+        (assignment.role === "primary" || assignment.role === "backup")
+    )
+    .map((assignment) => {
+      const createdAt = normalizeOptionalString(assignment.createdAt) ?? new Date().toISOString();
+      return {
+        ...assignment,
+        source:
+          assignment.source === "qgenda" || assignment.source === "api" || assignment.source === "manual"
+            ? assignment.source
+            : "manual",
+        note: assignment.note?.trim() ?? "",
+        externalId: normalizeOptionalString(assignment.externalId),
+        externalModifiedAt: normalizeOptionalString(assignment.externalModifiedAt),
+        createdAt,
+        updatedAt: normalizeOptionalString(assignment.updatedAt) ?? createdAt
+      };
+    })
+    .sort(compareAttendingCoverageAssignments);
+}
+
+function migrateLegacyAttendingCall(entries: CoverageEntry[]): AttendingCoverageAssignment[] {
+  return entries.flatMap((entry) => {
+    if (entry.kind !== "attending-call" || !entry.nightAttendingId) return [];
+    const timestamp = entry.updatedAt || entry.createdAt || new Date().toISOString();
+    const migrated: AttendingCoverageAssignment[] = [
+      {
+        id: `attcov_legacy_acs_${entry.id}`,
+        date: entry.date,
+        line: "ACS",
+        shift: "night",
+        role: "primary",
+        attendingId: entry.nightAttendingId,
+        source: "manual",
+        note: "Migrated from attending call",
+        createdAt: entry.createdAt || timestamp,
+        updatedAt: timestamp
+      }
+    ];
+    if (entry.dayAttendingId) {
+      migrated.push({
+        id: `attcov_legacy_egs_${entry.id}`,
+        date: entry.date,
+        line: "EGS",
+        shift: "day",
+        role: "primary",
+        attendingId: entry.dayAttendingId,
+        source: "manual",
+        note: "Migrated from attending call",
+        createdAt: entry.createdAt || timestamp,
+        updatedAt: timestamp
+      });
+    }
+    return migrated;
+  });
+}
+
+function compareAttendingCoverageAssignments(a: AttendingCoverageAssignment, b: AttendingCoverageAssignment): number {
+  return (
+    a.date.localeCompare(b.date) ||
+    ATTENDING_COVERAGE_LINES.indexOf(a.line) - ATTENDING_COVERAGE_LINES.indexOf(b.line) ||
+    a.role.localeCompare(b.role) ||
+    a.shift.localeCompare(b.shift) ||
+    a.id.localeCompare(b.id)
+  );
 }
 
 function normalizeClinicSessions(clinicSessions: ClinicSession[]): ClinicSession[] {
@@ -586,6 +686,7 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
       if (assignment.kind === "clinic") return clinicIds.has(assignment.targetId);
       return false;
     }),
+    attendingCoverageAssignments: state.attendingCoverageAssignments.filter((assignment) => attendingIds.has(assignment.attendingId)),
     coverageEntries: state.coverageEntries.filter(
       (entry) =>
         (!entry.residentId || residentIds.has(entry.residentId)) &&

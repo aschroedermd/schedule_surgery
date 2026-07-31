@@ -29,9 +29,11 @@ import {
   awardGoldStar,
   claimCoverage,
   ConflictError,
+  createAttendingCoverage,
   createAssignment,
   createEntity,
   deleteAssignment,
+  deleteAttendingCoverage,
   deleteEntity,
   fetchSchedule,
   fetchSession,
@@ -43,6 +45,7 @@ import {
   Session,
   setExpectedStateVersion,
   skipPasswordChange,
+  syncQgendaNow,
   submitCoverageRequest,
   subscribeToStateEvents,
   UnauthorizedError,
@@ -66,9 +69,14 @@ import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWee
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
 import {
   Assignment,
+  ATTENDING_COVERAGE_LINES,
   ActivityEvent,
   ActivityEventType,
   Attending,
+  AttendingCoverageAssignment,
+  AttendingCoverageLine,
+  AttendingCoverageRole,
+  AttendingCoverageShift,
   AttendingBlock,
   CALL_POSITIONS,
   CallPosition,
@@ -735,7 +743,14 @@ export function App() {
           onMutate={runMutation}
         />
       )}
-      {activeTab === "call" && <CallShiftsTab state={state} />}
+      {activeTab === "call" && (
+        <CallShiftsTab
+          state={state}
+          token={session.token}
+          isAdmin={isAdmin}
+          onMutate={runMutation}
+        />
+      )}
       {activeTab === "schedule" && (
         <ResidentScheduleTab state={state} token={session.token} isAdmin={isAdmin} disabled={!isAdmin} onMutate={runMutation} />
       )}
@@ -1452,6 +1467,9 @@ function MyScheduleTab({
     const cases = schedule.days.flatMap((day) => day.blocks.flatMap((block) =>
       block.attending.id === attending.id ? block.cases : []
     ));
+    const attendingCoverage = state.attendingCoverageAssignments
+      .filter((assignment) => assignment.attendingId === attending.id)
+      .sort(compareAttendingCoverageForDisplay);
     return (
       <section className="my-schedule-page">
         <div className="my-schedule-header">
@@ -1466,6 +1484,19 @@ function MyScheduleTab({
                 <div key={surgeryCase.id} className="compact-entity"><div>
                   <strong>{surgeryCase.procedureLabel}</strong>
                   <span>{displayDate(surgeryCase.date)} · {surgeryCase.startTime}-{surgeryCase.endTime} · {surgeryCase.durationMinutes} min</span>
+                </div></div>
+              ))}
+            </div>
+          )}
+        </section>
+        <section className="editor-panel">
+          <h2>My attending coverage</h2>
+          {attendingCoverage.length === 0 ? <p className="muted-copy">No attending coverage listed.</p> : (
+            <div className="entity-list">
+              {attendingCoverage.map((assignment) => (
+                <div key={assignment.id} className="compact-entity"><div>
+                  <strong>{assignment.line === "ACS" && assignment.role === "primary" ? "ACS call" : assignment.line}</strong>
+                  <span>{displayDate(assignment.date)} · {assignment.role === "backup" ? "backup · " : ""}{formatCoverageShift(assignment.shift)}</span>
                 </div></div>
               ))}
             </div>
@@ -1866,7 +1897,17 @@ function GoldStarGameIcon({ className }: { className?: string }) {
   );
 }
 
-function CallShiftsTab({ state }: { state: PlannerState }) {
+function CallShiftsTab({
+  state,
+  token,
+  isAdmin,
+  onMutate
+}: {
+  state: PlannerState;
+  token: string;
+  isAdmin: boolean;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
   const nightTeamSegments = getNightTeamSegments(state, month);
   const weekendRows = getWeekendCallRows(state, month);
@@ -1893,6 +1934,14 @@ function CallShiftsTab({ state }: { state: PlannerState }) {
           </button>
         </div>
       </div>
+
+      <AttendingCoveragePanel
+        state={state}
+        month={month}
+        token={token}
+        isAdmin={isAdmin}
+        onMutate={onMutate}
+      />
 
       <section className="call-night-panel">
         {nightTeamSegments.length === 0 ? (
@@ -1950,7 +1999,6 @@ function CallShiftsTab({ state }: { state: PlannerState }) {
                           <strong>{group.residentNames}</strong>
                         </div>
                       ))}
-                      <AttendingCallSummary state={state} entry={day.attendingCallEntry} />
                     </div>
                   </section>
                 ))}
@@ -1961,6 +2009,212 @@ function CallShiftsTab({ state }: { state: PlannerState }) {
       </div>
     </section>
   );
+}
+
+function AttendingCoveragePanel({
+  state,
+  month,
+  token,
+  isAdmin,
+  onMutate
+}: {
+  state: PlannerState;
+  month: string;
+  token: string;
+  isAdmin: boolean;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<{
+    date: string;
+    line: AttendingCoverageLine;
+    shift: AttendingCoverageShift;
+    role: AttendingCoverageRole;
+    attendingId: string;
+    note: string;
+  }>(() => ({
+    date: getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`,
+    line: "Practice",
+    shift: "24h",
+    role: "primary",
+    attendingId: state.attendings[0]?.id ?? "",
+    note: ""
+  }));
+  const visible = state.attendingCoverageAssignments
+    .filter((assignment) => assignment.date.startsWith(month))
+    .sort(compareAttendingCoverageForDisplay);
+  const grouped = groupAttendingCoverageByDate(visible);
+  const sync = state.qgendaSync;
+
+  useEffect(() => {
+    setDraft((current) => ({
+      ...current,
+      date: current.date.startsWith(month) ? current.date : `${month}-01`,
+      attendingId: state.attendings.some((attending) => attending.id === current.attendingId)
+        ? current.attendingId
+        : state.attendings[0]?.id ?? ""
+    }));
+  }, [month, state.attendings]);
+
+  return (
+    <section className="attending-coverage-panel">
+      <header className="attending-coverage-heading">
+        <div>
+          <p className="eyebrow">Attending coverage</p>
+          <h2>ACS services & call</h2>
+        </div>
+        <div className="attending-sync-status">
+          <span className={sync.lastError ? "sync-state sync-error" : "sync-state"} title={sync.lastError}>
+            {sync.lastError
+              ? "QGenda sync needs attention"
+              : sync.lastSuccessAt
+                ? `QGenda updated ${formatSyncTime(sync.lastSuccessAt)}`
+                : sync.enabled ? "QGenda ready" : "QGenda not yet synced"}
+          </span>
+          {isAdmin && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onMutate(() => syncQgendaNow(token), "QGenda schedule synced")}
+            >
+              <RefreshCw size={15} /> Sync now
+            </button>
+          )}
+        </div>
+      </header>
+
+      <p className="attending-coverage-help">
+        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice, vascular, and pediatrics remain on this tab only.
+      </p>
+
+      {isAdmin && (
+        <form
+          className="attending-coverage-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onMutate(
+              () => createAttendingCoverage(token, draft),
+              "Attending coverage added"
+            );
+          }}
+        >
+          <label>Date<input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
+          <label>
+            Line
+            <select
+              value={draft.line}
+              onChange={(event) => {
+                const line = event.target.value as AttendingCoverageLine;
+                setDraft({ ...draft, line, shift: line === "ACS" && draft.role === "primary" ? "night" : draft.shift });
+              }}
+            >
+              {ATTENDING_COVERAGE_LINES.map((line) => <option key={line} value={line}>{line === "ACS" ? "ACS call" : line}</option>)}
+            </select>
+          </label>
+          <label>
+            Role
+            <select
+              value={draft.role}
+              onChange={(event) => {
+                const role = event.target.value as AttendingCoverageRole;
+                setDraft({ ...draft, role, shift: draft.line === "ACS" && role === "primary" ? "night" : draft.shift });
+              }}
+            >
+              <option value="primary">Primary</option>
+              <option value="backup">Backup</option>
+            </select>
+          </label>
+          <label>
+            Shift
+            <select
+              value={draft.shift}
+              disabled={draft.line === "ACS" && draft.role === "primary"}
+              onChange={(event) => setDraft({ ...draft, shift: event.target.value as AttendingCoverageShift })}
+            >
+              <option value="day">Day</option>
+              <option value="night">Night</option>
+              <option value="24h">24 hours</option>
+            </select>
+          </label>
+          <label>
+            Attending
+            <select value={draft.attendingId} onChange={(event) => setDraft({ ...draft, attendingId: event.target.value })}>
+              {state.attendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
+            </select>
+          </label>
+          <label>Note<input value={draft.note} placeholder="Optional" onChange={(event) => setDraft({ ...draft, note: event.target.value })} /></label>
+          <button className="primary-button" type="submit" disabled={!draft.date || !draft.attendingId}><Plus size={15} />Add</button>
+        </form>
+      )}
+
+      {grouped.length === 0 ? (
+        <p className="call-week-empty">No attending coverage listed for this month.</p>
+      ) : (
+        <div className="attending-coverage-list">
+          {grouped.map(([date, assignments]) => (
+            <div key={date} className="attending-coverage-day">
+              <div className="attending-coverage-date">
+                <strong>{formatShortDate(date)}</strong>
+                <span>{parseLocalDate(date).toLocaleDateString(undefined, { weekday: "short" })}</span>
+              </div>
+              <div className="attending-coverage-assignments">
+                {assignments.map((assignment) => {
+                  const attending = state.attendings.find((candidate) => candidate.id === assignment.attendingId);
+                  return (
+                    <div key={assignment.id} className="attending-coverage-line">
+                      <span className={`coverage-line-badge line-${assignment.line.toLowerCase()}`}>
+                        {assignment.line === "ACS" && assignment.role === "primary" ? "ACS call" : assignment.line}
+                      </span>
+                      <strong>{attending ? getResidentLastName(attending.name) : "Unknown"}</strong>
+                      <span>{assignment.role === "backup" ? "backup · " : ""}{formatCoverageShift(assignment.shift)}</span>
+                      {assignment.source === "qgenda" && <span className="qgenda-badge">QGenda</span>}
+                      {assignment.note && <span className="coverage-note">{assignment.note}</span>}
+                      {isAdmin && assignment.source !== "qgenda" && (
+                        <button
+                          type="button"
+                          title="Delete attending coverage"
+                          className="icon-button"
+                          onClick={() => onMutate(() => deleteAttendingCoverage(token, assignment.id), "Attending coverage removed")}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function groupAttendingCoverageByDate(
+  assignments: AttendingCoverageAssignment[]
+): Array<[string, AttendingCoverageAssignment[]]> {
+  const grouped = new Map<string, AttendingCoverageAssignment[]>();
+  for (const assignment of assignments) grouped.set(assignment.date, [...(grouped.get(assignment.date) ?? []), assignment]);
+  return [...grouped.entries()];
+}
+
+function compareAttendingCoverageForDisplay(a: AttendingCoverageAssignment, b: AttendingCoverageAssignment): number {
+  const roleRank = (assignment: AttendingCoverageAssignment) => (assignment.role === "primary" ? 0 : 1);
+  return (
+    a.date.localeCompare(b.date) ||
+    roleRank(a) - roleRank(b) ||
+    ATTENDING_COVERAGE_LINES.indexOf(a.line) - ATTENDING_COVERAGE_LINES.indexOf(b.line) ||
+    a.shift.localeCompare(b.shift)
+  );
+}
+
+function formatCoverageShift(shift: AttendingCoverageShift): string {
+  if (shift === "24h") return "24 hours";
+  return shift;
+}
+
+function formatSyncTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function AttendingCallSummary({ state, entry }: { state: PlannerState; entry?: CoverageEntry }) {
@@ -3269,7 +3523,10 @@ function AttendingsSetup({
 }) {
   const [attending, setAttending] = useState({
     name: "",
+    email: "",
     service: selectedService,
+    coverageLines: [] as AttendingCoverageLine[],
+    qgendaStaffId: "",
     priority: 3,
     defaultHospitalId: state.hospitals[0]?.id ?? ""
   });
@@ -3294,7 +3551,10 @@ function AttendingsSetup({
         );
         setAttending({
           name: "",
+          email: "",
           service: selectedService,
+          coverageLines: [],
+          qgendaStaffId: "",
           priority: 3,
           defaultHospitalId: state.hospitals[0]?.id ?? ""
         });
@@ -3303,7 +3563,26 @@ function AttendingsSetup({
       <h2>Attendings</h2>
       <fieldset disabled={disabled}>
         <label>Name<input value={attending.name} onChange={(event) => setAttending({ ...attending, name: event.target.value })} /></label>
+        <label>Email<input type="email" value={attending.email} onChange={(event) => setAttending({ ...attending, email: event.target.value })} /></label>
         <label>Service<Select value={attending.service} onChange={(service) => setAttending({ ...attending, service })} options={serviceLineOptions(state)} /></label>
+        <label>QGenda staff ID<input value={attending.qgendaStaffId} placeholder="Optional" onChange={(event) => setAttending({ ...attending, qgendaStaffId: event.target.value })} /></label>
+        <div className="attending-line-picker" aria-label="Coverage lines">
+          {ATTENDING_COVERAGE_LINES.filter((line) => line !== "ACS").map((line) => (
+            <label key={line} className="inline-checkbox">
+              <input
+                type="checkbox"
+                checked={attending.coverageLines.includes(line)}
+                onChange={(event) => setAttending({
+                  ...attending,
+                  coverageLines: event.target.checked
+                    ? [...attending.coverageLines, line]
+                    : attending.coverageLines.filter((candidate) => candidate !== line)
+                })}
+              />
+              <span>{line}</span>
+            </label>
+          ))}
+        </div>
         <label>Priority<input type="number" min={1} max={5} value={attending.priority} onChange={(event) => setAttending({ ...attending, priority: Number(event.target.value) })} /></label>
         <label>Default hospital<Select value={attending.defaultHospitalId} onChange={(defaultHospitalId) => setAttending({ ...attending, defaultHospitalId })} options={state.hospitals} labelKey="shortName" /></label>
         <button className="primary-button" type="submit"><Plus size={16} />Add</button>
@@ -3313,7 +3592,9 @@ function AttendingsSetup({
           <div key={item.id} className="compact-entity attending-entity">
             <div>
               <strong>{item.name}</strong>
-              <span>{item.service} · P{item.priority}</span>
+              <span>{item.service} · P{item.priority}{item.email ? ` · ${item.email}` : ""}</span>
+              <span>{item.coverageLines?.length ? `Coverage: ${item.coverageLines.join(", ")}` : "No attending coverage lines"}</span>
+              {item.qgendaStaffId && <span>QGenda linked</span>}
             </div>
             <div className="row-actions">
               <select
@@ -3333,6 +3614,12 @@ function AttendingsSetup({
                   </option>
                 ))}
               </select>
+              <AttendingCoverageLinesEditor
+                attending={item}
+                token={token}
+                disabled={disabled}
+                onMutate={onMutate}
+              />
               <button
                 title="Delete"
                 type="button"
@@ -3347,6 +3634,69 @@ function AttendingsSetup({
         ))}
       </div>
     </form>
+  );
+}
+
+function AttendingCoverageLinesEditor({
+  attending,
+  token,
+  disabled,
+  onMutate
+}: {
+  attending: Attending;
+  token: string;
+  disabled: boolean;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [qgendaStaffId, setQgendaStaffId] = useState(attending.qgendaStaffId ?? "");
+
+  useEffect(() => setQgendaStaffId(attending.qgendaStaffId ?? ""), [attending.qgendaStaffId]);
+
+  function toggleLine(line: AttendingCoverageLine, checked: boolean) {
+    const coverageLines = checked
+      ? [...new Set([...(attending.coverageLines ?? []), line])]
+      : (attending.coverageLines ?? []).filter((candidate) => candidate !== line);
+    void onMutate(
+      () => updateEntity<Attending>(token, "attendings", attending.id, { coverageLines }),
+      "Attending coverage lines updated"
+    );
+  }
+
+  return (
+    <div className="attending-lines-editor">
+      <button type="button" className="secondary-button" disabled={disabled} onClick={() => setOpen((current) => !current)}>
+        Coverage
+      </button>
+      {open && (
+        <div className="attending-lines-popover">
+          {ATTENDING_COVERAGE_LINES.filter((line) => line !== "ACS").map((line) => (
+            <label key={line} className="inline-checkbox">
+              <input
+                type="checkbox"
+                checked={attending.coverageLines?.includes(line) ?? false}
+                onChange={(event) => toggleLine(line, event.target.checked)}
+              />
+              <span>{line}</span>
+            </label>
+          ))}
+          <label>
+            QGenda staff ID
+            <input value={qgendaStaffId} onChange={(event) => setQgendaStaffId(event.target.value)} />
+          </label>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => onMutate(
+              () => updateEntity<Attending>(token, "attendings", attending.id, { qgendaStaffId }),
+              "QGenda link updated"
+            )}
+          >
+            Save link
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

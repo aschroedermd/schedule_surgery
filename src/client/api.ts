@@ -1,6 +1,7 @@
 import {
   ClaimRequest,
   CollectionName,
+  AttendingCoverageAssignment,
   CoverageChangeRequest,
   CoverageEntry,
   PlannerState,
@@ -315,6 +316,38 @@ export async function deleteCoverageEntry(token: string, id: string, serviceLine
     method: "DELETE",
     token
   });
+}
+
+export async function createAttendingCoverage(
+  token: string,
+  assignment: Partial<AttendingCoverageAssignment>
+): Promise<PlannerState> {
+  return request<PlannerState>("/api/attending-coverage", {
+    method: "POST",
+    token,
+    body: JSON.stringify(assignment)
+  });
+}
+
+export async function updateAttendingCoverage(
+  token: string,
+  id: string,
+  patch: Partial<AttendingCoverageAssignment>
+): Promise<PlannerState> {
+  return request<PlannerState>(`/api/attending-coverage/${id}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(patch)
+  });
+}
+
+export async function deleteAttendingCoverage(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/attending-coverage/${id}`, { method: "DELETE", token });
+}
+
+export async function syncQgendaNow(token: string): Promise<PlannerState> {
+  const result = await request<{ state: PlannerState }>("/api/integrations/qgenda/sync", { method: "POST", token });
+  return result.state;
 }
 
 export async function submitCoverageRequest(
