@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Mic,
   Pencil,
+  Play,
   RotateCcw,
   Settings,
   Square,
@@ -78,7 +79,7 @@ const ALMOST_DONE_MESSAGES = [
 ];
 
 type ChatStatus = "idle" | "thinking" | "streaming" | "requesting-mic" | "recording" | "transcribing";
-type SpeechStatus = "idle" | "generating" | "playing";
+type SpeechStatus = "idle" | "generating" | "playing" | "ready";
 type ChatPlannerTab = "board" | "my" | "calendar" | "call";
 
 interface ChatUiMessage extends ChatConversationMessage {
@@ -504,9 +505,29 @@ export function ChatTab({
     setSpeechStatus("playing");
     try {
       await audio.play();
-    } catch {
+    } catch (playbackError) {
+      if (isAutoplayBlocked(playbackError)) {
+        setSpeechStatus("ready");
+        return;
+      }
       stopSpeech();
-      throw new Error("Your browser blocked automatic audio playback");
+      throw new Error("The generated audio could not be played");
+    }
+  }
+
+  async function playReadySpeech() {
+    const audio = speechAudioRef.current;
+    if (!audio || !speechUrlRef.current) {
+      stopSpeech();
+      return;
+    }
+    setError(undefined);
+    setSpeechStatus("playing");
+    try {
+      await audio.play();
+    } catch {
+      setSpeechStatus("ready");
+      setError("The generated audio could not be played. Check this site's audio permissions and try again.");
     }
   }
 
@@ -884,6 +905,14 @@ export function ChatTab({
           )}
           {speechStatus === "generating" && (
             <div className="chat-processing-pill" role="status">Preparing spoken response…</div>
+          )}
+          {speechStatus === "ready" && (
+            <div className="chat-audio-ready" role="status">
+              <span>Audio ready</span>
+              <button type="button" onClick={() => void playReadySpeech()}>
+                <Play size={14} fill="currentColor" /> Play response
+              </button>
+            </div>
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -1346,12 +1375,17 @@ function voiceModeTitle(
   if (quota && quota.remaining === 0 && !quota.unlimited) return "Spoken response limit reached for today";
   if (status === "generating") return "Preparing spoken response";
   if (status === "playing") return "Speaking response — click to stop voice mode";
+  if (status === "ready") return "Spoken response ready — use the Play response button";
   const allowance = quota?.unlimited
     ? "unlimited uses"
     : quota
       ? `${quota.remaining} of ${quota.limit} spoken responses left today`
       : "3 spoken responses per day";
   return `${voiceMode ? "Spoken responses on" : "Spoken responses off"} · voice ${voicePreset} · ${allowance}`;
+}
+
+function isAutoplayBlocked(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "NotAllowedError";
 }
 
 function formatScheduleKind(kind: string): string {
