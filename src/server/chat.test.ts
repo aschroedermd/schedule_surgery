@@ -13,6 +13,26 @@ const user: SessionUser = {
   mustChangePassword: false
 };
 
+async function captureSystemPrompt(question: string, state = createInitialState()): Promise<string> {
+  let systemPrompt = "";
+  const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    systemPrompt = body.messages.find((message) => message.role === "system")?.content ?? "";
+    return Response.json({
+      model: "deepseek/deepseek-v4-flash",
+      choices: [{ message: { role: "assistant", content: "Answered from fast context." } }]
+    });
+  }) as typeof fetch;
+  await answerScheduleQuestion(
+    [{ role: "user", content: question }],
+    { state, user, serviceLine: "Davies", now: new Date("2026-07-31T16:00:00Z") },
+    fetcher
+  );
+  return systemPrompt;
+}
+
 describe("schedule assistant", () => {
   beforeEach(() => {
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
@@ -110,6 +130,9 @@ describe("schedule assistant", () => {
     expect(JSON.stringify(requests[0].messages)).toContain("Christian Blue");
     expect(JSON.stringify(requests[0].messages)).toContain("Current resident service context: Davies");
     expect(JSON.stringify(requests[0].messages)).toContain("General Surgery call schedule");
+    expect(JSON.stringify(requests[0].messages)).toContain("FAST_CALL_SCHEDULE");
+    expect(JSON.stringify(requests[0].messages)).toContain("Dr. Harnois");
+    expect(JSON.stringify(requests[0].messages)).toContain("respond immediately from it without making a tool call");
 
     const toolMessage = (requests[1].messages as Array<{ role: string; content: string }>).find(
       (message) => message.role === "tool"
@@ -130,6 +153,116 @@ describe("schedule assistant", () => {
     );
     expect(callTool?.function.parameters.properties).toHaveProperty("attending_name");
     expect(callTool?.function.parameters.properties).not.toHaveProperty("service");
+  });
+
+  it("injects a detailed service-and-date-sorted case summary for case questions", async () => {
+    const prompt = await captureSystemPrompt("Which cases are scheduled this week?");
+
+    expect(prompt).toContain('<FAST_CASE_SCHEDULE cases="4" order="service,date,time" requested_range="2026-07-27..2026-08-02"');
+    expect(prompt).toContain("service=Davies");
+    expect(prompt).toContain("procedure=Whipple");
+    expect(prompt).toContain("duration_min=360");
+    expect(prompt).toContain("residents=uncovered");
+    expect(prompt).not.toContain("<FAST_CALL_SCHEDULE");
+  });
+
+  it("injects vacations, off entries, and unavailable dates for absence questions", async () => {
+    const state = createInitialState();
+    state.residents[0].vacation = [
+      { id: "vac_fast_context", startDate: "2026-08-10", endDate: "2026-08-14" }
+    ];
+
+    const prompt = await captureSystemPrompt("Who is off or on vacation?", state);
+
+    expect(prompt).toContain("<FAST_ABSENCE_SCHEDULE");
+    expect(prompt).toContain("type=vacation");
+    expect(prompt).toContain("start=2026-08-10");
+    expect(prompt).toContain("type=off");
+    expect(prompt).toContain("reason=paternity");
+    expect(prompt).toContain("type=unavailable");
+  });
+
+  it("injects clinic, rounding, and uncovered coverage summaries for matching questions", async () => {
+    const clinicPrompt = await captureSystemPrompt("What clinic and procedure sessions are scheduled?");
+    expect(clinicPrompt).toContain('<FAST_CLINIC_SCHEDULE sessions="2"');
+    expect(clinicPrompt).toContain("location=University Hospital Clinic");
+    expect(clinicPrompt).toContain("residents=uncovered");
+
+    const roundingPrompt = await captureSystemPrompt("Who is rounding this weekend?");
+    expect(roundingPrompt).toContain('<FAST_ROUNDING_SCHEDULE entries="1" requested_range="2026-08-01..2026-08-02"');
+    expect(roundingPrompt).toContain("resident=Andrew Schroeder");
+
+    const gapsPrompt = await captureSystemPrompt("Where are the uncovered coverage gaps this week?");
+    expect(gapsPrompt).toContain("<FAST_COVERAGE_GAPS");
+    expect(gapsPrompt).toContain("type=OR case");
+    expect(gapsPrompt).toContain("type=clinic");
+  });
+
+  it("injects linked-user, named-person, availability, and rotation summaries", async () => {
+    const state = createInitialState();
+    state.residents[0].username = user.username;
+    state.assignments.push({
+      id: "assignment_fast_person",
+      kind: "case",
+      targetId: "case_chen_whipple",
+      residentId: state.residents[0].id,
+      locked: false,
+      source: "admin",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z"
+    });
+
+    const myPrompt = await captureSystemPrompt("What is my schedule this week?", state);
+    expect(myPrompt).toContain('<FAST_MY_SCHEDULE people="Adedayo Adeleke"');
+    expect(myPrompt).toContain("work=Whipple");
+
+    const personPrompt = await captureSystemPrompt("What is Dr. Chen doing this week?", state);
+    expect(personPrompt).toContain('<FAST_PERSON_SCHEDULE people="Dr. Chen"');
+    expect(personPrompt).toContain("type=OR attending");
+
+    const availabilityPrompt = await captureSystemPrompt("Is Adeleke available to cover this week?", state);
+    expect(availabilityPrompt).toContain('<FAST_AVAILABILITY people="Adedayo Adeleke"');
+
+    const rotationPrompt = await captureSystemPrompt("What rotation is Adeleke on in August?", state);
+    expect(rotationPrompt).toContain("<FAST_ROTATIONS");
+    expect(rotationPrompt).toContain("resident=Adedayo Adeleke");
+  });
+
+  it("narrows fast context by month and hospital and includes pending trade requests", async () => {
+    const state = createInitialState();
+    state.coverageRequests.push({
+      id: "request_fast_trade",
+      requestType: "resident-trade",
+      action: "update",
+      status: "pending",
+      requesterResidentId: state.residents[0].id,
+      targetResidentId: state.residents[1].id,
+      requesterName: state.residents[0].name,
+      message: "Swap weekend coverage",
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z"
+    });
+
+    const hospitalPrompt = await captureSystemPrompt("What surgery is at WCH this week?", state);
+    expect(hospitalPrompt).toContain("hospital=WCH");
+    expect(hospitalPrompt).not.toContain("hospital=UH");
+
+    const augustPrompt = await captureSystemPrompt("Who is on call in August?", state);
+    expect(augustPrompt).toContain('requested_range="2026-08-01..2026-08-31"');
+    expect(augustPrompt).not.toContain("date=2026-07-31");
+
+    const requestPrompt = await captureSystemPrompt("Are there any pending trade requests?", state);
+    expect(requestPrompt).toContain('<FAST_PENDING_REQUESTS entries="1"');
+    expect(requestPrompt).toContain("message=Swap weekend coverage");
+  });
+
+  it("uses word boundaries so callback, Casey, and office do not trigger fast schedule context", async () => {
+    const prompt = await captureSystemPrompt("Can you callback Casey at the office?");
+
+    expect(prompt).toContain("No fast schedule context was triggered");
+    expect(prompt).not.toContain("<FAST_CALL_SCHEDULE");
+    expect(prompt).not.toContain("<FAST_CASE_SCHEDULE");
+    expect(prompt).not.toContain("<FAST_ABSENCE_SCHEDULE");
   });
 
   it("uses the Parakeet transcription endpoint payload", async () => {
