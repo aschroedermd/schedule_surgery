@@ -61,7 +61,7 @@ describe("schedule assistant", () => {
     expect(prompt).toContain('<FAST_CONTACT_DIRECTORY contacts="129" authoritative="true">');
     expect(prompt).toContain("name=Lab – Hematology|phone=(540) 853-0617|directory_type=Hospital|category=Ancillary Services");
     expect(prompt).toContain("name=PACU|phone=(540) 981-7173|directory_type=Hospital|category=Perioperative");
-    expect(prompt).toContain("name=Andrew Schroeder|phone=(540) 204-5505|directory_type=Residents|category=Level 5");
+    expect(prompt).toContain("name=Andrew Schroeder|phone=(540) 204-5505|directory_type=Residents|category=PGY-5");
     expect(prompt).toContain("name=David Salzberg|phone=(540) 855-0810|directory_type=Faculty & Staff|category=Faculty");
     expect(prompt).toContain("name=Matthew Anderson|phone=(540) 566-8297|directory_type=Residents|category=Plastic Surgery Residents");
   });

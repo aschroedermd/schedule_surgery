@@ -5605,10 +5605,16 @@ h2 {
 }
 
 .contact-copy strong {
-  overflow: hidden;
   font-size: 0.98rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
+.contact-title {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .contact-copy small {

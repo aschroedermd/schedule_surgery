@@ -232,12 +232,14 @@ function ContactAddForm({
 
 function ContactRow({ contact, canDelete, onDelete }: { contact: DirectoryContact; canDelete: boolean; onDelete: () => void }) {
   const telephoneUrl = makeTelephoneUrl(contact.phoneNumber);
+  const display = splitContactNameAndTitle(contact.name);
   return (
     <article className="contact-row">
       <a className="contact-main" href={telephoneUrl} aria-label={`Call ${contact.name} at ${contact.phoneNumber}`}>
         <span className="contact-avatar" aria-hidden="true">{contact.name.trim().charAt(0).toLocaleUpperCase()}</span>
         <span className="contact-copy">
-          <strong>{contact.name}</strong>
+          <strong>{display.name}</strong>
+          {display.title && <span className="contact-title">{display.title}</span>}
           <small>{contact.phoneNumber}</small>
           {contact.alternatePhoneNumbers?.map((phoneNumber) => (
             <small key={phoneNumber}>Alternate: {phoneNumber}</small>
@@ -268,6 +270,20 @@ function ContactRow({ contact, canDelete, onDelete }: { contact: DirectoryContac
       </div>
     </article>
   );
+}
+
+export function splitContactNameAndTitle(value: string): { name: string; title?: string } {
+  const credentialMatch = value.match(/^(.+?),\s*((?:NP|PA)\b.*)$/i);
+  if (credentialMatch) return { name: credentialMatch[1].trim(), title: credentialMatch[2].trim() };
+
+  const separatorIndex = value.indexOf(" - ");
+  if (separatorIndex > 0) {
+    return {
+      name: value.slice(0, separatorIndex).trim(),
+      title: value.slice(separatorIndex + 3).trim()
+    };
+  }
+  return { name: value.trim() };
 }
 
 function ContactRequests({

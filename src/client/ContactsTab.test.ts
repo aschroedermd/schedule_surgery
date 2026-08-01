@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { splitContactNameAndTitle } from "./ContactsTab";
 import { buildVCard } from "./vcard";
 
 describe("contact card downloads", () => {
@@ -38,5 +39,24 @@ describe("contact card downloads", () => {
 
     expect(card).toContain("TEL;TYPE=WORK,VOICE:+15405261242");
     expect(card).toContain("TEL;TYPE=WORK,VOICE:+15405974174");
+  });
+});
+
+describe("contact row labels", () => {
+  it("moves credentials and roles onto a secondary line", () => {
+    expect(splitContactNameAndTitle("Bethany Nichols, NP - EGS")).toEqual({
+      name: "Bethany Nichols",
+      title: "NP - EGS"
+    });
+    expect(splitContactNameAndTitle("Anita Lewis - Department Secretary, General Surgery (CCR 3)")).toEqual({
+      name: "Anita Lewis",
+      title: "Department Secretary, General Surgery (CCR 3)"
+    });
+  });
+
+  it("keeps department and unit names intact", () => {
+    expect(splitContactNameAndTitle("Clinic Practice Manager, General Surgery")).toEqual({
+      name: "Clinic Practice Manager, General Surgery"
+    });
   });
 });

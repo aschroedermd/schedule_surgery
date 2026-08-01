@@ -358,24 +358,29 @@ function mergeSeedContacts(existing: DirectoryContact[] | undefined): DirectoryC
 function normalizeContacts(contacts: DirectoryContact[]): DirectoryContact[] {
   return contacts
     .filter((contact) => Boolean(contact?.id && contact.name && contact.phoneNumber && contact.category))
-    .map((contact) => ({
-      ...contact,
-      directoryType:
-        contact.directoryType === "Residents" || contact.directoryType === "Faculty & Staff"
-          ? contact.directoryType
-          : String(contact.directoryType) === "Attendings"
-            ? "Faculty & Staff"
-          : "Hospital",
-      alternatePhoneNumbers: Array.isArray(contact.alternatePhoneNumbers)
-        ? contact.alternatePhoneNumbers
-            .map((phoneNumber) => normalizeOptionalString(phoneNumber))
-            .filter((phoneNumber): phoneNumber is string => Boolean(phoneNumber))
-        : undefined,
-      organization: normalizeOptionalString(contact.organization) ?? "Hospital Directory",
-      createdAt: normalizeOptionalString(contact.createdAt) ?? new Date().toISOString(),
-      updatedAt: normalizeOptionalString(contact.updatedAt) ?? contact.createdAt ?? new Date().toISOString(),
-      createdBy: normalizeOptionalString(contact.createdBy)
-    }));
+    .map((contact) => {
+      const directoryType = contact.directoryType === "Residents" || contact.directoryType === "Faculty & Staff"
+        ? contact.directoryType
+        : String(contact.directoryType) === "Attendings"
+          ? "Faculty & Staff"
+          : "Hospital";
+      return {
+        ...contact,
+        directoryType,
+        category: directoryType === "Residents"
+          ? contact.category.replace(/^Level\s+([1-5])$/i, "PGY-$1")
+          : contact.category,
+        alternatePhoneNumbers: Array.isArray(contact.alternatePhoneNumbers)
+          ? contact.alternatePhoneNumbers
+              .map((phoneNumber) => normalizeOptionalString(phoneNumber))
+              .filter((phoneNumber): phoneNumber is string => Boolean(phoneNumber))
+          : undefined,
+        organization: normalizeOptionalString(contact.organization) ?? "Hospital Directory",
+        createdAt: normalizeOptionalString(contact.createdAt) ?? new Date().toISOString(),
+        updatedAt: normalizeOptionalString(contact.updatedAt) ?? contact.createdAt ?? new Date().toISOString(),
+        createdBy: normalizeOptionalString(contact.createdBy)
+      };
+    });
 }
 
 function normalizeContactRequests(requests: ContactRequest[]): ContactRequest[] {

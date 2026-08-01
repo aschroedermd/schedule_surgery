@@ -181,7 +181,7 @@ describe("planner API", () => {
         name: "Andrew Schroeder",
         phoneNumber: "(540) 204-5505",
         directoryType: "Residents",
-        category: "Level 5"
+        category: "PGY-5"
       })])
     );
     expect(seeded.body.contacts).toEqual(expect.arrayContaining([
@@ -285,7 +285,7 @@ describe("planner API", () => {
     expect(normalized.contacts.find((contact) => contact.name === "Adedayo Adeleke")).toMatchObject({
       phoneNumber: "(540) 759-9761",
       directoryType: "Residents",
-      category: "Level 1"
+      category: "PGY-1"
     });
     expect(normalized.contacts.find((contact) => contact.name === "David Salzberg")?.directoryType).toBe("Faculty & Staff");
   });
