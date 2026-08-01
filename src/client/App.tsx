@@ -8,6 +8,7 @@ import {
   Lock,
   LogIn,
   LogOut,
+  Pencil,
   Plus,
   Printer,
   RefreshCw,
@@ -54,6 +55,7 @@ import {
 } from "./api";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { ChatTab } from "./ChatTab";
+import { ContactsTab } from "./ContactsTab";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import {
@@ -273,6 +275,7 @@ export function App() {
       displayName: user.displayName,
       role: user.role,
       servicePrivileges: user.servicePrivileges,
+      canAddContacts: user.canAddContacts,
       passwordUpdatedAt: user.passwordUpdatedAt,
       mustChangePassword: user.mustChangePassword
     };
@@ -536,6 +539,23 @@ export function App() {
   }, [session?.token, session?.mustChangePassword, selectedWeekId, selectedService, liveUpdatesReady]);
 
   useEffect(() => {
+    if (!session || activeTab !== "contacts") return;
+    let cancelled = false;
+    fetchSession(session.token)
+      .then((currentSession) => {
+        if (cancelled) return;
+        const nextSession = { ...session, ...currentSession };
+        storeSession(nextSession);
+        setSession(nextSession);
+      })
+      .catch((sessionError) => {
+        if (cancelled || handleExpiredSession(sessionError)) return;
+        setError(sessionError instanceof Error ? sessionError.message : "Unable to refresh contact permissions");
+      });
+    return () => { cancelled = true; };
+  }, [activeTab, state?.version, session?.token]);
+
+  useEffect(() => {
     if (!printSnapshot) return;
     const frame = window.requestAnimationFrame(() => window.print());
     const clearPrintSnapshot = () => setPrintSnapshot(undefined);
@@ -730,6 +750,16 @@ export function App() {
           selectedService={selectedService}
         />
       )}
+      {activeTab === "contacts" && (
+        <ContactsTab
+          state={state}
+          token={session.token}
+          username={session.username}
+          isAdmin={isAdmin}
+          canAddContacts={session.canAddContacts}
+          onMutate={runMutation}
+        />
+      )}
       {activeTab === "residents" && (
         <GoldStarChartTab
           state={state}
@@ -835,16 +865,33 @@ function LoginScreen({
 
   return (
     <main className="login-screen">
-      <form className="login-panel" onSubmit={submit}>
+      <form className="login-panel" onSubmit={submit} autoComplete="on">
         <p className="eyebrow">Resident OR Coverage</p>
         <h1>Coverage Planner</h1>
         <label>
           Username
-          <input value={username} onChange={(event) => setUsername(event.target.value)} autoFocus />
+          <input
+            name="username"
+            type="text"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="First Initial + Last Name"
+            autoFocus
+          />
         </label>
         <label>
           Password
-          <input value={password} type="password" onChange={(event) => setPassword(event.target.value)} />
+          <input
+            name="password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+          />
         </label>
         {error && <p className="error-text">{error}</p>}
         <button className="primary-button" type="submit">
@@ -2573,19 +2620,22 @@ function BlockView({
           <span>{block.hospital.shortName} · {block.firstCaseStartTime}</span>
           {block.notes && <span>{block.notes}</span>}
         </div>
-        <AssignmentControl
-          state={state}
-          token={token}
-          kind="block"
-          targetId={block.id}
-          assignment={block.assignment}
-          coveredWithoutDirectAssignment={allCasesCoveredIndividually}
-          emptyLabel={allCasesCoveredIndividually ? "Individually assigned" : undefined}
-          disabled={!canEdit}
-          claimable={false}
-          selectedService={selectedService}
-          onMutate={onMutate}
-        />
+        <div className="block-actions">
+          <AssignmentControl
+            state={state}
+            token={token}
+            kind="block"
+            targetId={block.id}
+            assignment={block.assignment}
+            coveredWithoutDirectAssignment={allCasesCoveredIndividually}
+            emptyLabel={allCasesCoveredIndividually ? "Individually assigned" : undefined}
+            disabled={!canEdit}
+            claimable={false}
+            selectedService={selectedService}
+            onMutate={onMutate}
+          />
+          {canEdit && <QuickBlockEditor state={state} block={block} token={token} onMutate={onMutate} />}
+        </div>
       </div>
       <Warnings warnings={block.warningMessages} />
       <div className="case-list">
@@ -2723,9 +2773,12 @@ function ClinicView({
 
   return (
     <section className="clinic-section">
-      <div>
-        <strong>{formatClinicLabel(clinic)}</strong>
-        <span>{clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
+      <div className="clinic-card-header">
+        <div className="clinic-summary">
+          <strong>{formatClinicLabel(clinic)}</strong>
+          <span>{clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
+        </div>
+        {canEdit && <QuickClinicEditor state={state} clinic={clinic} token={token} onMutate={onMutate} />}
       </div>
       <div className="clinic-assignments">
         {clinic.assignments.map((assignment) => (
@@ -2767,6 +2820,313 @@ function ClinicView({
       <Warnings warnings={clinic.warningMessages} />
     </section>
   );
+}
+
+const QUICK_EDIT_LOCATION_CODES = ["RMH", "CCASC", "FMH", "NRV"] as const;
+
+type QuickCaseDraft = {
+  id: string;
+  procedureLabel: string;
+  durationMinutes: number | "";
+  isNew?: boolean;
+};
+
+function QuickBlockEditor({
+  state,
+  block,
+  token,
+  onMutate
+}: {
+  state: PlannerState;
+  block: ScheduledBlock;
+  token: string;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const savingRef = useRef(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [startTime, setStartTime] = useState(block.firstCaseStartTime);
+  const [hospitalId, setHospitalId] = useState(block.hospitalId);
+  const [caseDrafts, setCaseDrafts] = useState<QuickCaseDraft[]>(() => quickCaseDrafts(block.cases));
+
+  useEffect(() => {
+    if (isOpen) return;
+    setStartTime(block.firstCaseStartTime);
+    setHospitalId(block.hospitalId);
+    setCaseDrafts(quickCaseDrafts(block.cases));
+  }, [block.cases, block.firstCaseStartTime, block.hospitalId, isOpen]);
+
+  async function saveAndClose() {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setIsSaving(true);
+
+    try {
+      if (startTime !== block.firstCaseStartTime || hospitalId !== block.hospitalId) {
+        await onMutate(
+          () => updateEntity<AttendingBlock>(token, "attendingBlocks", block.id, { firstCaseStartTime: startTime, hospitalId }),
+          "Block updated"
+        );
+      }
+
+      let newCaseOrder = block.cases.length;
+      for (const draft of caseDrafts) {
+        const procedureLabel = draft.procedureLabel.trim();
+        const durationMinutes = normalizeQuickCaseDuration(draft.durationMinutes);
+        if (draft.isNew) {
+          if (!procedureLabel) continue;
+          const order = newCaseOrder++;
+          await onMutate(
+            () => createEntity<SurgeryCase>(token, "cases", {
+              id: createId("case"),
+              blockId: block.id,
+              procedureLabel,
+              durationMinutes,
+              priority: 3,
+              tags: [],
+              notes: "",
+              order
+            }),
+            "Case added"
+          );
+          continue;
+        }
+
+        const original = block.cases.find((surgeryCase) => surgeryCase.id === draft.id);
+        if (!original || (original.procedureLabel === procedureLabel && original.durationMinutes === durationMinutes)) continue;
+        await onMutate(
+          () => updateEntity<SurgeryCase>(token, "cases", draft.id, { procedureLabel, durationMinutes }),
+          "Case updated"
+        );
+      }
+      setIsOpen(false);
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (!editorRef.current?.contains(event.target as Node)) void saveAndClose();
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") void saveAndClose();
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, startTime, hospitalId, caseDrafts]);
+
+  const hospitalOptions = getQuickEditHospitals(state.hospitals, block.hospitalId);
+
+  return (
+    <div className="quick-editor-anchor" ref={editorRef}>
+      <button
+        type="button"
+        className="icon-button"
+        title="Quick edit block"
+        aria-label={`Quick edit ${block.attending.name} block`}
+        aria-expanded={isOpen}
+        onClick={() => (isOpen ? void saveAndClose() : setIsOpen(true))}
+      >
+        <Pencil size={16} />
+      </button>
+      {isOpen && (
+        <div className="quick-schedule-editor" role="dialog" aria-label={`Edit ${block.attending.name} block`}>
+          <div className="quick-editor-heading">
+            <strong>Edit block</strong>
+            <button type="button" className="icon-button" title="Save and close" onClick={() => void saveAndClose()}>
+              <X size={15} />
+            </button>
+          </div>
+          <div className="quick-editor-settings">
+            <label>
+              Start
+              <input type="time" value={startTime} onInput={(event) => setStartTime(event.currentTarget.value)} />
+            </label>
+            <label>
+              Location
+              <select value={hospitalId} onChange={(event) => setHospitalId(event.target.value)}>
+                {hospitalOptions.map((hospital) => <option key={hospital.id} value={hospital.id}>{hospital.shortName}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="quick-case-heading" aria-hidden="true">
+            <span>Case</span>
+            <span>Duration (min)</span>
+          </div>
+          <div className="quick-case-list">
+            {caseDrafts.map((draft) => (
+              <div className="quick-case-row" key={draft.id}>
+                <input
+                  aria-label="Case name"
+                  placeholder="Case name"
+                  value={draft.procedureLabel}
+                  onChange={(event) => setCaseDrafts((current) => current.map((candidate) => candidate.id === draft.id ? { ...candidate, procedureLabel: event.target.value } : candidate))}
+                />
+                <input
+                  aria-label="Duration minutes"
+                  placeholder="90"
+                  type="number"
+                  min={1}
+                  value={draft.durationMinutes}
+                  onChange={(event) => setCaseDrafts((current) => current.map((candidate) => candidate.id === draft.id ? { ...candidate, durationMinutes: event.target.value ? Number(event.target.value) : "" } : candidate))}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="quick-editor-footer">
+            <button
+              type="button"
+              className="icon-button quick-add-case"
+              title="Add case row"
+              aria-label="Add case row"
+              onClick={() => setCaseDrafts((current) => [...current, { id: createId("draft"), procedureLabel: "", durationMinutes: "", isNew: true }])}
+            >
+              <Plus size={16} />
+            </button>
+            <button type="button" className="primary-button" disabled={isSaving} onClick={() => void saveAndClose()}>
+              <Save size={15} />{isSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuickClinicEditor({
+  state,
+  clinic,
+  token,
+  onMutate
+}: {
+  state: PlannerState;
+  clinic: ScheduledClinicSession;
+  token: string;
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const savingRef = useRef(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [startTime, setStartTime] = useState(clinic.startTime);
+  const [location, setLocation] = useState(clinic.location);
+
+  useEffect(() => {
+    if (isOpen) return;
+    setStartTime(clinic.startTime);
+    setLocation(clinic.location);
+  }, [clinic.location, clinic.startTime, isOpen]);
+
+  async function saveAndClose() {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try {
+      if (startTime !== clinic.startTime || location !== clinic.location) {
+        const matchingHospital = state.hospitals.find((hospital) => hospital.shortName.toUpperCase() === location.toUpperCase());
+        await onMutate(
+          () => updateEntity<ClinicSession>(token, "clinicSessions", clinic.id, {
+            startTime,
+            endTime: shiftEndTime(clinic.startTime, clinic.endTime, startTime),
+            location,
+            ...(matchingHospital ? { hospitalId: matchingHospital.id } : {})
+          }),
+          "Clinic updated"
+        );
+      }
+      setIsOpen(false);
+    } finally {
+      savingRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (!editorRef.current?.contains(event.target as Node)) void saveAndClose();
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") void saveAndClose();
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, location, startTime]);
+
+  const locationOptions = Array.from(new Set([...QUICK_EDIT_LOCATION_CODES, clinic.location]));
+
+  return (
+    <div className="quick-editor-anchor" ref={editorRef}>
+      <button
+        type="button"
+        className="icon-button"
+        title="Quick edit clinic"
+        aria-label={`Quick edit ${formatClinicLabel(clinic)}`}
+        aria-expanded={isOpen}
+        onClick={() => (isOpen ? void saveAndClose() : setIsOpen(true))}
+      >
+        <Pencil size={16} />
+      </button>
+      {isOpen && (
+        <div className="quick-schedule-editor quick-clinic-editor" role="dialog" aria-label={`Edit ${formatClinicLabel(clinic)}`}>
+          <div className="quick-editor-heading">
+            <strong>Edit clinic</strong>
+            <button type="button" className="icon-button" title="Save and close" onClick={() => void saveAndClose()}><X size={15} /></button>
+          </div>
+          <div className="quick-editor-settings">
+            <label>Start<input type="time" value={startTime} onInput={(event) => setStartTime(event.currentTarget.value)} /></label>
+            <label>
+              Location
+              <select value={location} onChange={(event) => setLocation(event.target.value)}>
+                {locationOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="quick-editor-footer">
+            <button type="button" className="primary-button" onClick={() => void saveAndClose()}><Save size={15} />Save</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function quickCaseDrafts(cases: ScheduledCase[]): QuickCaseDraft[] {
+  return cases.map((surgeryCase) => ({
+    id: surgeryCase.id,
+    procedureLabel: surgeryCase.procedureLabel,
+    durationMinutes: surgeryCase.durationMinutes
+  }));
+}
+
+export function normalizeQuickCaseDuration(value: number | ""): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 90;
+}
+
+export function getQuickEditHospitals(hospitals: Hospital[], currentHospitalId: string): Hospital[] {
+  const preferred = hospitals.filter((hospital) => QUICK_EDIT_LOCATION_CODES.includes(hospital.shortName.toUpperCase() as typeof QUICK_EDIT_LOCATION_CODES[number]));
+  if (!preferred.length) return hospitals;
+  const current = hospitals.find((hospital) => hospital.id === currentHospitalId);
+  return current && !preferred.some((hospital) => hospital.id === current.id) ? [current, ...preferred] : preferred;
+}
+
+export function shiftEndTime(originalStart: string, originalEnd: string, nextStart: string): string {
+  const toMinutes = (value: string) => {
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  const duration = Math.max(0, toMinutes(originalEnd) - toMinutes(originalStart));
+  const end = (toMinutes(nextStart) + duration) % (24 * 60);
+  return `${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`;
 }
 
 function AssignmentControl({
@@ -4662,6 +5022,8 @@ function getTabTitle(tab: Tab): string {
       return "OR / Clinic 🔪";
     case "my":
       return "My Schedule ☁️";
+    case "contacts":
+      return "Contacts ☎️";
     case "residents":
       return "Residents ✨";
     case "calendar":
@@ -4843,8 +5205,9 @@ function getStoredSession(): PlannerSession | undefined {
   const servicePrivileges = parseStoredPrivileges(localStorage.getItem("plannerServicePrivileges"));
   const mustChangePassword = localStorage.getItem("plannerMustChangePassword") === "true";
   const attendingId = localStorage.getItem("plannerAttendingId") ?? undefined;
+  const canAddContacts = localStorage.getItem("plannerCanAddContacts") === "true";
   return token && username && displayName && passwordUpdatedAt && isRole(role)
-    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, mustChangePassword }
+    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, canAddContacts, mustChangePassword }
     : undefined;
 }
 
@@ -4857,6 +5220,7 @@ function storeSession(session: PlannerSession) {
   else localStorage.removeItem("plannerAttendingId");
   localStorage.setItem("plannerPasswordUpdatedAt", session.passwordUpdatedAt);
   localStorage.setItem("plannerServicePrivileges", JSON.stringify(session.servicePrivileges));
+  localStorage.setItem("plannerCanAddContacts", String(session.canAddContacts));
   localStorage.setItem("plannerMustChangePassword", String(session.mustChangePassword));
   localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
 }

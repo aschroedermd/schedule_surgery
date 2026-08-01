@@ -1,6 +1,6 @@
 import type { ServicePrivilege } from "../shared/types";
 
-export type Tab = "chat" | "board" | "my" | "residents" | "calendar" | "call" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "account";
+export type Tab = "chat" | "board" | "my" | "contacts" | "residents" | "calendar" | "call" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "account";
 export type NavigationTab = readonly [Tab, string];
 
 const ADMIN_NAVIGATION_TABS = new Set<Tab>(["roster", "defaults", "users", "activity"]);
@@ -19,6 +19,7 @@ export function getNavigationTabs({
     ["chat", "Assistant ✦"],
     ["board", "OR / Clinic 🔪"],
     ["my", "My Schedule ☁️"],
+    ["contacts", "Contacts ☎️"],
     ["calendar", "Calendar 🗓️"],
     ["call", "CALL 📟"],
     ["schedule", "Blocks ⏹️"],

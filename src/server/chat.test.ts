@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createInitialState } from "./sampleData";
-import { answerScheduleQuestion, streamScheduleQuestion, synthesizeScheduleSpeech, transcribeScheduleAudio } from "./chat";
+import { answerScheduleQuestion, refreshScheduleLookups, streamScheduleQuestion, synthesizeScheduleSpeech, transcribeScheduleAudio } from "./chat";
 import { MemoryStateStore } from "./store";
 import { SessionUser } from "../shared/types";
 
@@ -9,6 +9,7 @@ const user: SessionUser = {
   displayName: "Christian Blue",
   role: "viewer",
   servicePrivileges: { Davies: "view" },
+  canAddContacts: false,
   passwordUpdatedAt: new Date(0).toISOString(),
   mustChangePassword: false
 };
@@ -51,6 +52,96 @@ describe("schedule assistant", () => {
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
     process.env.ELEVENLABS_API_KEY = "test-elevenlabs-key";
     process.env.CHAT_QUOTA_TIME_ZONE = "America/New_York";
+  });
+
+  it("injects the authoritative contact directory for phone-number questions", async () => {
+    const prompt = await captureSystemPrompt("What is the Lab Hematology phone number?");
+
+    expect(prompt).toContain("The Contacts directory is authoritative for hospital, resident, faculty, ACP, and administrative staff phone numbers");
+    expect(prompt).toContain('<FAST_CONTACT_DIRECTORY contacts="129" authoritative="true">');
+    expect(prompt).toContain("name=Lab – Hematology|phone=(540) 853-0617|directory_type=Hospital|category=Ancillary Services");
+    expect(prompt).toContain("name=PACU|phone=(540) 981-7173|directory_type=Hospital|category=Perioperative");
+    expect(prompt).toContain("name=Andrew Schroeder|phone=(540) 204-5505|directory_type=Residents|category=Level 5");
+    expect(prompt).toContain("name=David Salzberg|phone=(540) 855-0810|directory_type=Faculty & Staff|category=Faculty");
+    expect(prompt).toContain("name=Matthew Anderson|phone=(540) 566-8297|directory_type=Residents|category=Plastic Surgery Residents");
+  });
+
+  it("lets the model search persisted contacts and returns formatted numbers", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return Response.json({
+          model: "deepseek/deepseek-v4-flash",
+          choices: [{
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [{
+                id: "contact_1",
+                type: "function",
+                function: { name: "search_contacts", arguments: JSON.stringify({ query: "PACU" }) }
+              }]
+            }
+          }]
+        });
+      }
+      return Response.json({
+        model: "deepseek/deepseek-v4-flash",
+        choices: [{ message: { role: "assistant", content: "PACU is (540) 981-7173." } }]
+      });
+    }) as typeof fetch;
+
+    const result = await answerScheduleQuestion(
+      [{ role: "user", content: "How do I reach PACU?" }],
+      { state: createInitialState(), user, serviceLine: "Davies" },
+      fetcher
+    );
+
+    expect(result.message).toBe("PACU is (540) 981-7173.");
+    expect(result.lookups).toEqual([expect.objectContaining({
+      tool: "search_contacts",
+      arguments: { query: "PACU" },
+      result: {
+        query: "PACU",
+        match_count: 1,
+        matches: [{
+          name: "PACU",
+          phone_number: "(540) 981-7173",
+          directory_type: "Hospital",
+          category: "Perioperative",
+          organization: "Hospital Directory"
+        }]
+      }
+    })]);
+    const tools = requests[0].tools as Array<{ function: { name: string; description: string } }>;
+    expect(tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ function: expect.objectContaining({ name: "search_contacts" }) })
+    ]));
+  });
+
+  it("searches contacts by category and partial multi-word names", () => {
+    const context = { state: createInitialState(), user, serviceLine: "Davies" };
+    const [icuLookup, mountainLookup] = refreshScheduleLookups(
+      [
+        { tool: "search_contacts", arguments: { query: "ICU" } },
+        { tool: "search_contacts", arguments: { query: "9 Mountain" } }
+      ],
+      context
+    );
+
+    expect(icuLookup.result).toMatchObject({ match_count: 3 });
+    expect((icuLookup.result as { matches: Array<{ name: string }> }).matches.map((contact) => contact.name)).toEqual([
+      "10 Mountain ICU",
+      "6 Mountain ICU",
+      "9 Mountain ICU"
+    ]);
+    expect(mountainLookup.result).toMatchObject({ match_count: 2 });
+    expect((mountainLookup.result as { matches: Array<{ name: string }> }).matches.map((contact) => contact.name)).toEqual([
+      "9 Mountain ICU",
+      "9 Mountain PCU"
+    ]);
   });
 
   it("treats attending call as shared General Surgery coverage instead of filtering by service", async () => {

@@ -262,6 +262,36 @@ export interface GoldStarAward {
 
 export type ActivityEventType = "login" | "assignment" | "calendar" | "account" | "resident" | "assistant" | "wiki";
 
+export interface DirectoryContact {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  alternatePhoneNumbers?: string[];
+  category: string;
+  directoryType: DirectoryContactType;
+  organization: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export type DirectoryContactType = "Hospital" | "Residents" | "Faculty & Staff";
+
+export type ContactRequestStatus = "pending" | "approved" | "rejected";
+
+export interface ContactRequest {
+  id: string;
+  contact: DirectoryContact;
+  status: ContactRequestStatus;
+  requesterUsername: string;
+  requesterName: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  adminNote?: string;
+}
+
 export const WIKI_CATEGORIES = [
   "index",
   "program",
@@ -386,6 +416,8 @@ export interface PlannerState {
   qgendaSync: QgendaSyncStatus;
   coverageEntries: CoverageEntry[];
   coverageRequests: CoverageChangeRequest[];
+  contacts: DirectoryContact[];
+  contactRequests: ContactRequest[];
   wikiArticles: WikiArticle[];
   wikiSources: WikiSource[];
   wikiRevision: number;
@@ -450,6 +482,7 @@ export interface UserSummary {
   role: Role;
   attendingId?: string;
   servicePrivileges: ServicePrivileges;
+  canAddContacts: boolean;
   createdAt: string;
   updatedAt: string;
   passwordUpdatedAt: string;
@@ -462,6 +495,7 @@ export interface SessionUser {
   role: Role;
   attendingId?: string;
   servicePrivileges: ServicePrivileges;
+  canAddContacts: boolean;
   passwordUpdatedAt: string;
   mustChangePassword: boolean;
 }

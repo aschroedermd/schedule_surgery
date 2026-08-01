@@ -30,6 +30,7 @@ export interface UpsertUserInput {
   password?: string;
   temporaryPassword?: string;
   servicePrivileges?: ServicePrivileges;
+  canAddContacts?: boolean;
 }
 
 export interface PasswordResetResult {
@@ -48,7 +49,7 @@ export interface UserStore {
   listUsers(): Promise<UserSummary[]>;
   createUser(input: UpsertUserInput): Promise<UserCreationResult>;
   createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]>;
-  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges">>): Promise<UserSummary>;
+  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts">>): Promise<UserSummary>;
   deleteUser(username: string): Promise<void>;
   resetPassword(username: string, temporaryPassword?: string): Promise<PasswordResetResult>;
   changePassword(username: string, currentPassword: string, nextPassword: string): Promise<UserSummary>;
@@ -104,7 +105,7 @@ export class FileUserStore implements UserStore {
 
   async updateUser(
     username: string,
-    patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges">>
+    patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts">>
   ): Promise<UserSummary> {
     const data = await this.load();
     const user = requireStoredUser(data, username);
@@ -113,6 +114,7 @@ export class FileUserStore implements UserStore {
     user.attendingId = user.role === "attending" ? readOptionalString(patch.attendingId) ?? user.attendingId : undefined;
     if (user.role === "attending" && !user.attendingId) throw new Error("Attending accounts must be linked to an attending");
     if (patch.servicePrivileges) user.servicePrivileges = normalizePrivileges(patch.servicePrivileges);
+    if (typeof patch.canAddContacts === "boolean") user.canAddContacts = user.role === "admin" || patch.canAddContacts;
     user.updatedAt = new Date().toISOString();
     await this.save(data);
     return toSummary(user);
@@ -211,6 +213,7 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       role: username === "admin" ? "admin" : normalizeRole(user.role),
       attendingId: normalizeRole(user.role) === "attending" ? readOptionalString(user.attendingId) : undefined,
       servicePrivileges: normalizePrivileges(user.servicePrivileges),
+      canAddContacts: username === "admin" || user.canAddContacts === true,
       createdAt: user.createdAt ?? now,
       updatedAt: user.updatedAt ?? now,
       passwordUpdatedAt: user.passwordUpdatedAt ?? user.updatedAt ?? now,
@@ -261,6 +264,7 @@ function makeSeedUser(
     displayName,
     role,
     servicePrivileges: normalizePrivileges(role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : {}),
+    canAddContacts: role === "admin",
     passwordHash: hashSecret(password),
     createdAt: now,
     updatedAt: now,
@@ -293,6 +297,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
       servicePrivileges: normalizePrivileges(
         role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : input.servicePrivileges
       ),
+      canAddContacts: role === "admin" || input.canAddContacts === true,
       passwordHash: hashSecret(password),
       createdAt: now,
       updatedAt: now,
@@ -333,6 +338,7 @@ function toSummary(user: StoredUser): UserSummary {
     role: user.role,
     attendingId: user.attendingId,
     servicePrivileges: { ...user.servicePrivileges },
+    canAddContacts: user.role === "admin" || user.canAddContacts,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     passwordUpdatedAt: user.passwordUpdatedAt,

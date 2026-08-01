@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  getQuickEditHospitals,
   getAttendingNightScheduleForDate,
   getAttendingWeeklyScheduleForDate,
+  normalizeQuickCaseDuration,
+  shiftEndTime,
   shouldApplyScheduleLoad
 } from "./App";
 import type { AttendingCoverageAssignment, PlannerState } from "../shared/types";
@@ -93,6 +96,30 @@ describe("schedule load coordination", () => {
   it("rejects an older response after a newer load starts", () => {
     expect(shouldApplyScheduleLoad(1, 2, "Berry", "Berry")).toBe(false);
     expect(shouldApplyScheduleLoad(2, 2, "Berry", "Berry")).toBe(true);
+  });
+});
+
+describe("OR / clinic quick editing", () => {
+  it("defaults a missing case duration to 90 minutes", () => {
+    expect(normalizeQuickCaseDuration("")).toBe(90);
+    expect(normalizeQuickCaseDuration(0)).toBe(90);
+    expect(normalizeQuickCaseDuration(75)).toBe(75);
+  });
+
+  it("offers the configured RMH, CCASC, FMH, and NRV locations", () => {
+    const hospitals = [
+      { id: "other", name: "Other", shortName: "OTHER", color: "#000" },
+      { id: "rmh", name: "RMH", shortName: "RMH", color: "#111" },
+      { id: "ccasc", name: "CCASC", shortName: "CCASC", color: "#222" },
+      { id: "fmh", name: "FMH", shortName: "FMH", color: "#333" },
+      { id: "nrv", name: "NRV", shortName: "NRV", color: "#444" }
+    ];
+
+    expect(getQuickEditHospitals(hospitals, "rmh").map((hospital) => hospital.shortName)).toEqual(["RMH", "CCASC", "FMH", "NRV"]);
+  });
+
+  it("preserves clinic duration when its start time changes", () => {
+    expect(shiftEndTime("13:00", "17:00", "14:30")).toBe("18:30");
   });
 });
 

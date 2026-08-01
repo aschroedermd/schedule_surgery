@@ -2,6 +2,7 @@ import {
   ClaimRequest,
   CollectionName,
   AttendingCoverageAssignment,
+  DirectoryContact,
   CoverageChangeRequest,
   CoverageEntry,
   PlannerState,
@@ -511,6 +512,7 @@ export async function createUser(
     password?: string;
     temporaryPassword?: string;
     servicePrivileges?: ServicePrivileges;
+    canAddContacts?: boolean;
   }
 ): Promise<UserCreateResponse> {
   return request<UserCreateResponse>("/api/users", {
@@ -530,6 +532,7 @@ export async function createUsers(
     password?: string;
     temporaryPassword?: string;
     servicePrivileges?: ServicePrivileges;
+    canAddContacts?: boolean;
   }>
 ): Promise<BulkUserCreateResponse> {
   return request<BulkUserCreateResponse>("/api/users/bulk", {
@@ -542,7 +545,7 @@ export async function createUsers(
 export async function updateUser(
   token: string,
   username: string,
-  patch: { displayName?: string; role?: Role; attendingId?: string; servicePrivileges?: ServicePrivileges }
+  patch: { displayName?: string; role?: Role; attendingId?: string; servicePrivileges?: ServicePrivileges; canAddContacts?: boolean }
 ): Promise<UserSummary[]> {
   const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}`, {
     method: "PATCH",
@@ -550,6 +553,32 @@ export async function updateUser(
     body: JSON.stringify(patch)
   });
   return result.users;
+}
+
+export async function submitContact(
+  token: string,
+  contact: Pick<DirectoryContact, "name" | "phoneNumber" | "category" | "directoryType"> & {
+    alternatePhoneNumbers?: string[];
+    organization?: string;
+  }
+): Promise<PlannerState> {
+  return request<PlannerState>("/api/contacts", {
+    method: "POST",
+    token,
+    body: JSON.stringify(contact)
+  });
+}
+
+export async function approveContactRequest(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/contact-requests/${encodeURIComponent(id)}/approve`, { method: "POST", token });
+}
+
+export async function rejectContactRequest(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/contact-requests/${encodeURIComponent(id)}/reject`, { method: "POST", token });
+}
+
+export async function deleteContact(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/contacts/${encodeURIComponent(id)}`, { method: "DELETE", token });
 }
 
 export async function deleteUser(token: string, username: string): Promise<UserSummary[]> {

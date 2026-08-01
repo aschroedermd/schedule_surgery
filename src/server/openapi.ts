@@ -65,6 +65,7 @@ export function getOpenApiDocument() {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
+            canAddContacts: { type: "boolean", description: "Allows adding directory contacts without admin approval." },
             passwordUpdatedAt: { type: "string", format: "date-time" },
             mustChangePassword: { type: "boolean" }
           }
@@ -80,6 +81,7 @@ export function getOpenApiDocument() {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
+            canAddContacts: { type: "boolean" },
             createdAt: { type: "string", format: "date-time" },
             updatedAt: { type: "string", format: "date-time" },
             passwordUpdatedAt: { type: "string", format: "date-time" },
@@ -111,7 +113,29 @@ export function getOpenApiDocument() {
             servicePrivileges: {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
-            }
+            },
+            canAddContacts: { type: "boolean", description: "Grant direct contact publishing; otherwise submissions require approval." }
+          }
+        },
+        DirectoryContactInput: {
+          type: "object",
+          required: ["name", "phoneNumber", "category"],
+          properties: {
+            name: { type: "string", maxLength: 120 },
+            phoneNumber: { type: "string", description: "Telephone number containing 7 to 15 digits; formatting is allowed." },
+            alternatePhoneNumbers: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional additional telephone numbers containing 7 to 15 digits each."
+            },
+            category: { type: "string", maxLength: 80 },
+            directoryType: {
+              type: "string",
+              enum: ["Hospital", "Residents", "Faculty & Staff"],
+              default: "Hospital",
+              description: "Top-level Contacts tab filter."
+            },
+            organization: { type: "string", maxLength: 120, description: "Optional; defaults from directoryType." }
           }
         },
         UserCreationResult: {
@@ -672,6 +696,59 @@ export function getOpenApiDocument() {
             "200": { description: "text/event-stream with state version events" },
             "401": { description: "Unauthorized" }
           }
+        }
+      },
+      "/api/contacts": {
+        get: {
+          summary: "List directory contacts",
+          description: "Returns all published contacts. Admins also receive all requests; other users receive only their own requests.",
+          responses: { "200": { description: "Published contacts and visible contact requests" } }
+        },
+        post: {
+          summary: "Add or request a directory contact",
+          description: "The admin X-API-Key, admins, and accounts with canAddContacts publish immediately. Other browser accounts create a pending admin request. The X-Contact-Disposition response header is added or requested.",
+          parameters: [{ $ref: "#/components/parameters/StateVersionHeader" }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/DirectoryContactInput" } } }
+          },
+          responses: {
+            "201": { description: "Updated PlannerState" },
+            "409": { description: "Contact exists or already has a pending request" }
+          }
+        }
+      },
+      "/api/contacts/{id}": {
+        delete: {
+          summary: "Remove a directory contact",
+          description: "Admin browser session or admin X-API-Key required.",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+            { $ref: "#/components/parameters/StateVersionHeader" }
+          ],
+          responses: { "200": { description: "Updated PlannerState" }, "403": { description: "Admin access required" } }
+        }
+      },
+      "/api/contact-requests/{id}/approve": {
+        post: {
+          summary: "Approve and publish a requested contact",
+          description: "Admin browser session or admin X-API-Key required.",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+            { $ref: "#/components/parameters/StateVersionHeader" }
+          ],
+          responses: { "200": { description: "Updated PlannerState" }, "403": { description: "Admin access required" } }
+        }
+      },
+      "/api/contact-requests/{id}/reject": {
+        post: {
+          summary: "Reject a requested contact",
+          description: "Admin browser session or admin X-API-Key required.",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+            { $ref: "#/components/parameters/StateVersionHeader" }
+          ],
+          responses: { "200": { description: "Updated PlannerState" }, "403": { description: "Admin access required" } }
         }
       },
       "/api/users": {

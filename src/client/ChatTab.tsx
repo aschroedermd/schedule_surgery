@@ -539,6 +539,7 @@ export function ChatTab({
     setSpeechStatus("playing");
     if (!(await tryStartAudioPlayback(audio))) {
       setSpeechStatus("ready");
+      setError("The generated audio could not be played. Check this site's audio permissions and try again.");
     }
   }
 

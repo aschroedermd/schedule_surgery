@@ -37,9 +37,11 @@ import {
   ClaimRequest,
   ClinicSession,
   CollectionName,
+  ContactRequest,
   CoverageChangeRequest,
   CoverageEntry,
   CoverageKind,
+  DirectoryContact,
   CoverageRequestAction,
   GoldStarAward,
   PlannerState,
@@ -619,7 +621,8 @@ export function createApp(
         displayName: readOptionalString(req.body.displayName),
         role: isRole(req.body.role) ? req.body.role : undefined,
         attendingId: readOptionalString(req.body.attendingId),
-        servicePrivileges: req.body.servicePrivileges
+        servicePrivileges: req.body.servicePrivileges,
+        canAddContacts: typeof req.body.canAddContacts === "boolean" ? req.body.canAddContacts : undefined
       });
       const nextState = addActivity(addMedicalStudentRosterEntries(state, [user]), {
         ...requestActivityActor(req),
@@ -716,6 +719,143 @@ export function createApp(
   app.get("/api/state", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       res.json(filterStateForUser(await store.load(), req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/contacts", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = filterStateForUser(await store.load(), req.user);
+      res.json({ contacts: state.contacts, requests: state.contactRequests, stateVersion: state.version });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/contacts", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const now = new Date().toISOString();
+      const contact = readDirectoryContact(req.body, req.user?.username, now);
+      assertContactIsUnique(state, contact);
+      const canAddDirectly = req.user?.role === "admin" || req.user?.canAddContacts === true;
+      const nextState: PlannerState = canAddDirectly
+        ? { ...state, contacts: [...state.contacts, contact] }
+        : {
+            ...state,
+            contactRequests: [
+              {
+                id: createId("contact_request"),
+                contact,
+                status: "pending",
+                requesterUsername: req.user!.username,
+                requesterName: req.user!.displayName || req.user!.username,
+                createdAt: now,
+                updatedAt: now
+              },
+              ...state.contactRequests
+            ]
+          };
+      const saved = await commitState(req, addActivity(nextState, {
+        ...requestActivityActor(req, "viewer"),
+        activityType: "account",
+        action: canAddDirectly ? "added directory contact" : "requested directory contact",
+        details: `${contact.name} · ${contact.phoneNumber} · ${contact.category}`,
+        entityType: canAddDirectly ? "directoryContact" : "contactRequest",
+        entityId: canAddDirectly ? contact.id : nextState.contactRequests[0].id
+      }));
+      res.setHeader("x-contact-disposition", canAddDirectly ? "added" : "requested");
+      res.status(201).json(filterStateForUser(saved, req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/contact-requests/:id/approve", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const contactRequest = requireContactRequest(state, id);
+      if (contactRequest.status !== "pending") throw new HttpError(400, "Contact request is already resolved");
+      assertContactIsUnique(state, contactRequest.contact, id);
+      const now = new Date().toISOString();
+      const nextState: PlannerState = {
+        ...state,
+        contacts: [...state.contacts, { ...contactRequest.contact, updatedAt: now }],
+        contactRequests: state.contactRequests.map((item) => item.id === id ? {
+          ...item,
+          status: "approved",
+          adminNote: readOptionalString(req.body.adminNote),
+          updatedAt: now,
+          resolvedAt: now,
+          resolvedBy: req.user!.username
+        } : item)
+      };
+      const saved = await commitState(req, addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "approved directory contact",
+        details: `${contactRequest.contact.name} · ${contactRequest.contact.phoneNumber}`,
+        entityType: "contactRequest",
+        entityId: id
+      }));
+      res.json(saved);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/contact-requests/:id/reject", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const contactRequest = requireContactRequest(state, id);
+      if (contactRequest.status !== "pending") throw new HttpError(400, "Contact request is already resolved");
+      const now = new Date().toISOString();
+      const nextState: PlannerState = {
+        ...state,
+        contactRequests: state.contactRequests.map((item) => item.id === id ? {
+          ...item,
+          status: "rejected",
+          adminNote: readOptionalString(req.body.adminNote),
+          updatedAt: now,
+          resolvedAt: now,
+          resolvedBy: req.user!.username
+        } : item)
+      };
+      const saved = await commitState(req, addActivity(nextState, {
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "rejected directory contact",
+        details: `${contactRequest.contact.name} · ${contactRequest.contact.phoneNumber}`,
+        entityType: "contactRequest",
+        entityId: id
+      }));
+      res.json(saved);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/contacts/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const contact = state.contacts.find((item) => item.id === id);
+      if (!contact) throw new HttpError(404, "Contact not found");
+      const saved = await commitState(req, addActivity({
+        ...state,
+        contacts: state.contacts.filter((item) => item.id !== id)
+      }, {
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "removed directory contact",
+        details: `${contact.name} · ${contact.phoneNumber}`,
+        entityType: "directoryContact",
+        entityId: id
+      }));
+      res.json(saved);
     } catch (error) {
       next(error);
     }
@@ -1723,6 +1863,7 @@ function securityHeaders(_req: express.Request, res: express.Response, next: exp
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self' data:",
+    "media-src 'self' blob:",
     "connect-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
@@ -3417,6 +3558,69 @@ function readRequiredString(value: unknown, field: string): string {
   return normalized;
 }
 
+function readDirectoryContact(input: unknown, createdBy: string | undefined, now: string): DirectoryContact {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new HttpError(400, "Contact input must be an object");
+  }
+  const value = input as Record<string, unknown>;
+  const name = readRequiredString(value.name, "Contact name");
+  const phoneNumber = readRequiredString(value.phoneNumber, "Phone number");
+  const category = readRequiredString(value.category, "Category");
+  const directoryTypeValue = readOptionalString(value.directoryType) ?? "Hospital";
+  if (directoryTypeValue !== "Hospital" && directoryTypeValue !== "Residents" && directoryTypeValue !== "Faculty & Staff") {
+    throw new HttpError(400, "Directory type must be Hospital, Residents, or Faculty & Staff");
+  }
+  const alternatePhoneNumbers = readOptionalStringArray(value.alternatePhoneNumbers, "Alternate phone numbers");
+  const organization = readOptionalString(value.organization) ?? (
+    directoryTypeValue === "Residents"
+      ? "Carilion Clinic General Surgery Residency"
+      : directoryTypeValue === "Faculty & Staff"
+        ? "Carilion Clinic Department of Surgery"
+        : "Hospital Directory"
+  );
+  if (name.length > 120 || category.length > 80 || organization.length > 120) {
+    throw new HttpError(400, "Contact name, category, or organization is too long");
+  }
+  const digits = phoneNumber.replace(/\D/g, "");
+  if (digits.length < 7 || digits.length > 15) {
+    throw new HttpError(400, "Phone number must contain 7 to 15 digits");
+  }
+  if (alternatePhoneNumbers.some((alternate) => {
+    const alternateDigits = alternate.replace(/\D/g, "");
+    return alternateDigits.length < 7 || alternateDigits.length > 15;
+  })) {
+    throw new HttpError(400, "Each alternate phone number must contain 7 to 15 digits");
+  }
+  return {
+    id: createId("contact"),
+    name,
+    phoneNumber,
+    alternatePhoneNumbers: alternatePhoneNumbers.length ? alternatePhoneNumbers : undefined,
+    category,
+    directoryType: directoryTypeValue,
+    organization,
+    createdAt: now,
+    updatedAt: now,
+    createdBy
+  };
+}
+
+function assertContactIsUnique(state: PlannerState, contact: DirectoryContact, ignoredRequestId?: string): void {
+  const phone = contact.phoneNumber.replace(/\D/g, "");
+  const sameContact = (candidate: DirectoryContact) =>
+    candidate.phoneNumber.replace(/\D/g, "") === phone && candidate.name.trim().toLowerCase() === contact.name.trim().toLowerCase();
+  if (state.contacts.some(sameContact)) throw new HttpError(409, "This contact is already in the directory");
+  if (state.contactRequests.some((request) => request.id !== ignoredRequestId && request.status === "pending" && sameContact(request.contact))) {
+    throw new HttpError(409, "This contact already has a pending request");
+  }
+}
+
+function requireContactRequest(state: PlannerState, id: string): ContactRequest {
+  const contactRequest = state.contactRequests.find((item) => item.id === id);
+  if (!contactRequest) throw new HttpError(404, "Contact request not found");
+  return contactRequest;
+}
+
 function normalizeAliasList(value: unknown): string[] {
   const values = Array.isArray(value)
     ? value
@@ -3566,6 +3770,7 @@ function filterStateForUser(
       : [],
     wikiChanges: [],
     coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest)),
+    contactRequests: state.contactRequests.filter((contactRequest) => contactRequest.requesterUsername === user.username),
     goldStarAwards: state.goldStarAwards.map((award) =>
       award.giverUsername === user.username || Boolean(linkedResident && award.giverResidentId === linkedResident.id)
         ? award

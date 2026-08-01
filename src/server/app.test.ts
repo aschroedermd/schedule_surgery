@@ -54,6 +54,14 @@ describe("planner API", () => {
     process.env.OPENAI_FALLBACK_MODELS = "gpt-5.6-terra";
   });
 
+  it("allows generated speech blob URLs in the content security policy", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+
+    const response = await request(app).get("/api/healthz").expect(200);
+
+    expect(response.headers["content-security-policy"]).toContain("media-src 'self' blob:");
+  });
+
   it("matches usernames without regard to case while keeping passwords case-sensitive", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 
@@ -153,6 +161,133 @@ describe("planner API", () => {
       .set("x-api-key", "test-admin-api-key")
       .send({ username: "apiadmin", role: "admin" })
       .expect(403);
+  });
+
+  it("seeds contacts and supports requests, approval, delegated adds, and API adds", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const viewerToken = await loginOnApp(app, "cblue");
+
+    const seeded = await request(app)
+      .get("/api/contacts")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(200);
+    expect(seeded.body.contacts).toHaveLength(129);
+    expect(seeded.body.contacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "PACU", phoneNumber: "(540) 981-7173" })])
+    );
+    expect(seeded.body.contacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        name: "Andrew Schroeder",
+        phoneNumber: "(540) 204-5505",
+        directoryType: "Residents",
+        category: "Level 5"
+      })])
+    );
+    expect(seeded.body.contacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "David Salzberg",
+        phoneNumber: "(540) 855-0810",
+        directoryType: "Faculty & Staff",
+        category: "Faculty"
+      }),
+      expect.objectContaining({
+        name: "Matthew Anderson",
+        phoneNumber: "(540) 566-8297",
+        directoryType: "Residents",
+        category: "Plastic Surgery Residents"
+      }),
+      expect.objectContaining({
+        name: "Erica Minnix - Plastics Program Manager / MIS Fellowship",
+        alternatePhoneNumbers: ["(540) 581-4627"]
+      })
+    ]));
+
+    const requested = await request(app)
+      .post("/api/contacts")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .send({ name: "OR Control Desk", phoneNumber: "(540) 555-0101", category: "Perioperative" })
+      .expect(201);
+    expect(requested.headers["x-contact-disposition"]).toBe("requested");
+    expect(requested.body.contacts).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "OR Control Desk" })]));
+    expect(requested.body.contactRequests).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "pending", requesterUsername: "cblue" })])
+    );
+
+    const adminState = await request(app)
+      .get("/api/state")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    const requestId = adminState.body.contactRequests[0].id as string;
+    await request(app)
+      .post(`/api/contact-requests/${requestId}/approve`)
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.contacts).toEqual(expect.arrayContaining([expect.objectContaining({ name: "OR Control Desk" })]));
+      });
+
+    const rejectedRequest = await request(app)
+      .post("/api/contacts")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .send({ name: "Obsolete Desk", phoneNumber: "(540) 555-0199", category: "Perioperative" })
+      .expect(201);
+    const rejectedRequestId = rejectedRequest.body.contactRequests.find(
+      (item: { contact: { name: string } }) => item.contact.name === "Obsolete Desk"
+    ).id as string;
+    await request(app)
+      .post(`/api/contact-requests/${rejectedRequestId}/reject`)
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.contactRequests).toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: rejectedRequestId, status: "rejected" })])
+        );
+        expect(response.body.contacts).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "Obsolete Desk" })]));
+      });
+
+    await request(app)
+      .patch("/api/users/cblue")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ canAddContacts: true })
+      .expect(200)
+      .expect((response) => expect(response.body.user.canAddContacts).toBe(true));
+
+    const delegated = await request(app)
+      .post("/api/contacts")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .send({ name: "Transfer Center", phoneNumber: "(540) 555-0102", category: "Ancillary Services" })
+      .expect(201);
+    expect(delegated.headers["x-contact-disposition"]).toBe("added");
+    expect(delegated.body.contacts).toEqual(expect.arrayContaining([expect.objectContaining({ name: "Transfer Center" })]));
+
+    const apiAdded = await request(app)
+      .post("/api/contacts")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ name: "Bed Board", phoneNumber: "(540) 555-0103", category: "Inpatient Units" })
+      .expect(201);
+    expect(apiAdded.headers["x-contact-disposition"]).toBe("added");
+    expect(apiAdded.body.contacts).toEqual(expect.arrayContaining([expect.objectContaining({ name: "Bed Board" })]));
+  });
+
+  it("migrates legacy contacts and adds every seeded directory", () => {
+    const base = createInitialState();
+    const legacyHospitalContacts = base.contacts
+      .filter((contact) => contact.directoryType === "Hospital")
+      .map(({ directoryType: _directoryType, ...contact }) => contact);
+    const normalized = normalizePlannerState({
+      ...base,
+      contacts: legacyHospitalContacts as typeof base.contacts
+    });
+
+    expect(normalized.contacts).toHaveLength(129);
+    expect(normalized.contacts.find((contact) => contact.name === "PACU")?.directoryType).toBe("Hospital");
+    expect(normalized.contacts.find((contact) => contact.name === "Adedayo Adeleke")).toMatchObject({
+      phoneNumber: "(540) 759-9761",
+      directoryType: "Residents",
+      category: "Level 1"
+    });
+    expect(normalized.contacts.find((contact) => contact.name === "David Salzberg")?.directoryType).toBe("Faculty & Staff");
   });
 
   it("serves the linked wiki to users and restricts wiki edits to admins", async () => {

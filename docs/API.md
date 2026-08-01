@@ -95,6 +95,36 @@ Human landing page:
 GET /api/docs
 ```
 
+## Contacts Directory
+
+Published contacts are available to signed-in users and API keys. A normal browser account creates a pending request; admins and accounts granted `canAddContacts: true` publish immediately. The admin API key also publishes immediately.
+
+```text
+GET    /api/contacts
+POST   /api/contacts
+DELETE /api/contacts/:id                         # admin
+POST   /api/contact-requests/:id/approve         # admin
+POST   /api/contact-requests/:id/reject          # admin
+```
+
+Add a contact through the API:
+
+```bash
+curl -X POST https://your-domain.example/api/contacts \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "name":"OR Front Desk",
+    "phoneNumber":"(540) 555-0123",
+    "alternatePhoneNumbers":["(540) 555-0456"],
+    "category":"Perioperative",
+    "directoryType":"Hospital",
+    "organization":"Hospital Directory"
+  }'
+```
+
+The response header `X-Contact-Disposition` is `added` for direct publishing or `requested` when approval is required. Contact records include a stable ID, name, formatted primary and optional alternate phone numbers, top-level `directoryType` (`Hospital`, `Residents`, or `Faculty & Staff`), category, organization, creator, and timestamps. The browser uses those fields to generate a vCard 3.0 `.vcf` containing `FN`, `ORG`, each `TEL`, `CATEGORIES`, and `UID`, suitable for iPhone contact import.
+
 ## Residency Wiki
 
 The server stores a linked, revisioned institutional wiki in `state.wikiArticles`. Authenticated users may search and read published articles. Draft, review, and archived content is admin-only. Only an admin browser session or `ADMIN_API_KEY` may write knowledge or provenance records:

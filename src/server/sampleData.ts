@@ -1,5 +1,5 @@
 import { addDays, getCurrentMonday } from "../shared/date";
-import { CoverageEntry, PlannerState } from "../shared/types";
+import { CoverageEntry, DirectoryContact, PlannerState } from "../shared/types";
 import { createRotationResidents } from "./residentRotationSeed";
 import { createSeedWikiArticles } from "./wiki";
 
@@ -159,6 +159,8 @@ export function createInitialState(): PlannerState {
     qgendaSync: { enabled: false },
     coverageEntries: createSeedCoverageEntries(),
     coverageRequests: [],
+    contacts: createSeedContacts(),
+    contactRequests: [],
     wikiArticles: createSeedWikiArticles(),
     wikiSources: [],
     wikiRevision: 1,
@@ -179,6 +181,209 @@ export function createInitialState(): PlannerState {
       }
     ]
   };
+}
+
+export function createSeedContacts(): DirectoryContact[] {
+  const hospitalEntries: Array<[string, string, string]> = [
+    ["Perioperative", "Pre-op", "(540) 981-8236"],
+    ["Perioperative", "PACU", "(540) 981-7173"],
+    ["ICU", "6 Mountain ICU", "(540) 981-2946"],
+    ["ICU", "9 Mountain ICU", "(540) 981-2949"],
+    ["ICU", "10 Mountain ICU", "(540) 981-2950"],
+    ["Progressive Care Units (PCU)", "7 South PCU", "(540) 981-7286"],
+    ["Progressive Care Units (PCU)", "9 Mountain PCU", "(540) 981-2939"],
+    ["Progressive Care Units (PCU)", "10 Mountain PCU", "(540) 981-2940"],
+    ["Inpatient Units", "4 West", "(540) 981-7203"],
+    ["Inpatient Units", "9 West", "(540) 981-7394"],
+    ["Inpatient Units", "10 West", "(540) 981-7240"],
+    ["Inpatient Units", "11 West", "(540) 981-7166"],
+    ["Inpatient Units", "12 West", "(540) 981-7386"],
+    ["Inpatient Units", "Pediatrics – 11 South", "(540) 981-7989"],
+    ["Ancillary Services", "Blood Bank", "(540) 981-7877"],
+    ["Ancillary Services", "Lab – Microbiology", "(540) 981-8823"],
+    ["Ancillary Services", "Lab – Hematology", "(540) 853-0617"],
+    ["Ancillary Services", "Lab – General", "(800) 653-2205"],
+    ["Ancillary Services", "Pharmacy", "(540) 981-7275"],
+    ["Ancillary Services", "Radiology Front Desk", "(540) 981-7122"],
+    ["Supply & Distribution", "Mini-Distribution", "(540) 981-7742"],
+    ["Supply & Distribution", "RMH Warehouse", "(540) 224-3070"]
+  ];
+  const hospitalContacts = hospitalEntries.map(([category, name, phoneNumber], index): DirectoryContact => ({
+    id: `contact_seed_${index + 1}`,
+    name,
+    phoneNumber,
+    category,
+    directoryType: "Hospital",
+    organization: "Hospital Directory",
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    createdBy: "system"
+  }));
+  const residentEntries: Array<[string, string, string]> = [
+    ["Level 1", "Adedayo Adeleke", "5407599761"],
+    ["Level 1", "Megan Daniels", "8262535272"],
+    ["Level 1", "Sally Greenberg", "5406329980"],
+    ["Level 1", "Taylor Keys", "5407978216"],
+    ["Level 1", "Yao Mawussi", "5406829048"],
+    ["Level 1", "Jayden Moore", "5406762190"],
+    ["Level 1", "Christina Necessary", "5406767306"],
+    ["Level 1", "Nina Shank", "5407959593"],
+    ["Level 1", "Nathan Shigley", "8262533068"],
+    ["Level 2", "Christian Blue", "5405884355"],
+    ["Level 2", "Thien Cao", "5405819331"],
+    ["Level 2", "Jeffrey Rodgers", "5405898976"],
+    ["Level 2", "Prarthana Somaiah", "8262535382"],
+    ["Level 2", "Courtney Thorpe", "8262535380"],
+    ["Level 3", "Jessica Bradley", "5407699452"],
+    ["Level 3", "Kristian Calderon Garcia", "5406550876"],
+    ["Level 3", "Aleem Mohamed", "5405981188"],
+    ["Level 3", "Amanda Swaak", "5408558620"],
+    ["Level 3", "Allison Zheng", "5405899957"],
+    ["Level 4", "Carter Colwell", "5405974808"],
+    ["Level 4", "Alyssa DeWyer", "5405975410"],
+    ["Level 4", "Hannah Roberson", "5405975013"],
+    ["Level 4", "Molly Scarbro", "5405975270"],
+    ["Level 4", "Maria Williams", "5407699150"],
+    ["Level 5", "Zachary den Besten", "5407505730"],
+    ["Level 5", "Marisa Doran", "5405294551"],
+    ["Level 5", "Paul Klosinski", "5405295430"],
+    ["Level 5", "Taneen Maghsoudi", "5407509163"],
+    ["Level 5", "Martin Nde", "5405299745"],
+    ["Level 5", "Andrew Schroeder", "5402045505"]
+  ];
+  const residentContacts = residentEntries.map(([category, name, phoneNumber], index): DirectoryContact => ({
+    id: `contact_resident_${index + 1}`,
+    name,
+    phoneNumber: formatSeedPhoneNumber(phoneNumber),
+    category,
+    directoryType: "Residents",
+    organization: "Carilion Clinic General Surgery Residency",
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    createdBy: "system"
+  }));
+  const plasticSurgeryResidentEntries: Array<[string, string, string]> = [
+    ["Plastic Surgery Residents", "Matthew Anderson", "566.8297"],
+    ["Plastic Surgery Residents", "Will Travis", "566.8298"],
+    ["Plastic Surgery Residents", "Kelsey Gray", "750.3642"],
+    ["Plastic Surgery Residents", "Jennifer Hall", "750.3644"],
+    ["Plastic Surgery Residents", "Joowon Choi", "682.6695"],
+    ["Plastic Surgery Residents", "Patrick Dugom", "655.8133"],
+    ["Plastic Surgery Residents", "Allyson Huttinger", "597.3627"],
+    ["Plastic Surgery Residents", "Rachel Schwartz", "597.5804"],
+    ["Plastic Surgery Residents", "Sahith Mandala", "597.4233"],
+    ["Plastic Surgery Residents", "Robert Clark", "520.5041"],
+    ["Plastic Surgery Residents", "Tareck Haykal", "826.253.4695"],
+    ["Plastic Surgery Residents", "Brendan Podszus", "826.229.3146"]
+  ];
+  const plasticSurgeryResidentContacts = plasticSurgeryResidentEntries.map(
+    ([category, name, phoneNumber], index): DirectoryContact => ({
+      id: `contact_plastics_resident_${index + 1}`,
+      name,
+      phoneNumber: formatSeedPhoneNumber(phoneNumber),
+      category,
+      directoryType: "Residents",
+      organization: "Carilion Clinic Plastic Surgery Residency",
+      createdAt: seedCreatedAt,
+      updatedAt: seedCreatedAt,
+      createdBy: "system"
+    })
+  );
+  const facultyAndStaffEntries: Array<[string, string, string, string[]?]> = [
+    ["Faculty", "Farrell Adkins", "525.6963"],
+    ["Faculty", "Stacie Adkins", "588.0429"],
+    ["Faculty", "Eric Ambroz", "855.4714"],
+    ["Faculty", "Kathryn Bass", "521.7146"],
+    ["Faculty", "Curtis Bower", "520.5484"],
+    ["Faculty", "Katie Love Bower", "759.1369"],
+    ["Faculty", "Cody Bushman", "581.2841"],
+    ["Faculty", "Bryan Collier", "597.0059"],
+    ["Faculty", "Mike Collins", "240.3683"],
+    ["Faculty", "Ben Cragun", "240.3585"],
+    ["Faculty", "Caleb Cutherell", "397.5289"],
+    ["Faculty", "Roxanne Davenport", "529.2104"],
+    ["Faculty", "James Drougas", "580.1884"],
+    ["Faculty", "Emily Faulks", "204.5844"],
+    ["Faculty", "Ashley Gerrish", "613.0114"],
+    ["Faculty", "Jake Gillen", "589.4208"],
+    ["Faculty", "Elaina Graham", "613.7725"],
+    ["Faculty", "Al Hagy", "520.7645"],
+    ["Faculty", "Guy Katz", "682.6366"],
+    ["Faculty", "Daniel Lollar", "521.0719"],
+    ["Faculty", "T A Lucktong", "521.4982"],
+    ["Faculty", "Kristin McCoy", "339.2485"],
+    ["Faculty", "Kurtis Moyer", "676.7394"],
+    ["Faculty", "Paul Nickerson", "988.2816"],
+    ["Faculty", "Michael Nussbaum", "904.206.2414"],
+    ["Faculty", "Charles Paget", "798.3569"],
+    ["Faculty", "John Rudderow", "293.7321"],
+    ["Faculty", "Sanjoy Saha", "674.2691"],
+    ["Faculty", "David Salzberg", "855.0810"],
+    ["Faculty", "Keith Stephenson", "230.1093"],
+    ["Faculty", "Josh Stodghill", "566.8112"],
+    ["Faculty", "Daniel Tershak", "354.2961"],
+    ["Faculty", "James Thompson", "588.2377"],
+    ["Faculty", "Terri-Ann Wattsman", "915.1557"],
+    ["Faculty", "Sharon Williams", "266.2618"],
+    ["ACS ACPs", "Sarah C. Mullins, NP - Surgical Critical Care", "759.2811"],
+    ["ACS ACPs", "Sara Nicely, PA - Surgical Critical Care", "691.5933"],
+    ["ACS ACPs", "Sherry Boone, NP - Surgical Critical Care", "312.3981"],
+    ["ACS ACPs", "Marie Creech, PA", "521.4112"],
+    ["ACS ACPs", "Samantha Hall, NP - Surgical Critical Care", "494.4940"],
+    ["ACS ACPs", "Stephanie Wright, NP - Surgical Critical Care", "598.1331"],
+    ["ACS ACPs", "Kathy Gill, NP - Surgical Critical Care", "541.9938"],
+    ["ACS ACPs", "Lorrie Saville, NP - Trauma", "589-9236"],
+    ["ACS ACPs", "Carly Moock, PA - Trauma", "525.9977"],
+    ["ACS ACPs", "Mia Anglin, PA - EGS", "797.3690"],
+    ["ACS ACPs", "Bethany Nichols, NP - EGS", "492.0649"],
+    ["ACS ACPs", "Emma Perdue, PA - Trauma", "613.4358"],
+    ["ACS ACPs", "Chelsea Frame Patterson, PA - Trauma", "494.7174"],
+    ["ACS ACPs", "Kristina Dobson, PA - Trauma", "655.3806"],
+    ["General Surgery ACPs", "Rachel Rich, PA - General Surgery CCR 3", "597.9739"],
+    ["General Surgery ACPs", "Gail Arrington, NP - General Surgery CCR 3", "484.3394"],
+    ["General Surgery ACPs", "Seyi White, NP - Breast", "728.0346"],
+    ["General Surgery ACPs", "Amanda White, NP - Breast", "589.7519"],
+    ["General Surgery ACPs", "Lesley Quesenberry, PA - Colorectal", "529.8251"],
+    ["General Surgery ACPs", "Lauren Baker, NP - Bariatric", "526.1625"],
+    ["General Surgery ACPs", "Samantha Wilkinson, NP - Bariatric", "761.8374"],
+    ["Administrative Staff", "Caroline Benne - Program Manager, General Surgery Residency", "540.981.7441"],
+    ["Administrative Staff", "Erica Minnix - Plastics Program Manager / MIS Fellowship", "981.7436", ["581.4627"]],
+    ["Administrative Staff", "Meghan Brogan - Fellowship and Residency Program Supervisor", "853.0460", ["588.6273"]],
+    ["Administrative Staff", "Laura Grace Kaufman - Administrative Coordinator, Trauma/Critical Care", "981.7434"],
+    ["Administrative Staff", "Kathy Catron - Administrative Coordinator, Trauma/Critical Care", "988.6244"],
+    ["Administrative Staff", "Elizabeth Ayers - Clinic Practice Director, General Surgery", "526.1241", ["632.9593"]],
+    ["Administrative Staff", "Clinic Practice Manager, General Surgery", "526.1242", ["597.4174"]],
+    ["Administrative Staff", "Healthcare Administrative Lead - General Surgery (CCR 3)", "526.1251"],
+    ["Administrative Staff", "Anita Lewis - Department Secretary, General Surgery (CCR 3)", "526.1547"]
+  ];
+  const facultyAndStaffContacts = facultyAndStaffEntries.map(
+    ([category, name, phoneNumber, alternatePhoneNumbers], index): DirectoryContact => ({
+      id: `contact_faculty_staff_${index + 1}`,
+      name,
+      phoneNumber: formatSeedPhoneNumber(phoneNumber),
+      alternatePhoneNumbers: alternatePhoneNumbers?.map(formatSeedPhoneNumber),
+      category,
+      directoryType: "Faculty & Staff",
+      organization: "Carilion Clinic Department of Surgery",
+      createdAt: seedCreatedAt,
+      updatedAt: seedCreatedAt,
+      createdBy: "system"
+    })
+  );
+  return [
+    ...hospitalContacts,
+    ...residentContacts,
+    ...plasticSurgeryResidentContacts,
+    ...facultyAndStaffContacts
+  ];
+}
+
+function formatSeedPhoneNumber(phoneNumber: string): string {
+  const digits = phoneNumber.replace(/\D/g, "");
+  if (digits.length === 7) return `(540) ${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return digits.length === 10
+    ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+    : phoneNumber;
 }
 
 export function createSeedCoverageEntries(): CoverageEntry[] {

@@ -101,7 +101,7 @@ export async function readWikiWorkspaceConfig(workspacePath: string): Promise<Wi
   const parsed = JSON.parse(raw) as Partial<WikiWorkspaceConfig>;
   return {
     formatVersion: parsed.formatVersion ?? WORKSPACE_FORMAT_VERSION,
-    serverUrl: String(process.env.WIKI_BASE_URL || parsed.serverUrl || "http://localhost:3001").replace(/\/$/, ""),
+    serverUrl: String(process.env.WIKI_BASE_URL || process.env.PUBLIC_BASE_URL || parsed.serverUrl || "http://localhost:3001").replace(/\/$/, ""),
     articleDirectory: parsed.articleDirectory || "articles",
     sourceDirectory: parsed.sourceDirectory || "sources"
   };

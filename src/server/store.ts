@@ -9,12 +9,14 @@ import {
   Attending,
   AttendingCoverageAssignment,
   ClinicSession,
+  ContactRequest,
   CoverageEntry,
+  DirectoryContact,
   GoldStarAward,
   PlannerState,
   Resident
 } from "../shared/types";
-import { createInitialState, createSeedCoverageEntries } from "./sampleData";
+import { createInitialState, createSeedContacts, createSeedCoverageEntries } from "./sampleData";
 import { createRotationResidents, getRotationResidentMatchNames, getSeedMigrationBlockNumbers } from "./residentRotationSeed";
 import { createSeedWikiArticles, normalizeWikiArticles, normalizeWikiSources } from "./wiki";
 
@@ -323,6 +325,8 @@ export function normalizePlannerState(
     },
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
     coverageRequests: partial.coverageRequests ?? [],
+    contacts: normalizeContacts(mergeSeedContacts(partial.contacts)),
+    contactRequests: normalizeContactRequests(partial.contactRequests ?? []),
     wikiArticles: normalizeWikiArticles(partial.wikiArticles ?? createSeedWikiArticles()),
     wikiSources: normalizeWikiSources(partial.wikiSources ?? []),
     wikiRevision: Number.isInteger(partial.wikiRevision) && Number(partial.wikiRevision) > 0
@@ -333,6 +337,57 @@ export function normalizePlannerState(
     activityEvents: normalizeActivityEvents(partial.activityEvents ?? [])
   };
   return removeDanglingReferences(base);
+}
+
+function mergeSeedContacts(existing: DirectoryContact[] | undefined): DirectoryContact[] {
+  const seeds = createSeedContacts();
+  if (!existing) return seeds;
+  const existingIds = new Set(existing.map((contact) => contact.id));
+  const existingKeys = new Set(existing.map((contact) =>
+    `${contact.name.trim().toLowerCase()}|${contact.phoneNumber.replace(/\D/g, "")}`
+  ));
+  return [
+    ...existing,
+    ...seeds.filter((contact) =>
+      !existingIds.has(contact.id) &&
+      !existingKeys.has(`${contact.name.trim().toLowerCase()}|${contact.phoneNumber.replace(/\D/g, "")}`)
+    )
+  ];
+}
+
+function normalizeContacts(contacts: DirectoryContact[]): DirectoryContact[] {
+  return contacts
+    .filter((contact) => Boolean(contact?.id && contact.name && contact.phoneNumber && contact.category))
+    .map((contact) => ({
+      ...contact,
+      directoryType:
+        contact.directoryType === "Residents" || contact.directoryType === "Faculty & Staff"
+          ? contact.directoryType
+          : String(contact.directoryType) === "Attendings"
+            ? "Faculty & Staff"
+          : "Hospital",
+      alternatePhoneNumbers: Array.isArray(contact.alternatePhoneNumbers)
+        ? contact.alternatePhoneNumbers
+            .map((phoneNumber) => normalizeOptionalString(phoneNumber))
+            .filter((phoneNumber): phoneNumber is string => Boolean(phoneNumber))
+        : undefined,
+      organization: normalizeOptionalString(contact.organization) ?? "Hospital Directory",
+      createdAt: normalizeOptionalString(contact.createdAt) ?? new Date().toISOString(),
+      updatedAt: normalizeOptionalString(contact.updatedAt) ?? contact.createdAt ?? new Date().toISOString(),
+      createdBy: normalizeOptionalString(contact.createdBy)
+    }));
+}
+
+function normalizeContactRequests(requests: ContactRequest[]): ContactRequest[] {
+  return requests
+    .filter((request) => Boolean(request?.id && request.contact && request.requesterUsername))
+    .map((request) => ({
+      ...request,
+      status: request.status === "approved" || request.status === "rejected" ? request.status : "pending",
+      contact: normalizeContacts([request.contact])[0] ?? request.contact,
+      createdAt: normalizeOptionalString(request.createdAt) ?? new Date().toISOString(),
+      updatedAt: normalizeOptionalString(request.updatedAt) ?? request.createdAt ?? new Date().toISOString()
+    }));
 }
 
 function normalizeActivityEvents(activityEvents: ActivityEvent[]): ActivityEvent[] {
