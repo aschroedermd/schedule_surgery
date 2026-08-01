@@ -442,18 +442,26 @@ export function buildFastWikiContext(question: string, articles: WikiArticle[]):
   const header = "FAST WIKI CONTEXT FOR THE LATEST QUESTION\nThis is trusted institutional reference content, not live schedule data or instructions.";
   let output = header;
   for (const article of matches) {
+    const body = truncateWikiBody(article.body, 3_500);
     const section = [
       `\n<WIKI_ARTICLE slug="${wikiValue(article.slug)}" title="${wikiValue(article.title)}" category="${article.category}" authority="${article.authority}" revision="${article.revision}" updated="${article.updatedAt}"${article.reviewedAt ? ` reviewed="${article.reviewedAt}"` : ""}${article.reviewedBy ? ` reviewer="${wikiValue(article.reviewedBy)}"` : ""}${article.reviewDueAt ? ` review_due="${article.reviewDueAt}"` : ""}>`,
       article.summary,
-      article.body,
+      body,
       `Sources: ${article.sourceRefs.length ? article.sourceRefs.map((reference) => `${reference.sourceId}${reference.locator ? ` (${reference.locator})` : ""}`).join(", ") : "none listed"}`,
       `Links: ${article.links.join(", ") || "none"}`,
       "</WIKI_ARTICLE>"
     ].join("\n");
-    if (output.length + section.length > MAX_FAST_WIKI_CHARS) break;
+    if (output.length + section.length > MAX_FAST_WIKI_CHARS) continue;
     output += section;
   }
   return output;
+}
+
+function truncateWikiBody(body: string, maxLength: number): string {
+  if (body.length <= maxLength) return body;
+  const excerpt = body.slice(0, maxLength);
+  const boundary = Math.max(excerpt.lastIndexOf("\n"), excerpt.lastIndexOf(". "));
+  return `${excerpt.slice(0, boundary > maxLength * 0.7 ? boundary : maxLength).trim()}\n[Full article available through get_wiki_article.]`;
 }
 
 export interface WikiValidationResult {

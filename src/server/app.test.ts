@@ -54,6 +54,21 @@ describe("planner API", () => {
     process.env.OPENAI_FALLBACK_MODELS = "gpt-5.6-terra";
   });
 
+  it("matches usernames without regard to case while keeping passwords case-sensitive", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+
+    await request(app)
+      .post("/api/auth/login")
+      .send({ username: "CBLUE", password: TEST_SEED_USER_PASSWORD })
+      .expect(200)
+      .expect((response) => expect(response.body.username).toBe("cblue"));
+
+    await request(app)
+      .post("/api/auth/login")
+      .send({ username: "cBlue", password: TEST_SEED_USER_PASSWORD.toUpperCase() })
+      .expect(401);
+  });
+
   it("allows admin writes and blocks view-only users", async () => {
     const admin = await loginAs("admin");
     await request(admin.app)

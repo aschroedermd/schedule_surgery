@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { computeWikiSourceRecordHash } from "./wiki";
+import { buildFastWikiContext, computeWikiSourceRecordHash, normalizeWikiArticles } from "./wiki";
 import {
   buildWorkspaceDiff,
   createDraftArticle,
@@ -79,6 +79,29 @@ describe("private wiki workspace", () => {
       "labeled medical record number",
       "labeled date of birth"
     ]);
+  });
+
+  it("keeps concise facts from long published articles in fast context", () => {
+    const now = "2026-08-01T12:00:00.000Z";
+    const article = normalizeWikiArticles([{
+      id: "wiki_long_preference",
+      slug: "long-preference",
+      title: "Dr. Example common duct exploration",
+      summary: "Reviewed operative preference.",
+      body: `## Quick preference facts\n- Uses a 5 Fr Fogarty balloon.\n\n${"Detailed template wording. ".repeat(500)}`,
+      category: "attending",
+      aliases: ["Fogarty balloon"],
+      tags: ["common duct exploration"],
+      links: [],
+      status: "published",
+      authority: "attending-preference",
+      revision: 1,
+      contentHash: "",
+      sourceRefs: [],
+      createdAt: now,
+      updatedAt: now
+    }])[0];
+    expect(buildFastWikiContext("what size Fogarty balloon?", [article])).toContain("5 Fr Fogarty balloon");
   });
 });
 
