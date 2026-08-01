@@ -80,6 +80,18 @@ export interface ChatLookup {
   result: unknown;
 }
 
+export interface ChatChoiceOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface ChatInteraction {
+  type: "single_choice";
+  prompt: string;
+  options: ChatChoiceOption[];
+}
+
 export interface ChatResponse extends ChatQuota {
   message: string;
   model: string;
@@ -87,6 +99,7 @@ export interface ChatResponse extends ChatQuota {
   dataUpdatedAt: string;
   stateVersion: number;
   lookups: ChatLookup[];
+  interaction?: ChatInteraction;
 }
 
 export interface ChatStreamMeta extends ChatQuota {
@@ -299,7 +312,7 @@ export async function synthesizeChatSpeech(
   }
   const used = Number(response.headers.get("x-voice-used") ?? 0);
   const remaining = Number(response.headers.get("x-voice-remaining") ?? 0);
-  const limit = Number(response.headers.get("x-voice-limit") ?? 3);
+  const limit = Number(response.headers.get("x-voice-limit") ?? 5);
   return {
     audio: await response.blob(),
     quota: {

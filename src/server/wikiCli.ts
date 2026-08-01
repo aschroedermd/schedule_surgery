@@ -1,0 +1,519 @@
+#!/usr/bin/env node
+import fs from "node:fs/promises";
+import path from "node:path";
+import {
+  WIKI_AUTHORITIES,
+  WIKI_CATEGORIES,
+  WIKI_SOURCE_TYPES,
+  WikiArticle,
+  WikiAuthority,
+  WikiCategory,
+  WikiSourceType
+} from "../shared/types";
+import {
+  buildWorkspaceDiff,
+  createDraftArticle,
+  extractSourceText,
+  findExplicitPhi,
+  initializeWikiWorkspace,
+  readWikiSyncState,
+  readWikiWorkspace,
+  readWikiWorkspaceConfig,
+  resolveWikiWorkspace,
+  stageWikiSource,
+  WikiExportBundle,
+  writeWikiArticleFile,
+  writeWikiSourceMetadata,
+  writeWikiSyncState
+} from "./wikiWorkspace";
+import { computeWikiSourceRecordHash } from "./wiki";
+
+interface ParsedArguments {
+  positional: string[];
+  flags: Record<string, string | boolean>;
+}
+
+interface IngestionProposal {
+  articles: Array<{
+    slug: string;
+    title: string;
+    summary: string;
+    body: string;
+    category: WikiCategory;
+    authority: WikiAuthority;
+    aliases: string[];
+    tags: string[];
+    links: string[];
+    owner?: string;
+  }>;
+  uncertainties: string[];
+}
+
+async function main() {
+  const [command = "help", ...rawArguments] = process.argv.slice(2);
+  const args = parseArguments(rawArguments);
+  const workspacePath = resolveWikiWorkspace(stringFlag(args, "workspace"));
+
+  if (command === "help" || command === "--help" || command === "-h") {
+    showHelp();
+    return;
+  }
+  if (command === "init") {
+    await initializeWikiWorkspace(workspacePath, stringFlag(args, "server") || "http://localhost:3001");
+    text(`Initialized private wiki workspace at ${workspacePath}`);
+    return;
+  }
+
+  await initializeWikiWorkspace(workspacePath);
+  if (command === "pull") return pullWorkspace(workspacePath);
+  if (command === "validate") return validateWorkspace(workspacePath);
+  if (command === "diff" || command === "status") return showDiff(workspacePath);
+  if (command === "push") return pushWorkspace(workspacePath, Boolean(args.flags["dry-run"]));
+  if (command === "sync") {
+    await pullWorkspace(workspacePath);
+    await validateWorkspace(workspacePath);
+    return pushWorkspace(workspacePath, Boolean(args.flags["dry-run"]));
+  }
+  if (command === "ingest") return ingestSources(workspacePath, args);
+  if (command === "publish") return publishArticle(workspacePath, args);
+  if (command === "review") return markArticleForReview(workspacePath, args);
+  throw new Error(`Unknown wiki command: ${command}`);
+}
+
+async function pullWorkspace(workspacePath: string): Promise<void> {
+  const config = await readWikiWorkspaceConfig(workspacePath);
+  const remote = await wikiRequest<WikiExportBundle>(workspacePath, config.serverUrl, "/api/wiki/export");
+  const local = await readWikiWorkspace(workspacePath);
+  const syncState = await readWikiSyncState(workspacePath);
+  const remoteArticleHashes = Object.fromEntries(remote.articles.map((article) => [article.slug, article.contentHash]));
+  const remoteSourceHashes = Object.fromEntries(remote.sources.map((source) => [source.id, computeWikiSourceRecordHash(source)]));
+  const conflicts: string[] = [];
+
+  for (const article of local.articles) {
+    const baseHash = syncState.articleHashes[article.slug];
+    const remoteHash = remoteArticleHashes[article.slug];
+    const locallyChanged = Boolean(baseHash && article.contentHash !== baseHash) || (!baseHash && !remoteHash);
+    const remotelyChanged = Boolean(baseHash && remoteHash !== baseHash) || Boolean(!baseHash && remoteHash);
+    if (locallyChanged && remotelyChanged && article.contentHash !== remoteHash) conflicts.push(`article:${article.slug}`);
+    if (baseHash && !remoteHash && article.contentHash !== baseHash) conflicts.push(`article:${article.slug} (remote deletion)`);
+  }
+  for (const [slug, baseHash] of Object.entries(syncState.articleHashes)) {
+    if (local.articles.some((article) => article.slug === slug)) continue;
+    const remoteHash = remoteArticleHashes[slug];
+    if (remoteHash && remoteHash !== baseHash) conflicts.push(`article:${slug} (local deletion and remote update)`);
+  }
+  for (const source of local.sources) {
+    const baseHash = syncState.sourceHashes[source.id];
+    const remoteHash = remoteSourceHashes[source.id];
+    const localHash = computeWikiSourceRecordHash(source);
+    const locallyChanged = Boolean(baseHash && localHash !== baseHash) || (!baseHash && !remoteHash);
+    const remotelyChanged = Boolean(baseHash && remoteHash !== baseHash) || Boolean(!baseHash && remoteHash);
+    if (locallyChanged && remotelyChanged && localHash !== remoteHash) conflicts.push(`source:${source.id}`);
+    if (baseHash && !remoteHash && localHash !== baseHash) conflicts.push(`source:${source.id} (remote deletion)`);
+  }
+  for (const [sourceId, baseHash] of Object.entries(syncState.sourceHashes)) {
+    if (local.sources.some((source) => source.id === sourceId)) continue;
+    const remoteHash = remoteSourceHashes[sourceId];
+    if (remoteHash && remoteHash !== baseHash) conflicts.push(`source:${sourceId} (local deletion and remote update)`);
+  }
+  if (conflicts.length) {
+    await fs.writeFile(
+      path.join(workspacePath, "conflicts", `pull-${Date.now()}.json`),
+      `${JSON.stringify({ remoteRevision: remote.wikiRevision, conflicts, remote }, null, 2)}\n`,
+      "utf8"
+    );
+    throw new Error(`Pull stopped because local and server content both changed:\n- ${conflicts.join("\n- ")}`);
+  }
+
+  await archiveRemoteDeletions(workspacePath, local, syncState, remoteArticleHashes, remoteSourceHashes);
+  for (const article of remote.articles) {
+    const localArticle = local.articles.find((candidate) => candidate.slug === article.slug);
+    const baseHash = syncState.articleHashes[article.slug];
+    if (!localArticle && baseHash && article.contentHash === baseHash) continue;
+    if (localArticle && baseHash && localArticle.contentHash !== baseHash && article.contentHash === baseHash) continue;
+    await writeWikiArticleFile(workspacePath, article);
+  }
+  for (const source of remote.sources) {
+    const localSource = local.sources.find((candidate) => candidate.id === source.id);
+    const baseHash = syncState.sourceHashes[source.id];
+    if (!localSource && baseHash && computeWikiSourceRecordHash(source) === baseHash) continue;
+    if (
+      localSource &&
+      baseHash &&
+      computeWikiSourceRecordHash(localSource) !== baseHash &&
+      computeWikiSourceRecordHash(source) === baseHash
+    ) continue;
+    await writeWikiSourceMetadata(workspacePath, source);
+  }
+  await writeWikiSyncState(workspacePath, {
+    formatVersion: 1,
+    wikiRevision: remote.wikiRevision,
+    pulledAt: new Date().toISOString(),
+    articleHashes: remoteArticleHashes,
+    sourceHashes: remoteSourceHashes
+  });
+  text(`Pulled wiki revision ${remote.wikiRevision}: ${remote.articles.length} articles and ${remote.sources.length} sources`);
+}
+
+async function validateWorkspace(workspacePath: string): Promise<void> {
+  const snapshot = await readWikiWorkspace(workspacePath);
+  for (const warning of snapshot.validation.warnings) text(`warning: ${warning}`);
+  for (const error of snapshot.validation.errors) text(`error: ${error}`);
+  const phiFindings = snapshot.articles.flatMap((article) =>
+    findExplicitPhi(`${article.title}\n${article.summary}\n${article.body}`).map((finding) => `${article.slug}: ${finding}`)
+  );
+  for (const finding of phiFindings) text(`error: possible PHI: ${finding}`);
+  if (!snapshot.validation.valid || phiFindings.length) throw new Error("Wiki validation failed");
+  text(`Wiki is valid: ${snapshot.articles.length} articles and ${snapshot.sources.length} sources`);
+}
+
+async function showDiff(workspacePath: string): Promise<void> {
+  const snapshot = await readWikiWorkspace(workspacePath);
+  const state = await readWikiSyncState(workspacePath);
+  const diff = buildWorkspaceDiff(snapshot, state);
+  text(`Server base revision: ${state.wikiRevision}`);
+  printDiffGroup("Articles", diff.articles.create.map((item) => item.slug), diff.articles.update.map((item) => item.slug), diff.articles.delete);
+  printDiffGroup("Sources", diff.sources.create.map((item) => item.id), diff.sources.update.map((item) => item.id), diff.sources.delete);
+}
+
+async function pushWorkspace(workspacePath: string, dryRun: boolean): Promise<void> {
+  await assertNoConflictFiles(workspacePath);
+  const config = await readWikiWorkspaceConfig(workspacePath);
+  const snapshot = await readWikiWorkspace(workspacePath);
+  const state = await readWikiSyncState(workspacePath);
+  if (!snapshot.validation.valid) {
+    for (const error of snapshot.validation.errors) text(`error: ${error}`);
+    throw new Error("Fix wiki validation errors before pushing");
+  }
+  const diff = buildWorkspaceDiff(snapshot, state);
+  const payload = {
+    baseRevision: state.wikiRevision,
+    articles: [...diff.articles.create, ...diff.articles.update],
+    sources: [...diff.sources.create, ...diff.sources.update],
+    deleteArticles: diff.articles.delete,
+    deleteSources: diff.sources.delete
+  };
+  const preview = await wikiRequest<{
+    validation: { valid: boolean; errors: string[]; warnings: string[] };
+    summary: { created: number; updated: number; deleted: number };
+    currentRevision: number;
+  }>(workspacePath, config.serverUrl, "/api/wiki/sync/preview", { method: "POST", body: JSON.stringify(payload) });
+  for (const warning of preview.validation.warnings) text(`warning: ${warning}`);
+  if (!preview.validation.valid) throw new Error(preview.validation.errors.join("; "));
+  text(`Preview: ${preview.summary.created} create, ${preview.summary.updated} update, ${preview.summary.deleted} delete`);
+  if (dryRun) {
+    text("Dry run only; nothing was changed on the server");
+    return;
+  }
+  const applied = await wikiRequest<{ applied: boolean; wikiRevision: number }>(
+    workspacePath,
+    config.serverUrl,
+    "/api/wiki/sync/apply",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+  text(applied.applied ? `Applied server wiki revision ${applied.wikiRevision}` : "Server wiki already matches the workspace");
+  await pullWorkspace(workspacePath);
+}
+
+async function ingestSources(workspacePath: string, args: ParsedArguments): Promise<void> {
+  if (!args.positional.length) throw new Error("Provide one or more source files to ingest");
+  const sourceType = (stringFlag(args, "source-type") || "document") as WikiSourceType;
+  if (!(WIKI_SOURCE_TYPES as readonly string[]).includes(sourceType)) {
+    throw new Error(`Invalid --source-type. Use one of: ${WIKI_SOURCE_TYPES.join(", ")}`);
+  }
+  for (const file of args.positional) {
+    const filePath = path.resolve(file);
+    const staged = await stageWikiSource(workspacePath, filePath, {
+      title: stringFlag(args, "title"),
+      sourceType,
+      author: stringFlag(args, "author"),
+      origin: stringFlag(args, "origin"),
+      effectiveDate: stringFlag(args, "effective-date"),
+      notes: stringFlag(args, "notes")
+    });
+    const phiFindings = findExplicitPhi(staged.extractedText);
+    if (phiFindings.length) {
+      throw new Error(`${file}: possible PHI detected (${phiFindings.join(", ")}); source was staged locally but was not sent to a model`);
+    }
+    const shouldUseAi = !args.flags["no-ai"] && Boolean(process.env.OPENAI_API_KEY);
+    if (!shouldUseAi) {
+      const jobPath = path.join(workspacePath, "proposals", `${staged.source.id}.ingestion.json`);
+      await fs.writeFile(jobPath, `${JSON.stringify({
+        sourceId: staged.source.id,
+        extractedTextPath: path.relative(workspacePath, path.join(staged.sourceDirectory, "extracted.txt")),
+        instructions: "Have an authorized agent extract factual draft articles. Every proposed article must reference this source id and remain draft until reviewed."
+      }, null, 2)}\n`, "utf8");
+      text(`Staged ${file} as ${staged.source.id}; ingestion job: ${jobPath}`);
+      continue;
+    }
+    const proposal = await callIngestionModel(staged.source.id, staged.source.title, staged.extractedText);
+    const existing = await readWikiWorkspace(workspacePath);
+    for (const proposed of proposal.articles) {
+      const article = createDraftArticle(proposed, staged.source.id);
+      if (existing.articles.some((candidate) => candidate.slug === article.slug)) {
+        const proposalPath = path.join(workspacePath, "proposals", `${article.slug}-${Date.now()}.json`);
+        await fs.writeFile(proposalPath, `${JSON.stringify(article, null, 2)}\n`, "utf8");
+        text(`Existing article ${article.slug} was not overwritten; proposal saved to ${proposalPath}`);
+      } else {
+        const articlePath = await writeWikiArticleFile(workspacePath, article);
+        text(`Created draft ${article.slug}: ${articlePath}`);
+      }
+    }
+    for (const uncertainty of proposal.uncertainties) text(`review: ${uncertainty}`);
+  }
+}
+
+async function markArticleForReview(workspacePath: string, args: ParsedArguments): Promise<void> {
+  const slug = normalizeSlugArgument(args);
+  const snapshot = await readWikiWorkspace(workspacePath);
+  const article = snapshot.articles.find((candidate) => candidate.slug === slug);
+  if (!article) throw new Error(`Article not found: ${slug}`);
+  const updated = { ...article, status: "review" as const, updatedAt: new Date().toISOString(), updatedBy: "local-review" };
+  await writeWikiArticleFile(workspacePath, updated);
+  text(`Marked ${slug} ready for review`);
+}
+
+async function publishArticle(workspacePath: string, args: ParsedArguments): Promise<void> {
+  const slug = normalizeSlugArgument(args);
+  const snapshot = await readWikiWorkspace(workspacePath);
+  const article = snapshot.articles.find((candidate) => candidate.slug === slug);
+  if (!article) throw new Error(`Article not found: ${slug}`);
+  const reviewer = stringFlag(args, "reviewer") || article.reviewedBy;
+  const owner = stringFlag(args, "owner") || article.owner;
+  const reviewedAt = stringFlag(args, "reviewed-at") || new Date().toISOString().slice(0, 10);
+  const reviewDueAt = stringFlag(args, "review-due") || article.reviewDueAt;
+  if (!reviewer || !owner) throw new Error("Publishing requires --reviewer and --owner");
+  if (!article.sourceRefs.length && article.authority !== "program-reference" && article.authority !== "workflow") {
+    throw new Error("Clinical knowledge requires at least one source reference before publication");
+  }
+  const updated: WikiArticle = {
+    ...article,
+    status: "published",
+    owner,
+    reviewedBy: reviewer,
+    reviewedAt,
+    reviewDueAt,
+    updatedAt: new Date().toISOString(),
+    updatedBy: reviewer,
+    contentHash: article.contentHash
+  };
+  await writeWikiArticleFile(workspacePath, updated);
+  const nextSnapshot = await readWikiWorkspace(workspacePath);
+  const error = nextSnapshot.validation.errors.find((candidate) => candidate.startsWith(`${slug}:`));
+  if (error) throw new Error(error);
+  text(`Published ${slug} locally; run validate, diff, and push to publish it on the server`);
+}
+
+async function callIngestionModel(sourceId: string, sourceTitle: string, sourceText: string): Promise<IngestionProposal> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is required for agentic ingestion");
+  const model = process.env.WIKI_INGEST_MODEL || "gpt-5.6-terra";
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      store: false,
+      max_output_tokens: 8000,
+      input: [
+        {
+          role: "developer",
+          content: `You are a careful knowledge-base ingestion editor. Extract only facts explicitly supported by the source. Do not invent clinical details, contacts, orders, preferences, or exceptions. Split content into coherent articles, usually one attending-procedure or workflow topic per article. Preserve uncertainty in the uncertainties array. All articles are drafts and must cite source ${sourceId}. Use concise Markdown headings. Never include PHI.`
+        },
+        {
+          role: "user",
+          content: `Source title: ${sourceTitle}\nSource id: ${sourceId}\n\n${sourceText.slice(0, 120_000)}`
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "wiki_ingestion_proposal",
+          strict: true,
+          schema: INGESTION_SCHEMA
+        }
+      }
+    })
+  });
+  const payload = await response.json() as {
+    output_text?: string;
+    output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+    error?: { message?: string };
+  };
+  if (!response.ok) throw new Error(payload.error?.message || `OpenAI ingestion failed: ${response.status}`);
+  const outputText = payload.output_text || payload.output
+    ?.flatMap((item) => item.content ?? [])
+    .filter((item) => item.type === "output_text")
+    .map((item) => item.text || "")
+    .join("");
+  if (!outputText) throw new Error("The ingestion model returned no proposal");
+  return JSON.parse(outputText) as IngestionProposal;
+}
+
+async function wikiRequest<T>(
+  workspacePath: string,
+  serverUrl: string,
+  endpoint: string,
+  init: RequestInit = {}
+): Promise<T> {
+  const apiKey = process.env.WIKI_API_KEY || process.env.ADMIN_API_KEY || await readLocalApiKey(workspacePath);
+  const bearer = process.env.WIKI_BEARER_TOKEN;
+  if (!apiKey && !bearer) throw new Error("Set WIKI_API_KEY, ADMIN_API_KEY, or WIKI_BEARER_TOKEN");
+  const headers = new Headers(init.headers);
+  if (apiKey) headers.set("x-api-key", apiKey);
+  if (bearer) headers.set("authorization", `Bearer ${bearer}`);
+  if (init.body) headers.set("content-type", "application/json");
+  const response = await fetch(`${serverUrl}${endpoint}`, { ...init, headers });
+  const payload = await response.json().catch(() => ({})) as { error?: string } & T;
+  if (!response.ok) throw new Error(payload.error || `Wiki API request failed: ${response.status}`);
+  return payload;
+}
+
+async function archiveRemoteDeletions(
+  workspacePath: string,
+  local: Awaited<ReturnType<typeof readWikiWorkspace>>,
+  syncState: Awaited<ReturnType<typeof readWikiSyncState>>,
+  remoteArticleHashes: Record<string, string>,
+  remoteSourceHashes: Record<string, string>
+) {
+  const archiveDirectory = path.join(workspacePath, "archive", "remote-deleted", new Date().toISOString().slice(0, 10));
+  await fs.mkdir(archiveDirectory, { recursive: true });
+  for (const article of local.articles) {
+    if (!syncState.articleHashes[article.slug] || remoteArticleHashes[article.slug]) continue;
+    const sourcePath = path.join(workspacePath, "articles", article.category, `${article.slug}.md`);
+    await moveIfPresent(sourcePath, path.join(archiveDirectory, `${article.slug}.md`));
+  }
+  for (const source of local.sources) {
+    if (!syncState.sourceHashes[source.id] || remoteSourceHashes[source.id]) continue;
+    const sourcePath = path.join(workspacePath, "sources", source.id, "metadata.json");
+    await moveIfPresent(sourcePath, path.join(archiveDirectory, `${source.id}.metadata.json`));
+  }
+}
+
+async function moveIfPresent(source: string, destination: string): Promise<void> {
+  try {
+    await fs.rename(source, destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function assertNoConflictFiles(workspacePath: string): Promise<void> {
+  const entries = await fs.readdir(path.join(workspacePath, "conflicts"));
+  const conflicts = entries.filter((entry) => entry !== ".gitkeep");
+  if (conflicts.length) throw new Error(`Resolve and remove conflict files before pushing: ${conflicts.join(", ")}`);
+}
+
+async function readLocalApiKey(workspacePath: string): Promise<string | undefined> {
+  try {
+    const value = (await fs.readFile(path.join(workspacePath, ".wiki-api-key"), "utf8")).trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function printDiffGroup(label: string, creates: string[], updates: string[], deletes: string[]) {
+  text(`${label}: ${creates.length} create, ${updates.length} update, ${deletes.length} delete`);
+  for (const item of creates) text(`  + ${item}`);
+  for (const item of updates) text(`  ~ ${item}`);
+  for (const item of deletes) text(`  - ${item}`);
+}
+
+function parseArguments(args: string[]): ParsedArguments {
+  const positional: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (!value.startsWith("--")) {
+      positional.push(value);
+      continue;
+    }
+    const [name, inline] = value.slice(2).split("=", 2);
+    if (inline !== undefined) {
+      flags[name] = inline;
+      continue;
+    }
+    const next = args[index + 1];
+    if (next && !next.startsWith("--")) {
+      flags[name] = next;
+      index += 1;
+    } else {
+      flags[name] = true;
+    }
+  }
+  return { positional, flags };
+}
+
+function stringFlag(args: ParsedArguments, name: string): string | undefined {
+  const value = args.flags[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeSlugArgument(args: ParsedArguments): string {
+  const value = args.positional[0];
+  if (!value) throw new Error("Provide an article slug");
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function text(value: string) {
+  process.stdout.write(`${value}\n`);
+}
+
+function showHelp() {
+  text(`Private residency wiki workflow
+
+Usage:
+  npm run wiki -- init [--server URL] [--workspace PATH]
+  npm run wiki -- pull
+  npm run wiki -- ingest FILE... [--source-type TYPE] [--author NAME] [--no-ai]
+  npm run wiki -- validate
+  npm run wiki -- diff
+  npm run wiki -- review SLUG
+  npm run wiki -- publish SLUG --reviewer NAME --owner NAME [--review-due YYYY-MM-DD]
+  npm run wiki -- push [--dry-run]
+  npm run wiki -- sync [--dry-run]
+
+Environment:
+  WIKI_WORKSPACE_PATH   Private local workspace; defaults to .wiki-workspace
+  WIKI_BASE_URL         Server URL override
+  WIKI_API_KEY          Admin API key used for sync
+  WIKI_BEARER_TOKEN     Optional admin browser token instead of an API key
+  OPENAI_API_KEY        Enables agentic ingestion
+  WIKI_INGEST_MODEL     Optional ingestion model override
+`);
+}
+
+const INGESTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["articles", "uncertainties"],
+  properties: {
+    articles: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["slug", "title", "summary", "body", "category", "authority", "aliases", "tags", "links", "owner"],
+        properties: {
+          slug: { type: "string" },
+          title: { type: "string" },
+          summary: { type: "string" },
+          body: { type: "string" },
+          category: { type: "string", enum: WIKI_CATEGORIES },
+          authority: { type: "string", enum: WIKI_AUTHORITIES },
+          aliases: { type: "array", items: { type: "string" } },
+          tags: { type: "array", items: { type: "string" } },
+          links: { type: "array", items: { type: "string" } },
+          owner: { type: ["string", "null"] }
+        }
+      }
+    },
+    uncertainties: { type: "array", items: { type: "string" } }
+  }
+};
+
+main().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});

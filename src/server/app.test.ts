@@ -140,6 +140,167 @@ describe("planner API", () => {
       .expect(403);
   });
 
+  it("serves the linked wiki to users and restricts wiki edits to admins", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const viewerToken = await loginOnApp(app, "cblue");
+
+    const search = await request(app)
+      .get("/api/wiki?query=FMH%20coverage")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(200);
+    expect(search.body.articles).toEqual(
+      expect.arrayContaining([expect.objectContaining({ slug: "hospital-fmh" })])
+    );
+
+    const article = await request(app)
+      .get("/api/wiki/hospital-fmh")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(200);
+    expect(article.body).toEqual(
+      expect.objectContaining({
+        article: expect.objectContaining({ slug: "hospital-fmh" }),
+        backlinks: expect.arrayContaining([expect.objectContaining({ slug: "hospitals" })])
+      })
+    );
+
+    const newArticle = {
+      slug: "workflow-test",
+      title: "Test Workflow",
+      summary: "Verified local test workflow.",
+      body: "For patient care, use the verified local workflow or call the office at 540-555-0188.",
+      category: "workflow",
+      aliases: ["test workflow"],
+      tags: ["workflow"],
+      links: ["workflows"],
+      owner: "Residency program",
+      reviewedAt: "2026-08-01"
+    };
+    await request(app)
+      .post("/api/wiki")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .send(newArticle)
+      .expect(403);
+    await request(app)
+      .post("/api/wiki")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send(newArticle)
+      .expect(201)
+      .expect((response) => expect(response.body.article.slug).toBe("workflow-test"));
+    await request(app)
+      .post("/api/wiki")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ ...newArticle, slug: "workflow-private-draft", status: "draft" })
+      .expect(201);
+    await request(app)
+      .get("/api/wiki/workflow-private-draft")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(404);
+    const viewerState = await request(app)
+      .get("/api/state")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(200);
+    expect(viewerState.body.wikiArticles).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ slug: "workflow-private-draft" })])
+    );
+    expect(viewerState.body.wikiSources).toEqual([]);
+    await request(app)
+      .post("/api/wiki")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ ...newArticle, slug: "unsafe-wiki", body: "MRN: 1234567" })
+      .expect(400);
+    await request(app)
+      .patch("/api/wiki/workflow-test")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ summary: "Updated verified workflow." })
+      .expect(200)
+      .expect((response) => expect(response.body.article.summary).toBe("Updated verified workflow."));
+    await request(app)
+      .delete("/api/wiki/workflow-test")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app)
+      .get("/api/wiki/workflow-test")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(404);
+  });
+
+  it("previews and transactionally syncs sourced clinical wiki knowledge", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const viewerToken = await loginOnApp(app, "cblue");
+    const exported = await request(app)
+      .get("/api/wiki/export")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(exported.body).toEqual(expect.objectContaining({ formatVersion: 1, wikiRevision: 1 }));
+    expect(exported.body.articles[0]).toEqual(expect.objectContaining({ status: "published", revision: 1 }));
+
+    const source = {
+      id: "src-nussbaum-review",
+      title: "Dr. Nussbaum preference review",
+      sourceType: "direct-review",
+      author: "Dr. Nussbaum",
+      capturedAt: "2026-08-01T12:00:00.000Z",
+      effectiveDate: "2026-08-01",
+      contentHash: "a".repeat(64)
+    };
+    const article = {
+      slug: "attending-nussbaum-laparoscopic-cholecystectomy",
+      title: "Dr. Nussbaum — Laparoscopic Cholecystectomy",
+      summary: "Reviewed operative preferences for laparoscopic cholecystectomy.",
+      body: "## Applicability\n\nReviewed local preference content.",
+      category: "attending",
+      status: "published",
+      authority: "attending-preference",
+      aliases: ["Nussbaum lap chole"],
+      tags: ["operative-preference"],
+      links: ["attendings"],
+      sourceRefs: [{ sourceId: source.id, locator: "Port placement section" }],
+      owner: "Dr. Nussbaum",
+      reviewedBy: "Dr. Nussbaum",
+      reviewedAt: "2026-08-01",
+      reviewDueAt: "2027-08-01"
+    };
+    const syncPayload = { baseRevision: exported.body.wikiRevision, sources: [source], articles: [article] };
+    const preview = await request(app)
+      .post("/api/wiki/sync/preview")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send(syncPayload)
+      .expect(200);
+    expect(preview.body).toEqual(expect.objectContaining({
+      currentRevision: 1,
+      summary: expect.objectContaining({ created: 2 }),
+      validation: expect.objectContaining({ valid: true })
+    }));
+
+    const applied = await request(app)
+      .post("/api/wiki/sync/apply")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send(syncPayload)
+      .expect(200);
+    expect(applied.body).toEqual(expect.objectContaining({ applied: true, wikiRevision: 2 }));
+    await request(app)
+      .post("/api/wiki/sync/apply")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send(syncPayload)
+      .expect(409);
+
+    const changes = await request(app)
+      .get("/api/wiki/changes?after=1")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(changes.body.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ entity: "source", sourceId: source.id, revision: 2 }),
+      expect.objectContaining({ entity: "article", slug: article.slug, revision: 2 })
+    ]));
+    await request(app)
+      .get(`/api/wiki/${article.slug}`)
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(200)
+      .expect((response) => expect(response.body.article.sourceRefs[0].sourceId).toBe(source.id));
+  });
+
   it("lets the admin API key reset passwords and manage chat models", async () => {
     const chatSettingsStore = new MemoryChatSettingsStore();
     const app = createApp(new MemoryStateStore(createInitialState()), { chatSettingsStore });
@@ -235,23 +396,24 @@ describe("planner API", () => {
     });
   });
 
-  it("gives regular users three spoken responses per day and makes admin OpenRouter quotas unlimited", async () => {
+  it("gives users five spoken responses per day and allows configured voice testers unlimited responses", async () => {
     const store = new MemoryStateStore(createInitialState());
     const app = createApp(store);
     const viewerToken = await loginOnApp(app, "cblue");
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const testerToken = await loginOnApp(app, "aschroeder");
 
     const viewerVoiceQuota = await request(app)
       .get("/api/chat/voice/quota")
       .set("authorization", `Bearer ${viewerToken}`)
       .expect(200);
-    expect(viewerVoiceQuota.body).toEqual({ used: 0, remaining: 3, limit: 3, unlimited: false });
+    expect(viewerVoiceQuota.body).toEqual({ used: 0, remaining: 5, limit: 5, unlimited: false });
 
     const adminVoiceQuota = await request(app)
       .get("/api/chat/voice/quota")
       .set("authorization", `Bearer ${adminToken}`)
       .expect(200);
-    expect(adminVoiceQuota.body).toEqual({ used: 0, remaining: 3, limit: 3, unlimited: true });
+    expect(adminVoiceQuota.body).toEqual({ used: 0, remaining: 5, limit: 5, unlimited: true });
 
     const adminChatQuota = await request(app)
       .get("/api/chat/quota")
@@ -261,21 +423,29 @@ describe("planner API", () => {
 
     const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
     const previousElevenLabsKey = process.env.ELEVENLABS_API_KEY;
+    const previousUnlimitedVoiceUsernames = process.env.UNLIMITED_VOICE_USERNAMES;
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
     process.env.ELEVENLABS_API_KEY = "test-elevenlabs-key";
+    process.env.UNLIMITED_VOICE_USERNAMES = "aschroeder";
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } }))
     );
     try {
-      for (let use = 1; use <= 3; use += 1) {
+      const testerVoiceQuota = await request(app)
+        .get("/api/chat/voice/quota")
+        .set("authorization", `Bearer ${testerToken}`)
+        .expect(200);
+      expect(testerVoiceQuota.body).toEqual({ used: 0, remaining: 5, limit: 5, unlimited: true });
+
+      for (let use = 1; use <= 5; use += 1) {
         const speech = await request(app)
           .post("/api/chat/speech")
           .set("authorization", `Bearer ${viewerToken}`)
-          .send({ input: `Spoken answer ${use}`, voicePreset: use })
+          .send({ input: `Spoken answer ${use}`, voicePreset: ((use - 1) % 4) + 1 })
           .expect(200);
-        expect(speech.headers["x-voice-remaining"]).toBe(String(3 - use));
-        expect(speech.headers["x-voice-preset"]).toBe(String(use));
+        expect(speech.headers["x-voice-remaining"]).toBe(String(5 - use));
+        expect(speech.headers["x-voice-preset"]).toBe(String(((use - 1) % 4) + 1));
       }
       await request(app)
         .post("/api/chat/speech")
@@ -283,11 +453,19 @@ describe("planner API", () => {
         .send({ input: "One too many", voicePreset: 4 })
         .expect(429);
 
-      for (let use = 1; use <= 4; use += 1) {
+      for (let use = 1; use <= 6; use += 1) {
         const speech = await request(app)
           .post("/api/chat/speech")
           .set("authorization", `Bearer ${adminToken}`)
-          .send({ input: `Unlimited admin answer ${use}`, voicePreset: use })
+          .send({ input: `Unlimited admin answer ${use}`, voicePreset: ((use - 1) % 4) + 1 })
+          .expect(200);
+        expect(speech.headers["x-voice-unlimited"]).toBe("true");
+      }
+      for (let use = 1; use <= 6; use += 1) {
+        const speech = await request(app)
+          .post("/api/chat/speech")
+          .set("authorization", `Bearer ${testerToken}`)
+          .send({ input: `Unlimited tester answer ${use}`, voicePreset: ((use - 1) % 4) + 1 })
           .expect(200);
         expect(speech.headers["x-voice-unlimited"]).toBe("true");
       }
@@ -297,6 +475,8 @@ describe("planner API", () => {
       else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
       if (previousElevenLabsKey === undefined) delete process.env.ELEVENLABS_API_KEY;
       else process.env.ELEVENLABS_API_KEY = previousElevenLabsKey;
+      if (previousUnlimitedVoiceUsernames === undefined) delete process.env.UNLIMITED_VOICE_USERNAMES;
+      else process.env.UNLIMITED_VOICE_USERNAMES = previousUnlimitedVoiceUsernames;
     }
   });
 
@@ -1034,6 +1214,9 @@ describe("planner API", () => {
     expect(response.body.components.securitySchemes.ApiKeyAuth.name).toBe("X-API-Key");
     expect(response.body.paths["/api/entities/{collection}"].post).toBeDefined();
     expect(response.body.paths["/api/assignments"].post).toBeDefined();
+    expect(response.body.paths["/api/wiki/export"].get).toBeDefined();
+    expect(response.body.paths["/api/wiki/sync/preview"].post).toBeDefined();
+    expect(response.body.paths["/api/wiki/sync/apply"].post).toBeDefined();
   });
 
   it("routes request-privileged calendar edits through editor-approved requests", async () => {
@@ -1314,16 +1497,16 @@ describe("planner API", () => {
     const practice = await request(app)
       .post("/api/attending-coverage")
       .set("x-api-key", "test-admin-api-key")
-      .send({ date: "2026-07-06", line: "Practice", shift: "24h", role: "primary", attendingId: "att_morris", note: "" })
+      .send({ date: "2026-07-10", line: "Practice", shift: "weekend", role: "primary", attendingId: "att_morris", note: "" })
       .expect(201);
     expect(practice.body.attendingCoverageAssignments).toEqual(
-      expect.arrayContaining([expect.objectContaining({ line: "Practice", shift: "24h", source: "api" })])
+      expect.arrayContaining([expect.objectContaining({ line: "Practice", shift: "weekend", source: "api" })])
     );
 
     const duplicate = await request(app)
       .post("/api/attending-coverage")
       .set("authorization", `Bearer ${token}`)
-      .send({ date: "2026-07-06", line: "Practice", shift: "24h", role: "primary", attendingId: "att_chen", note: "" })
+      .send({ date: "2026-07-10", line: "Practice", shift: "weekend", role: "primary", attendingId: "att_chen", note: "" })
       .expect(409);
     expect(duplicate.body.error).toMatch(/already assigned/i);
 
@@ -1332,6 +1515,115 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${token}`)
       .send({ date: "2026-07-06", line: "EGS", shift: "night", role: "primary", attendingId: "att_chen", note: "" })
       .expect(400);
+  });
+
+  it("treats the minimally invasive fellow as case-covering staff and Practice weekend call, not resident call", async () => {
+    const { app, token } = await loginAs("admin");
+    const fellowResponse = await request(app)
+      .post("/api/entities/residents")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        id: "res_mi_fellow",
+        name: "Minimally Invasive Fellow",
+        trainingLevel: "PGY3",
+        designation: "minimally-invasive-fellow",
+        rosterKind: "primary",
+        serviceTags: ["Berry"],
+        tags: [],
+        trainingInterests: ["minimally invasive surgery"],
+        unavailable: []
+      })
+      .expect(201);
+
+    expect(fellowResponse.body.residents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "res_mi_fellow",
+        designation: "minimally-invasive-fellow",
+        trainingLevel: "Fellow",
+        rosterKind: "primary",
+        serviceTags: ["Davies"],
+        rotationSchedule: expect.arrayContaining([
+          expect.objectContaining({ blockNumber: 1, service: "Davies" }),
+          expect.objectContaining({ blockNumber: 13, service: "Davies" })
+        ])
+      })
+    ]));
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_chole", residentId: "res_mi_fellow", locked: false })
+      .expect(201);
+
+    const residentCall = await request(app)
+      .post("/api/coverage-entries")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-03",
+        kind: "call",
+        residentId: "res_mi_fellow",
+        callPosition: "senior",
+        note: "",
+        serviceLine: "Davies"
+      })
+      .expect(400);
+    expect(residentCall.body.error).toMatch(/not in the resident call pool/i);
+
+    const wrongLine = await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-03",
+        line: "ACS",
+        shift: "night",
+        role: "primary",
+        fellowResidentId: "res_mi_fellow",
+        note: ""
+      })
+      .expect(400);
+    expect(wrongLine.body.error).toMatch(/only primary Practice weekend call/i);
+
+    const wrongStart = await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-04",
+        line: "Practice",
+        shift: "weekend",
+        role: "primary",
+        fellowResidentId: "res_mi_fellow",
+        note: ""
+      })
+      .expect(400);
+    expect(wrongStart.body.error).toMatch(/must start on Friday/i);
+
+    const practiceCall = await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        date: "2026-07-03",
+        line: "Practice",
+        shift: "weekend",
+        role: "primary",
+        fellowResidentId: "res_mi_fellow",
+        note: ""
+      })
+      .expect(201);
+    expect(practiceCall.body.attendingCoverageAssignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        line: "Practice",
+        shift: "weekend",
+        fellowResidentId: "res_mi_fellow"
+      })
+    ]));
+
+    const calendar = await request(app)
+      .get("/api/residents/res_mi_fellow/calendar.ics")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(calendar.text).toContain("SUMMARY:Practice call");
+    expect(calendar.text).toContain("DTSTART:20260703T170000");
+    expect(calendar.text).toContain("DTEND:20260706T060000");
   });
 
   it("keeps surgery call entries resident-only and capped at three plus one SCC/ICU resident", async () => {

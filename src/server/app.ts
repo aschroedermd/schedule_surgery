@@ -3,7 +3,12 @@ import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { URL } from "node:url";
-import { isCoverageKindAllowedOnDate } from "../shared/coverage";
+import {
+  isCoverageKindAllowedOnDate,
+  isMinimallyInvasiveFellow,
+  isPracticeWeekendStart,
+  isResidentCallEligible
+} from "../shared/coverage";
 import { addDays, getCurrentMonday, minutesToTime, timeToMinutes } from "../shared/date";
 import { createId } from "../shared/id";
 import { getResidentTimeOff } from "../shared/availability";
@@ -43,7 +48,17 @@ import {
   ResidentVacationChange,
   Role,
   SessionUser,
-  SurgeryCase
+  SurgeryCase,
+  WikiArticle,
+  WikiAuthority,
+  WikiChangeEvent,
+  WikiSource,
+  WikiSourceReference,
+  WikiStatus,
+  WIKI_AUTHORITIES,
+  WIKI_CATEGORIES,
+  WIKI_SOURCE_TYPES,
+  WIKI_STATUSES
 } from "../shared/types";
 import {
   AuthenticatedRequest,
@@ -77,11 +92,20 @@ import {
 import { StateConflictError, StateStore } from "./store";
 import { UpsertUserInput, UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
 import { syncQgenda } from "./qgenda";
+import {
+  normalizeWikiArticles,
+  normalizeWikiSources,
+  normalizeWikiSlug,
+  readWikiArticle,
+  searchWikiArticles,
+  summarizeWikiArticle,
+  validateWikiKnowledgeBase
+} from "./wiki";
 
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
 const DAILY_CHAT_LIMIT = 20;
-const DAILY_VOICE_LIMIT = 3;
+const DAILY_VOICE_LIMIT = 5;
 
 const collections: CollectionName[] = [
   "hospitals",
@@ -213,7 +237,7 @@ export function createApp(
 
   app.get("/api/chat/voice/quota", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
-      const unlimited = req.user!.role === "admin";
+      const unlimited = hasUnlimitedVoiceQuota(req.user!);
       const quota = unlimited
         ? { used: 0, remaining: DAILY_VOICE_LIMIT }
         : await store.getVoiceQuota(req.user!.username, getChatQuotaDateKey(), DAILY_VOICE_LIMIT);
@@ -249,7 +273,7 @@ export function createApp(
         });
         return;
       }
-      const state = filterStateForUser(await store.load(), req.user);
+      const state = filterStateForUser(await store.load(), req.user, { includeWikiSources: true });
       const answer = await answerScheduleQuestion(
         messages,
         {
@@ -311,7 +335,7 @@ export function createApp(
         });
         return;
       }
-      const state = filterStateForUser(await store.load(), req.user);
+      const state = filterStateForUser(await store.load(), req.user, { includeWikiSources: true });
       const abortController = new AbortController();
       res.on("close", () => {
         if (!res.writableEnded) abortController.abort();
@@ -475,7 +499,7 @@ export function createApp(
         res.status(503).json({ error: "ElevenLabs voice is not configured yet" });
         return;
       }
-      const unlimited = req.user!.role === "admin";
+      const unlimited = hasUnlimitedVoiceQuota(req.user!);
       const quota = unlimited
         ? { allowed: true, used: 0, remaining: DAILY_VOICE_LIMIT }
         : await store.consumeVoiceQuota(req.user!.username, getChatQuotaDateKey(), DAILY_VOICE_LIMIT);
@@ -692,6 +716,272 @@ export function createApp(
   app.get("/api/state", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       res.json(filterStateForUser(await store.load(), req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/wiki", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const query = readOptionalString(req.query.query) ?? "";
+      const limit = readOptionalPositiveInteger(req.query.limit) ?? 8;
+      const includeUnpublished = req.user?.role === "admin" && req.query.includeUnpublished === "true";
+      const visibleArticles = includeUnpublished
+        ? state.wikiArticles
+        : state.wikiArticles.filter((article) => article.status === "published");
+      const articles = query
+        ? searchWikiArticles(state.wikiArticles, query, limit, includeUnpublished)
+        : visibleArticles
+            .slice()
+            .sort((left, right) => left.category.localeCompare(right.category) || left.title.localeCompare(right.title))
+            .slice(0, Math.min(limit, 50))
+            .map(summarizeWikiArticle);
+      res.json({ articles, query, stateVersion: state.version, dataUpdatedAt: state.updatedAt });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/wiki/export", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      res.json({
+        formatVersion: 1,
+        wikiRevision: state.wikiRevision,
+        exportedAt: new Date().toISOString(),
+        articles: state.wikiArticles,
+        sources: state.wikiSources
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/wiki/changes", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const after = readOptionalNonNegativeInteger(req.query.after) ?? 0;
+      const oldestAvailableRevision = state.wikiChanges[0]?.revision ?? state.wikiRevision;
+      res.json({
+        after,
+        currentRevision: state.wikiRevision,
+        oldestAvailableRevision,
+        requiresFullExport: Boolean(state.wikiChanges.length && after < oldestAvailableRevision - 1),
+        changes: state.wikiChanges.filter((change) => change.revision > after)
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/wiki/sources", requireAuth, requirePasswordReady, requireAdmin, async (_req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      res.json({ sources: state.wikiSources, wikiRevision: state.wikiRevision });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/wiki/sync/preview", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      res.json(buildWikiSyncPlan(state, req.body, req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/wiki/sync/apply", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const plan = buildWikiSyncPlan(state, req.body, req.user);
+      if (plan.baseRevision !== state.wikiRevision) {
+        throw new HttpError(409, `Wiki changed from revision ${plan.baseRevision} to ${state.wikiRevision}; pull and retry`);
+      }
+      if (!plan.validation.valid) throw new HttpError(400, plan.validation.errors.join("; "));
+      if (!plan.changes.length) {
+        res.json({ applied: false, wikiRevision: state.wikiRevision, summary: plan.summary, validation: plan.validation });
+        return;
+      }
+      const changedState = applyWikiMutationMetadata(
+        { ...state, wikiArticles: plan.articles, wikiSources: plan.sources },
+        plan.changes,
+        req.user
+      );
+      const withActivity = addActivity(changedState, {
+        ...requestActivityActor(req),
+        activityType: "wiki",
+        action: "synchronized wiki",
+        details: `${plan.summary.created} created, ${plan.summary.updated} updated, ${plan.summary.deleted} deleted`,
+        entityType: "wikiArticle"
+      });
+      const saved = await commitState(req, withActivity);
+      res.json({
+        applied: true,
+        wikiRevision: saved.wikiRevision,
+        stateVersion: saved.version,
+        summary: plan.summary,
+        validation: plan.validation
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/wiki/:slug", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const result = readWikiArticle(state.wikiArticles, getParam(req.params.slug), req.user?.role === "admin");
+      if (!result) throw new HttpError(404, "Wiki article not found");
+      res.json({ ...result, stateVersion: state.version, dataUpdatedAt: state.updatedAt });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/wiki", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const article = buildWikiArticle(req.body, undefined, req.user);
+      if (state.wikiArticles.some((candidate) => candidate.slug === article.slug)) {
+        throw new HttpError(409, `Wiki article already exists: ${article.slug}`);
+      }
+      const validation = validateWikiKnowledgeBase([...state.wikiArticles, article], state.wikiSources);
+      if (!validation.valid) throw new HttpError(400, validation.errors.join("; "));
+      const wikiState = applyWikiMutationMetadata(
+        { ...state, wikiArticles: [...state.wikiArticles, article] },
+        [{
+          entity: "article",
+          operation: "create",
+          key: article.slug,
+          slug: article.slug,
+          articleRevision: article.revision,
+          contentHash: article.contentHash
+        }],
+        req.user
+      );
+      const nextState = addActivity(
+        wikiState,
+        {
+          ...requestActivityActor(req),
+          activityType: "wiki",
+          action: "created wiki article",
+          details: `Created ${article.title}`,
+          entityType: "wikiArticle",
+          entityId: article.id
+        }
+      );
+      const saved = await commitState(req, nextState);
+      res.status(201).json({ article, stateVersion: saved.version, dataUpdatedAt: saved.updatedAt });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/wiki/:slug", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const currentSlug = normalizeWikiSlug(getParam(req.params.slug));
+      const existing = state.wikiArticles.find((candidate) => candidate.slug === currentSlug);
+      if (!existing) throw new HttpError(404, "Wiki article not found");
+      const article = buildWikiArticle(req.body, existing, req.user);
+      if (state.wikiArticles.some((candidate) => candidate.id !== existing.id && candidate.slug === article.slug)) {
+        throw new HttpError(409, `Wiki article already exists: ${article.slug}`);
+      }
+      const changes: PendingWikiChange[] = [{
+        entity: "article",
+        operation: "update",
+        key: article.slug,
+        slug: article.slug,
+        articleRevision: article.revision,
+        contentHash: article.contentHash
+      }];
+      const wikiArticles = state.wikiArticles.map((candidate) => {
+        if (candidate.id === existing.id) return article;
+        if (article.slug === currentSlug || !candidate.links.includes(currentSlug)) return candidate;
+        const linkedArticle = buildWikiArticle(
+          { links: candidate.links.map((link) => (link === currentSlug ? article.slug : link)) },
+          candidate,
+          req.user
+        );
+        changes.push({
+          entity: "article",
+          operation: "update",
+          key: linkedArticle.slug,
+          slug: linkedArticle.slug,
+          articleRevision: linkedArticle.revision,
+          contentHash: linkedArticle.contentHash
+        });
+        return linkedArticle;
+      });
+      const validation = validateWikiKnowledgeBase(wikiArticles, state.wikiSources);
+      if (!validation.valid) throw new HttpError(400, validation.errors.join("; "));
+      const nextState = addActivity(
+        applyWikiMutationMetadata({ ...state, wikiArticles }, changes, req.user),
+        {
+          ...requestActivityActor(req),
+          activityType: "wiki",
+          action: "updated wiki article",
+          details: `Updated ${article.title}`,
+          entityType: "wikiArticle",
+          entityId: article.id
+        }
+      );
+      const saved = await commitState(req, nextState);
+      res.json({ article, stateVersion: saved.version, dataUpdatedAt: saved.updatedAt });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/wiki/:slug", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const slug = normalizeWikiSlug(getParam(req.params.slug));
+      const existing = state.wikiArticles.find((candidate) => candidate.slug === slug);
+      if (!existing) throw new HttpError(404, "Wiki article not found");
+      const changes: PendingWikiChange[] = [{
+        entity: "article",
+        operation: "delete",
+        key: slug,
+        slug,
+        articleRevision: existing.revision,
+        contentHash: existing.contentHash
+      }];
+      const wikiArticles = state.wikiArticles
+        .filter((candidate) => candidate.id !== existing.id)
+        .map((candidate) => {
+          if (!candidate.links.includes(slug)) return candidate;
+          const linkedArticle = buildWikiArticle(
+            { links: candidate.links.filter((link) => link !== slug) },
+            candidate,
+            req.user
+          );
+          changes.push({
+            entity: "article",
+            operation: "update",
+            key: linkedArticle.slug,
+            slug: linkedArticle.slug,
+            articleRevision: linkedArticle.revision,
+            contentHash: linkedArticle.contentHash
+          });
+          return linkedArticle;
+        });
+      const nextState = addActivity(
+        applyWikiMutationMetadata({ ...state, wikiArticles }, changes, req.user),
+        {
+          ...requestActivityActor(req),
+          activityType: "wiki",
+          action: "deleted wiki article",
+          details: `Deleted ${existing.title}`,
+          entityType: "wikiArticle",
+          entityId: existing.id
+        }
+      );
+      const saved = await commitState(req, nextState);
+      res.json({ deleted: slug, stateVersion: saved.version, dataUpdatedAt: saved.updatedAt });
     } catch (error) {
       next(error);
     }
@@ -1366,6 +1656,15 @@ export function createApp(
   return app;
 }
 
+function hasUnlimitedVoiceQuota(user: SessionUser): boolean {
+  if (user.role === "admin") return true;
+  const usernames = (process.env.UNLIMITED_VOICE_USERNAMES ?? "")
+    .split(",")
+    .map((username) => username.trim().toLowerCase())
+    .filter(Boolean);
+  return usernames.includes(user.username.toLowerCase());
+}
+
 function requestActivityActor(req: AuthenticatedRequest, fallbackRole: Role = "admin"): ActivityActor {
   return req.user ? userActivityActor(req.user) : { actorRole: fallbackRole };
 }
@@ -1539,6 +1838,20 @@ function buildResidentCalendarIcs(state: PlannerState, residentId: string): stri
         summary: `${formatCoverageKindLabel(entry)}${resident ? `: ${resident.name}` : ""}`,
         description: entry.note,
         date: entry.date
+      })
+    );
+  }
+  for (const assignment of state.attendingCoverageAssignments.filter(
+    (candidate) => candidate.fellowResidentId === residentId
+  )) {
+    events.push(
+      timedIcsEvent({
+        uid: `${assignment.id}@schedule-surgery`,
+        summary: "Practice call",
+        description: assignment.note,
+        date: assignment.date,
+        startMinutes: assignment.shift === "weekend" ? 17 * 60 : 0,
+        endMinutes: assignment.shift === "weekend" ? 3 * 24 * 60 + 6 * 60 : 24 * 60
       })
     );
   }
@@ -1884,6 +2197,9 @@ function deleteResident(state: PlannerState, residentId: string): PlannerState {
     ...state,
     residents: state.residents.filter((resident) => resident.id !== residentId),
     assignments: state.assignments.filter((assignment) => assignment.residentId !== residentId),
+    attendingCoverageAssignments: state.attendingCoverageAssignments.filter(
+      (assignment) => assignment.fellowResidentId !== residentId
+    ),
     coverageEntries: state.coverageEntries.filter((entry) => entry.residentId !== residentId),
     coverageRequests: state.coverageRequests.filter((request) => !coverageRequestReferencesResident(request, residentId))
   };
@@ -2049,6 +2365,9 @@ function buildResidentTradeRequest(
   if (!targetResident) throw new Error("Resident trade requests require a targetResidentId");
   if (targetResident.id === requesterResident.id) {
     throw new Error("Choose another resident for the trade request");
+  }
+  if (sourceEntry.kind === "call" && !isResidentCallEligible(targetResident)) {
+    throw new HttpError(400, "Resident call trades require a resident who is in the call pool");
   }
   assertNoPhiText(readOptionalString(input.message) ?? "", "request message");
 
@@ -2401,6 +2720,16 @@ function validateCallEntry(state: PlannerState, entry: CoverageEntry): void {
     entry
   ].filter((candidate) => candidate.residentId);
 
+  const ineligibleResident = callEntries
+    .map((candidate) => state.residents.find((resident) => resident.id === candidate.residentId))
+    .find((resident) => resident && !isResidentCallEligible(resident));
+  if (ineligibleResident) {
+    const reason = isMinimallyInvasiveFellow(ineligibleResident)
+      ? "Minimally invasive fellows are not in the resident call pool"
+      : `${ineligibleResident.name} is not eligible for resident call`;
+    throw new HttpError(400, reason);
+  }
+
   const duplicateResident = callEntries.find(
     (candidate, index) => callEntries.findIndex((other) => other.residentId === candidate.residentId) !== index
   );
@@ -2550,8 +2879,32 @@ function buildAttendingCoverageAssignment(
   const line = assertAttendingCoverageLine(input.line ?? existing?.line);
   const shift = assertAttendingCoverageShift(input.shift ?? existing?.shift);
   const role = assertAttendingCoverageRole(input.role ?? existing?.role);
-  const attendingId = readRequiredString(input.attendingId ?? existing?.attendingId, "attendingId");
-  if (!state.attendings.some((attending) => attending.id === attendingId)) throw new HttpError(400, "Attending not found");
+  const attendingId = readOptionalString(input.attendingId ?? existing?.attendingId);
+  const fellowResidentId = readOptionalString(input.fellowResidentId ?? existing?.fellowResidentId);
+  if (Boolean(attendingId) === Boolean(fellowResidentId)) {
+    throw new HttpError(400, "Attending coverage requires exactly one attendingId or fellowResidentId");
+  }
+  if (attendingId && !state.attendings.some((attending) => attending.id === attendingId)) {
+    throw new HttpError(400, "Attending not found");
+  }
+  if (fellowResidentId) {
+    const fellow = state.residents.find((resident) => resident.id === fellowResidentId);
+    if (!fellow || !isMinimallyInvasiveFellow(fellow)) {
+      throw new HttpError(400, "fellowResidentId must identify a minimally invasive fellow");
+    }
+    if (line !== "Practice" || shift !== "weekend" || role !== "primary") {
+      throw new HttpError(400, "A minimally invasive fellow may cover only primary Practice weekend call");
+    }
+  }
+  if (shift === "weekend" && line !== "Practice") {
+    throw new HttpError(400, "Weekend coverage is reserved for Practice call");
+  }
+  if (line === "Practice" && shift !== "weekend") {
+    throw new HttpError(400, "Practice call uses the weekend shift (5 PM Friday through 6 AM Monday)");
+  }
+  if (shift === "weekend" && !isPracticeWeekendStart(date)) {
+    throw new HttpError(400, "Practice weekend call must start on Friday (5 PM Friday through 6 AM Monday)");
+  }
   if (role === "primary" && shift === "night" && line !== "ACS") {
     throw new HttpError(400, "Night EGS, Trauma, and SCC coverage is one ACS call assignment; use line ACS");
   }
@@ -2567,6 +2920,7 @@ function buildAttendingCoverageAssignment(
     shift,
     role,
     attendingId,
+    fellowResidentId,
     source,
     note,
     createdAt: existing?.createdAt ?? now,
@@ -2594,7 +2948,7 @@ function assertAttendingCoverageLine(value: unknown): AttendingCoverageLine {
 }
 
 function assertAttendingCoverageShift(value: unknown): AttendingCoverageShift {
-  if (value === "day" || value === "night" || value === "24h") return value;
+  if (value === "day" || value === "night" || value === "24h" || value === "weekend") return value;
   throw new HttpError(400, "Invalid attending coverage shift");
 }
 
@@ -2614,9 +2968,11 @@ function compareAttendingCoverageAssignments(a: AttendingCoverageAssignment, b: 
 }
 
 function describeAttendingCoverage(state: PlannerState, assignment: AttendingCoverageAssignment): string {
-  const attending = state.attendings.find((candidate) => candidate.id === assignment.attendingId)?.name ?? "attending";
+  const attending = assignment.attendingId
+    ? state.attendings.find((candidate) => candidate.id === assignment.attendingId)?.name
+    : state.residents.find((candidate) => candidate.id === assignment.fellowResidentId)?.name;
   const line = assignment.line === "ACS" && assignment.role === "primary" ? "ACS call" : assignment.line;
-  return `${line} ${assignment.shift} ${assignment.role} on ${assignment.date}: ${attending}`;
+  return `${line} ${assignment.shift} ${assignment.role} on ${assignment.date}: ${attending ?? "clinician"}`;
 }
 
 function requireCoverageRequest(state: PlannerState, id: string): CoverageChangeRequest {
@@ -2648,6 +3004,344 @@ function assertDate(value: unknown): string {
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readOptionalPositiveInteger(value: unknown): number | undefined {
+  const parsed = typeof value === "string" || typeof value === "number" ? Number(value) : Number.NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function readOptionalNonNegativeInteger(value: unknown): number | undefined {
+  const parsed = typeof value === "string" || typeof value === "number" ? Number(value) : Number.NaN;
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+type PendingWikiChange = Omit<WikiChangeEvent, "revision" | "changedAt" | "changedBy">;
+
+interface WikiSyncPlan {
+  baseRevision: number;
+  currentRevision: number;
+  articles: WikiArticle[];
+  sources: WikiSource[];
+  changes: PendingWikiChange[];
+  summary: { created: number; updated: number; deleted: number };
+  validation: ReturnType<typeof validateWikiKnowledgeBase>;
+}
+
+function buildWikiSyncPlan(state: PlannerState, body: unknown, user: SessionUser | undefined): WikiSyncPlan {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new HttpError(400, "Wiki sync payload must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const baseRevision = readOptionalNonNegativeInteger(input.baseRevision) ?? state.wikiRevision;
+  const articleInputs = readOptionalObjectArray(input.articles, "articles");
+  const sourceInputs = readOptionalObjectArray(input.sources, "sources");
+  const deleteArticles = readOptionalStringArray(input.deleteArticles, "deleteArticles").map(normalizeWikiSlug);
+  const deleteSources = readOptionalStringArray(input.deleteSources, "deleteSources");
+  let articles = [...state.wikiArticles];
+  let sources = [...state.wikiSources];
+  const changes: PendingWikiChange[] = [];
+
+  for (const sourceInput of sourceInputs) {
+    const requestedId = readOptionalString(sourceInput.id)?.toLowerCase().replace(/[^a-z0-9_-]/g, "-") ?? "";
+    const existing = sources.find((source) => source.id === requestedId);
+    const source = buildWikiSource(sourceInput, existing, user);
+    if (existing && wikiSourceMetadata(existing) === wikiSourceMetadata(source)) continue;
+    sources = existing
+      ? sources.map((candidate) => (candidate.id === existing.id ? source : candidate))
+      : [...sources, source];
+    changes.push({
+      entity: "source",
+      operation: existing ? "update" : "create",
+      key: source.id,
+      sourceId: source.id,
+      contentHash: source.contentHash
+    });
+  }
+
+  for (const sourceId of deleteSources) {
+    const existing = sources.find((source) => source.id === sourceId);
+    if (!existing) continue;
+    sources = sources.filter((source) => source.id !== sourceId);
+    changes.push({ entity: "source", operation: "delete", key: sourceId, sourceId });
+  }
+
+  for (const articleInput of articleInputs) {
+    const requestedSlug = normalizeWikiSlug(readOptionalString(articleInput.slug) ?? "");
+    const existing = articles.find((article) => article.slug === requestedSlug);
+    const article = buildWikiArticle(articleInput, existing, user);
+    if (existing && existing.contentHash === article.contentHash) continue;
+    articles = existing
+      ? articles.map((candidate) => (candidate.id === existing.id ? article : candidate))
+      : [...articles, article];
+    changes.push({
+      entity: "article",
+      operation: existing ? "update" : "create",
+      key: article.slug,
+      slug: article.slug,
+      articleRevision: article.revision,
+      contentHash: article.contentHash
+    });
+  }
+
+  for (const slug of deleteArticles) {
+    const existing = articles.find((article) => article.slug === slug);
+    if (!existing) continue;
+    articles = articles.filter((article) => article.id !== existing.id);
+    changes.push({
+      entity: "article",
+      operation: "delete",
+      key: slug,
+      slug,
+      articleRevision: existing.revision,
+      contentHash: existing.contentHash
+    });
+    articles = articles.map((article) => {
+      if (!article.links.includes(slug)) return article;
+      const updated = buildWikiArticle({ links: article.links.filter((link) => link !== slug) }, article, user);
+      changes.push({
+        entity: "article",
+        operation: "update",
+        key: updated.slug,
+        slug: updated.slug,
+        articleRevision: updated.revision,
+        contentHash: updated.contentHash
+      });
+      return updated;
+    });
+  }
+
+  articles = normalizeWikiArticles(articles);
+  sources = normalizeWikiSources(sources);
+  const validation = validateWikiKnowledgeBase(articles, sources);
+  return {
+    baseRevision,
+    currentRevision: state.wikiRevision,
+    articles,
+    sources,
+    changes,
+    summary: {
+      created: changes.filter((change) => change.operation === "create").length,
+      updated: changes.filter((change) => change.operation === "update").length,
+      deleted: changes.filter((change) => change.operation === "delete").length
+    },
+    validation
+  };
+}
+
+function applyWikiMutationMetadata(
+  state: PlannerState,
+  changes: PendingWikiChange[],
+  user: SessionUser | undefined
+): PlannerState {
+  if (!changes.length) return state;
+  const revision = state.wikiRevision + 1;
+  const changedAt = new Date().toISOString();
+  const changedBy = user?.displayName || user?.username;
+  return {
+    ...state,
+    wikiRevision: revision,
+    wikiChanges: [
+      ...state.wikiChanges,
+      ...changes.map<WikiChangeEvent>((change) => ({ ...change, revision, changedAt, changedBy }))
+    ].slice(-1_000)
+  };
+}
+
+function buildWikiSource(input: Record<string, unknown>, existing: WikiSource | undefined, user: SessionUser | undefined): WikiSource {
+  const now = new Date().toISOString();
+  const id = (readOptionalString(input.id) ?? existing?.id ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 120);
+  const title = readOptionalString(input.title) ?? existing?.title;
+  const sourceType = readOptionalString(input.sourceType) ?? existing?.sourceType ?? "document";
+  const capturedAt = readOptionalIsoTimestamp(input.capturedAt) ?? existing?.capturedAt ?? now;
+  const contentHash = (readOptionalString(input.contentHash) ?? existing?.contentHash ?? "").toLowerCase();
+  if (!id) throw new HttpError(400, "Wiki source id is required");
+  if (!title) throw new HttpError(400, "Wiki source title is required");
+  if (!(WIKI_SOURCE_TYPES as readonly string[]).includes(sourceType)) {
+    throw new HttpError(400, `Invalid wiki source type: ${sourceType}`);
+  }
+  if (!/^[a-f0-9]{64}$/.test(contentHash)) {
+    throw new HttpError(400, "Wiki source contentHash must be a SHA-256 hex digest");
+  }
+  const source = normalizeWikiSources([{
+    id,
+    title,
+    sourceType: sourceType as WikiSource["sourceType"],
+    author: "author" in input ? readOptionalString(input.author) : existing?.author,
+    origin: "origin" in input ? readOptionalString(input.origin) : existing?.origin,
+    capturedAt,
+    effectiveDate: "effectiveDate" in input ? readOptionalWikiDate(input.effectiveDate) : existing?.effectiveDate,
+    contentHash,
+    notes: "notes" in input ? readOptionalString(input.notes) : existing?.notes,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    updatedBy: user?.displayName || user?.username
+  }])[0];
+  if (!source) throw new HttpError(400, "Wiki source is invalid");
+  return source;
+}
+
+function wikiSourceMetadata(source: WikiSource): string {
+  return JSON.stringify({
+    id: source.id,
+    title: source.title,
+    sourceType: source.sourceType,
+    author: source.author,
+    origin: source.origin,
+    capturedAt: source.capturedAt,
+    effectiveDate: source.effectiveDate,
+    contentHash: source.contentHash,
+    notes: source.notes
+  });
+}
+
+function readOptionalObjectArray(value: unknown, field: string): Array<Record<string, unknown>> {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new HttpError(400, `${field} must be an array`);
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new HttpError(400, `${field}[${index}] must be an object`);
+    }
+    return item as Record<string, unknown>;
+  });
+}
+
+function readOptionalStringArray(value: unknown, field: string): string[] {
+  if (value === undefined) return [];
+  return readWikiStringList(value, field);
+}
+
+function readOptionalIsoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return undefined;
+  return new Date(value).toISOString();
+}
+
+function buildWikiArticle(input: unknown, existing: WikiArticle | undefined, user: SessionUser | undefined): WikiArticle {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new HttpError(400, "Wiki article must be an object");
+  }
+  const patch = input as Record<string, unknown>;
+  const now = new Date().toISOString();
+  const slug = normalizeWikiSlug(readOptionalString(patch.slug) ?? existing?.slug ?? "");
+  const title = readOptionalString(patch.title) ?? existing?.title;
+  const summary = readOptionalString(patch.summary) ?? existing?.summary;
+  const body = typeof patch.body === "string" ? patch.body.trim() : existing?.body;
+  const categoryValue = readOptionalString(patch.category) ?? existing?.category ?? "program";
+  if (!slug) throw new HttpError(400, "Wiki slug is required");
+  if (!title) throw new HttpError(400, "Wiki title is required");
+  if (!summary) throw new HttpError(400, "Wiki summary is required");
+  if (!body) throw new HttpError(400, "Wiki body is required");
+  if (!(WIKI_CATEGORIES as readonly string[]).includes(categoryValue)) {
+    throw new HttpError(400, `Invalid wiki category: ${categoryValue}`);
+  }
+  const aliases = "aliases" in patch ? readWikiStringList(patch.aliases, "aliases") : existing?.aliases ?? [];
+  const tags = "tags" in patch ? readWikiStringList(patch.tags, "tags") : existing?.tags ?? [];
+  const links = "links" in patch
+    ? readWikiStringList(patch.links, "links").map(normalizeWikiSlug).filter(Boolean)
+    : existing?.links ?? [];
+  const statusValue = readOptionalString(patch.status) ?? existing?.status ?? (categoryValue === "clinical-reference" ? "draft" : "published");
+  if (!(WIKI_STATUSES as readonly string[]).includes(statusValue)) {
+    throw new HttpError(400, `Invalid wiki status: ${statusValue}`);
+  }
+  const authorityValue = readOptionalString(patch.authority) ?? existing?.authority ?? defaultWikiAuthority(categoryValue as WikiArticle["category"]);
+  if (!(WIKI_AUTHORITIES as readonly string[]).includes(authorityValue)) {
+    throw new HttpError(400, `Invalid wiki authority: ${authorityValue}`);
+  }
+  const sourceRefs = "sourceRefs" in patch ? readWikiSourceReferences(patch.sourceRefs) : existing?.sourceRefs ?? [];
+  const owner = "owner" in patch ? readOptionalString(patch.owner) : existing?.owner;
+  const reviewedBy = "reviewedBy" in patch ? readOptionalString(patch.reviewedBy) : existing?.reviewedBy;
+  const reviewedAt = "reviewedAt" in patch ? readOptionalWikiDate(patch.reviewedAt) : existing?.reviewedAt;
+  const reviewDueAt = "reviewDueAt" in patch ? readOptionalWikiDate(patch.reviewDueAt) : existing?.reviewDueAt;
+  const supersedes = "supersedes" in patch
+    ? readWikiStringList(patch.supersedes, "supersedes").map(normalizeWikiSlug).filter(Boolean)
+    : existing?.supersedes ?? [];
+  if (
+    statusValue === "published" &&
+    (authorityValue === "institutional-policy" || authorityValue === "attending-preference" || authorityValue === "educational-template") &&
+    (!owner || !reviewedBy || !reviewedAt || !sourceRefs.length)
+  ) {
+    throw new HttpError(400, "Published clinical knowledge requires owner, reviewedBy, reviewedAt, and at least one source reference");
+  }
+  assertNoPhiWikiText([title, summary, body, ...aliases, ...tags].join("\n"));
+  const normalized = normalizeWikiArticles([{
+    id: existing?.id ?? createId("wiki"),
+    slug,
+    title,
+    summary,
+    body,
+    category: categoryValue as WikiArticle["category"],
+    aliases,
+    tags,
+    links,
+    status: statusValue as WikiStatus,
+    authority: authorityValue as WikiAuthority,
+    revision: existing?.revision ?? 1,
+    contentHash: existing?.contentHash ?? "",
+    sourceRefs,
+    owner,
+    reviewedBy,
+    reviewedAt,
+    reviewDueAt,
+    supersedes,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    updatedBy: user?.displayName || user?.username
+  }])[0];
+  if (!normalized) throw new HttpError(400, "Wiki article is invalid");
+  return {
+    ...normalized,
+    revision: existing && normalized.contentHash !== existing.contentHash ? existing.revision + 1 : existing?.revision ?? 1
+  };
+}
+
+function readWikiStringList(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) throw new HttpError(400, `${field} must be an array of strings`);
+  return value.map((item, index) => {
+    const text = readOptionalString(item);
+    if (!text) throw new HttpError(400, `${field}[${index}] must be a non-empty string`);
+    return text;
+  });
+}
+
+function readWikiSourceReferences(value: unknown): WikiSourceReference[] {
+  if (!Array.isArray(value)) throw new HttpError(400, "sourceRefs must be an array");
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new HttpError(400, `sourceRefs[${index}] must be an object`);
+    }
+    const input = item as Record<string, unknown>;
+    const sourceId = readOptionalString(input.sourceId);
+    if (!sourceId) throw new HttpError(400, `sourceRefs[${index}].sourceId is required`);
+    return {
+      sourceId,
+      locator: readOptionalString(input.locator),
+      supports: readOptionalString(input.supports)
+    };
+  });
+}
+
+function defaultWikiAuthority(category: WikiArticle["category"]): WikiAuthority {
+  if (category === "workflow") return "workflow";
+  if (category === "clinical-reference") return "institutional-policy";
+  return "program-reference";
+}
+
+function assertNoPhiWikiText(value: string): void {
+  const explicitPhiPatterns = [
+    /\b(?:patient name|mrn|medical record number)\s*[:#-]\s*[a-z0-9-]{3,}/i,
+    /\b(?:dob|date of birth)\s*[:#-]\s*\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})\b/i
+  ];
+  if (explicitPhiPatterns.some((pattern) => pattern.test(value))) {
+    throw new HttpError(400, "Wiki article appears to contain PHI; store only general institutional knowledge");
+  }
+}
+
+function readOptionalWikiDate(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !/^20\d{2}-\d{2}-\d{2}$/.test(value)) {
+    throw new HttpError(400, "reviewedAt must use YYYY-MM-DD format");
+  }
+  return value;
 }
 
 function readRequestedTemporaryPassword(body: unknown): string | undefined {
@@ -2855,11 +3549,22 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function filterStateForUser(state: PlannerState, user: SessionUser | undefined): PlannerState {
+function filterStateForUser(
+  state: PlannerState,
+  user: SessionUser | undefined,
+  options: { includeWikiSources?: boolean } = {}
+): PlannerState {
   if (!user || user.role === "admin") return state;
   const linkedResident = findResidentForUser(state, user);
+  const wikiArticles = state.wikiArticles.filter((article) => article.status === "published");
+  const visibleSourceIds = new Set(wikiArticles.flatMap((article) => article.sourceRefs.map((reference) => reference.sourceId)));
   return {
     ...state,
+    wikiArticles,
+    wikiSources: options.includeWikiSources
+      ? state.wikiSources.filter((source) => visibleSourceIds.has(source.id))
+      : [],
+    wikiChanges: [],
     coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest)),
     goldStarAwards: state.goldStarAwards.map((award) =>
       award.giverUsername === user.username || Boolean(linkedResident && award.giverResidentId === linkedResident.id)

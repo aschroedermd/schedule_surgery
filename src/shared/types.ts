@@ -14,6 +14,8 @@ export type TrainingLevel = "PGY1" | "PGY2" | "PGY3" | "PGY4" | "PGY5" | "Fellow
 
 export type ResidentRosterKind = "primary" | "off-service";
 
+export type ResidentDesignation = "resident" | "minimally-invasive-fellow";
+
 export type AssignmentKind = "case" | "block" | "clinic";
 
 export type AssignmentSource = "admin" | "suggestion" | "viewer-claim";
@@ -61,7 +63,7 @@ export const ATTENDING_COVERAGE_LINES = ["EGS", "Trauma", "SCC", "ACS", "Practic
 
 export type AttendingCoverageLine = (typeof ATTENDING_COVERAGE_LINES)[number];
 
-export type AttendingCoverageShift = "day" | "night" | "24h";
+export type AttendingCoverageShift = "day" | "night" | "24h" | "weekend";
 
 export type AttendingCoverageRole = "primary" | "backup";
 
@@ -73,7 +75,8 @@ export interface AttendingCoverageAssignment {
   line: AttendingCoverageLine;
   shift: AttendingCoverageShift;
   role: AttendingCoverageRole;
-  attendingId: string;
+  attendingId?: string;
+  fellowResidentId?: string;
   source: AttendingCoverageSource;
   externalId?: string;
   externalModifiedAt?: string;
@@ -124,6 +127,7 @@ export interface Resident {
   aliases?: string[];
   emoji?: string;
   trainingLevel: TrainingLevel;
+  designation?: ResidentDesignation;
   rosterKind?: ResidentRosterKind;
   sourceProgram?: string;
   sourceProgramAbbreviation?: string;
@@ -256,7 +260,101 @@ export interface GoldStarAward {
   updatedAt: string;
 }
 
-export type ActivityEventType = "login" | "assignment" | "calendar" | "account" | "resident" | "assistant";
+export type ActivityEventType = "login" | "assignment" | "calendar" | "account" | "resident" | "assistant" | "wiki";
+
+export const WIKI_CATEGORIES = [
+  "index",
+  "program",
+  "service",
+  "hospital",
+  "attending",
+  "workflow",
+  "clinical-reference"
+] as const;
+
+export type WikiCategory = (typeof WIKI_CATEGORIES)[number];
+
+export const WIKI_STATUSES = ["draft", "review", "published", "archived"] as const;
+export type WikiStatus = (typeof WIKI_STATUSES)[number];
+
+export const WIKI_AUTHORITIES = [
+  "program-reference",
+  "institutional-policy",
+  "attending-preference",
+  "workflow",
+  "educational-template"
+] as const;
+export type WikiAuthority = (typeof WIKI_AUTHORITIES)[number];
+
+export const WIKI_SOURCE_TYPES = [
+  "direct-review",
+  "interview",
+  "preference-card",
+  "policy",
+  "email",
+  "document",
+  "educational-note"
+] as const;
+export type WikiSourceType = (typeof WIKI_SOURCE_TYPES)[number];
+
+export interface WikiSourceReference {
+  sourceId: string;
+  locator?: string;
+  supports?: string;
+}
+
+export interface WikiSource {
+  id: string;
+  title: string;
+  sourceType: WikiSourceType;
+  author?: string;
+  origin?: string;
+  capturedAt: string;
+  effectiveDate?: string;
+  contentHash: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface WikiArticle {
+  id: string;
+  slug: string;
+  title: string;
+  summary: string;
+  body: string;
+  category: WikiCategory;
+  aliases: string[];
+  tags: string[];
+  links: string[];
+  status: WikiStatus;
+  authority: WikiAuthority;
+  revision: number;
+  contentHash: string;
+  sourceRefs: WikiSourceReference[];
+  owner?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewDueAt?: string;
+  supersedes?: string[];
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface WikiChangeEvent {
+  revision: number;
+  entity: "article" | "source";
+  operation: "create" | "update" | "delete";
+  key: string;
+  slug?: string;
+  sourceId?: string;
+  articleRevision?: number;
+  contentHash?: string;
+  changedAt: string;
+  changedBy?: string;
+}
 
 export interface ActivityEvent {
   id: string;
@@ -288,6 +386,10 @@ export interface PlannerState {
   qgendaSync: QgendaSyncStatus;
   coverageEntries: CoverageEntry[];
   coverageRequests: CoverageChangeRequest[];
+  wikiArticles: WikiArticle[];
+  wikiSources: WikiSource[];
+  wikiRevision: number;
+  wikiChanges: WikiChangeEvent[];
   goldStarAwards: GoldStarAward[];
   activityEvents: ActivityEvent[];
 }

@@ -143,10 +143,10 @@ describe("schedule assistant", () => {
     });
     expect(JSON.stringify(requests[0].messages)).toContain("Christian Blue");
     expect(JSON.stringify(requests[0].messages)).toContain("Current resident service context: Davies");
-    expect(JSON.stringify(requests[0].messages)).toContain("General Surgery call schedule");
+    expect(JSON.stringify(requests[0].messages)).toContain("Resident call is shared across General Surgery services");
     expect(JSON.stringify(requests[0].messages)).toContain("FAST_CALL_SCHEDULE");
     expect(JSON.stringify(requests[0].messages)).toContain("Dr. Harnois");
-    expect(JSON.stringify(requests[0].messages)).toContain("respond immediately from it without making a tool call");
+    expect(JSON.stringify(requests[0].messages)).toContain("Use fast context when sufficient");
 
     const toolMessage = (requests[1].messages as Array<{ role: string; content: string }>).find(
       (message) => message.role === "tool"
@@ -154,6 +154,13 @@ describe("schedule assistant", () => {
     expect(JSON.parse(toolMessage!.content)).toMatchObject({
       schedule: "General Surgery call",
       service_scope: "All General Surgery services",
+      resident_coverage_model: {
+        night_float: "Three-person resident team every Sunday-Thursday night",
+        friday: "Separate three-person resident team Friday night",
+        saturday: "Separate three-person resident team Saturday day and night",
+        sunday: "Separate three-person resident team Sunday day; night float returns Sunday night"
+      },
+      attending_coverage_model: "Separate schedule with one surgery attending each night; not a resident-style team",
       attending_filter: "Doctor Harnois",
       matching_shift_count: 2,
       shifts: [
@@ -412,6 +419,61 @@ describe("schedule assistant", () => {
     expect(requestPrompt).toContain("message=Swap weekend coverage");
   });
 
+  it("distinguishes resident teams from attending call and supplies the signed-in resident's teammates", async () => {
+    const state = createInitialState();
+    const currentResident = state.residents.find((resident) => resident.username === user.username)!;
+    const teammates = state.residents.filter((resident) => resident.id !== currentResident.id).slice(0, 2);
+    const createdAt = "2026-08-01T00:00:00.000Z";
+    state.coverageEntries.push(
+      {
+        id: "call_team_current",
+        date: "2026-09-04",
+        kind: "call",
+        residentId: currentResident.id,
+        callPosition: "senior",
+        note: "",
+        createdAt,
+        updatedAt: createdAt
+      },
+      {
+        id: "call_team_mid",
+        date: "2026-09-04",
+        kind: "call",
+        residentId: teammates[0].id,
+        callPosition: "mid-level",
+        note: "",
+        createdAt,
+        updatedAt: createdAt
+      },
+      {
+        id: "call_team_intern",
+        date: "2026-09-04",
+        kind: "call",
+        residentId: teammates[1].id,
+        callPosition: "intern",
+        note: "",
+        createdAt,
+        updatedAt: createdAt
+      }
+    );
+
+    const prompt = await captureSystemPrompt(
+      "Can you provide the names of all the residents that I'm on call with in September 2026?",
+      state
+    );
+
+    expect(prompt).toContain("Resident call and attending call are separate schedules");
+    expect(prompt).toContain("Night float covers 5 p.m. Sunday through Friday morning");
+    expect(prompt).toContain("Attending night call is one attending");
+    expect(prompt).toContain("Practice, Vascular, and Pediatrics belong on the Call tab");
+    expect(prompt).toContain('<FAST_MY_RESIDENT_CALL_TEAMS linked="true"');
+    expect(prompt).toContain("shift=Friday night resident call");
+    expect(prompt).toContain(`teammates=${teammates.map((resident) => resident.name).join(", ")}`);
+    expect(prompt).toContain("shift=night float (Sunday-Thursday night)");
+    expect(prompt).toContain("unique_teammates=");
+    for (const teammate of teammates) expect(prompt).toContain(teammate.name);
+  });
+
   it("uses word boundaries so callback, Casey, and office do not trigger fast schedule context", async () => {
     const prompt = await captureSystemPrompt("Can you callback Casey at the office?");
 
@@ -419,6 +481,61 @@ describe("schedule assistant", () => {
     expect(prompt).not.toContain("<FAST_CALL_SCHEDULE");
     expect(prompt).not.toContain("<FAST_CASE_SCHEDULE");
     expect(prompt).not.toContain("<FAST_ABSENCE_SCHEDULE");
+  });
+
+  it("teaches local coverage rules and injects linked wiki context", async () => {
+    const prompt = await captureSystemPrompt("Who could cover an uncovered FMH case after Saturday call?");
+
+    expect(prompt).toContain("Friday callers are post-call Saturday and Saturday callers are post-call Sunday");
+    expect(prompt).toContain("Davies, Fogel/Colorectal, Breast, Berry, or Endoscopy");
+    expect(prompt).toContain("Ferrara/EGS is busy");
+    expect(prompt).toContain("Omit endoscopy and FMH from general coverage-gap answers unless explicitly requested");
+    expect(prompt).toContain('<WIKI_ARTICLE slug="hospital-fmh"');
+    expect(prompt).toContain('<WIKI_ARTICLE slug="or-coverage"');
+  });
+
+  it("returns a validated single-choice interaction when the model asks a clarification", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      model: "deepseek/deepseek-v4-flash",
+      choices: [{
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "question_1",
+            type: "function",
+            function: {
+              name: "ask_user_question",
+              arguments: JSON.stringify({
+                prompt: "Which call schedule do you mean?",
+                options: [
+                  { id: "resident", label: "Resident call", description: "Three-person resident team" },
+                  { id: "attending", label: "Attending call", description: "Attending coverage" }
+                ]
+              })
+            }
+          }]
+        }
+      }]
+    })) as typeof fetch;
+
+    const answer = await answerScheduleQuestion(
+      [{ role: "user", content: "Who is on call?" }],
+      { state: createInitialState(), user, serviceLine: "Davies", now: new Date("2026-08-01T12:00:00Z") },
+      fetcher
+    );
+
+    expect(answer.message).toBe("Which call schedule do you mean?");
+    expect(answer.interaction).toEqual({
+      type: "single_choice",
+      prompt: "Which call schedule do you mean?",
+      options: [
+        { id: "resident", label: "Resident call", description: "Three-person resident team" },
+        { id: "attending", label: "Attending call", description: "Attending coverage" }
+      ]
+    });
+    expect(answer.lookups).toEqual([]);
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it("uses the Parakeet transcription endpoint payload", async () => {

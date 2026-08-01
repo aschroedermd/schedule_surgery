@@ -23,6 +23,8 @@ import {
 import { Fragment, FormEvent, KeyboardEvent, PointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 import {
   ChatConversationMessage,
+  ChatChoiceOption,
+  ChatInteraction,
   ChatModelSettings,
   ChatProvider,
   ChatLookup,
@@ -100,6 +102,8 @@ interface ChatUiMessage extends ChatConversationMessage {
   watching?: boolean;
   hasScheduleUpdates?: boolean;
   streaming?: boolean;
+  interaction?: ChatInteraction;
+  interactionAnswered?: boolean;
 }
 
 interface ScheduleCard {
@@ -436,6 +440,7 @@ export function ChatTab({
           dataUpdatedAt: response.dataUpdatedAt,
           stateVersion: response.stateVersion,
           lookups: response.lookups,
+          interaction: response.interaction,
           streaming: false
         };
         return assistantMessageId
@@ -487,6 +492,15 @@ export function ChatTab({
 
   function stopResponse() {
     responseAbortRef.current?.abort();
+  }
+
+  function answerInteraction(message: ChatUiMessage, option: ChatChoiceOption) {
+    if (isBusy || message.interactionAnswered) return;
+    const baseMessages = messages.map((candidate) =>
+      candidate.id === message.id ? { ...candidate, interactionAnswered: true } : candidate
+    );
+    setMessages(baseMessages);
+    void sendMessage(option.label, { baseMessages });
   }
 
   function toggleVoiceMode() {
@@ -900,6 +914,22 @@ export function ChatTab({
                     </button>
                   )}
                 </div>
+                {message.role === "assistant" && message.interaction && !message.streaming ? (
+                  <div className="chat-choice-panel" role="group" aria-label={message.interaction.prompt}>
+                    {message.interaction.options.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="chat-choice-button"
+                        disabled={isBusy || message.interactionAnswered}
+                        onClick={() => answerInteraction(message, option)}
+                      >
+                        <strong>{option.label}</strong>
+                        {option.description ? <span>{option.description}</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 {message.role === "assistant" && message.lookups?.length ? (
                   <ScheduleCards
                     message={message}

@@ -1,4 +1,12 @@
-import { ATTENDING_COVERAGE_LINES, CALL_POSITIONS, SERVICE_LINES } from "../shared/types";
+import {
+  ATTENDING_COVERAGE_LINES,
+  CALL_POSITIONS,
+  SERVICE_LINES,
+  WIKI_AUTHORITIES,
+  WIKI_CATEGORIES,
+  WIKI_SOURCE_TYPES,
+  WIKI_STATUSES
+} from "../shared/types";
 
 export function getOpenApiDocument() {
   return {
@@ -152,6 +160,132 @@ export function getOpenApiDocument() {
             updatedAt: { type: ["string", "null"], format: "date-time" }
           }
         },
+        WikiArticle: {
+          type: "object",
+          required: [
+            "id",
+            "slug",
+            "title",
+            "summary",
+            "body",
+            "category",
+            "aliases",
+            "tags",
+            "links",
+            "status",
+            "authority",
+            "revision",
+            "contentHash",
+            "sourceRefs",
+            "createdAt",
+            "updatedAt"
+          ],
+          properties: {
+            id: { type: "string", readOnly: true },
+            slug: { type: "string", pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+            title: { type: "string", maxLength: 120 },
+            summary: { type: "string", maxLength: 500 },
+            body: { type: "string", maxLength: 20000 },
+            category: { type: "string", enum: WIKI_CATEGORIES },
+            aliases: { type: "array", items: { type: "string" } },
+            tags: { type: "array", items: { type: "string" } },
+            links: {
+              type: "array",
+              items: { type: "string" },
+              description: "Outbound links expressed as wiki article slugs. Links may target articles created later."
+            },
+            status: { type: "string", enum: WIKI_STATUSES },
+            authority: { type: "string", enum: WIKI_AUTHORITIES },
+            revision: { type: "integer", minimum: 1, readOnly: true },
+            contentHash: { type: "string", readOnly: true },
+            sourceRefs: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["sourceId"],
+                properties: {
+                  sourceId: { type: "string" },
+                  locator: { type: "string" },
+                  supports: { type: "string" }
+                }
+              }
+            },
+            owner: { type: "string", description: "Responsible local person, role, or group for review." },
+            reviewedBy: { type: "string" },
+            reviewedAt: { type: "string", format: "date" },
+            reviewDueAt: { type: "string", format: "date" },
+            supersedes: { type: "array", items: { type: "string" } },
+            createdAt: { type: "string", format: "date-time", readOnly: true },
+            updatedAt: { type: "string", format: "date-time", readOnly: true },
+            updatedBy: { type: "string", readOnly: true }
+          }
+        },
+        WikiArticleInput: {
+          type: "object",
+          required: ["slug", "title", "summary", "body", "category"],
+          properties: {
+            slug: { type: "string" },
+            title: { type: "string" },
+            summary: { type: "string" },
+            body: { type: "string" },
+            category: { type: "string", enum: WIKI_CATEGORIES },
+            aliases: { type: "array", items: { type: "string" } },
+            tags: { type: "array", items: { type: "string" } },
+            links: { type: "array", items: { type: "string" } },
+            status: { type: "string", enum: WIKI_STATUSES },
+            authority: { type: "string", enum: WIKI_AUTHORITIES },
+            sourceRefs: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["sourceId"],
+                properties: {
+                  sourceId: { type: "string" },
+                  locator: { type: "string" },
+                  supports: { type: "string" }
+                }
+              }
+            },
+            owner: { type: "string" },
+            reviewedBy: { type: "string" },
+            reviewedAt: { type: "string", format: "date" },
+            reviewDueAt: { type: "string", format: "date" },
+            supersedes: { type: "array", items: { type: "string" } }
+          }
+        },
+        WikiSource: {
+          type: "object",
+          required: ["id", "title", "sourceType", "capturedAt", "contentHash"],
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+            sourceType: { type: "string", enum: WIKI_SOURCE_TYPES },
+            author: { type: "string" },
+            origin: { type: "string" },
+            capturedAt: { type: "string", format: "date-time" },
+            effectiveDate: { type: "string", format: "date" },
+            contentHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+            notes: { type: "string" },
+            createdAt: { type: "string", format: "date-time", readOnly: true },
+            updatedAt: { type: "string", format: "date-time", readOnly: true },
+            updatedBy: { type: "string", readOnly: true }
+          }
+        },
+        WikiSyncInput: {
+          type: "object",
+          required: ["baseRevision"],
+          properties: {
+            baseRevision: {
+              type: "integer",
+              minimum: 0,
+              description: "Wiki revision from the most recent export or pull. A stale value is rejected."
+            },
+            articles: { type: "array", items: { $ref: "#/components/schemas/WikiArticleInput" } },
+            sources: { type: "array", items: { $ref: "#/components/schemas/WikiSource" } },
+            deleteArticles: { type: "array", items: { type: "string" } },
+            deleteSources: { type: "array", items: { type: "string" } }
+          }
+        },
         ErrorResponse: {
           type: "object",
           properties: {
@@ -220,7 +354,7 @@ export function getOpenApiDocument() {
         },
         AttendingCoverageInput: {
           type: "object",
-          required: ["date", "line", "shift", "role", "attendingId"],
+          required: ["date", "line", "shift", "role"],
           properties: {
             date: { type: "string", format: "date" },
             line: {
@@ -228,9 +362,17 @@ export function getOpenApiDocument() {
               enum: [...ATTENDING_COVERAGE_LINES],
               description: "Use ACS for the shared EGS/Trauma/SCC primary night assignment."
             },
-            shift: { type: "string", enum: ["day", "night", "24h"] },
+            shift: {
+              type: "string",
+              enum: ["day", "night", "24h", "weekend"],
+              description: "Use weekend for Practice call running Friday 5 PM through Monday 6 AM; date must be Friday."
+            },
             role: { type: "string", enum: ["primary", "backup"] },
-            attendingId: { type: "string" },
+            attendingId: { type: "string", description: "Exactly one of attendingId or fellowResidentId is required." },
+            fellowResidentId: {
+              type: "string",
+              description: "A resident profile designated minimally-invasive-fellow; valid only for primary Practice weekend call."
+            },
             note: { type: "string", description: "Optional no-PHI scheduling note." }
           }
         },
@@ -331,6 +473,142 @@ export function getOpenApiDocument() {
           responses: {
             "200": { description: "Current role and auth type" },
             "401": { description: "Unauthorized" }
+          }
+        }
+      },
+      "/api/wiki": {
+        get: {
+          summary: "List or search residency wiki articles",
+          description: "Available to all authenticated users. Returns article summaries; pass query for lexical local-knowledge search.",
+          parameters: [
+            { name: "query", in: "query", required: false, schema: { type: "string" } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 8 } },
+            {
+              name: "includeUnpublished",
+              in: "query",
+              required: false,
+              description: "Admin-only switch for draft, review, and archived articles.",
+              schema: { type: "boolean", default: false }
+            }
+          ],
+          responses: { "200": { description: "Matching wiki article summaries" } }
+        },
+        post: {
+          summary: "Create a residency wiki article",
+          description: "Requires an admin browser session or the admin X-API-Key. Wiki text must remain no-PHI.",
+          parameters: [{ $ref: "#/components/parameters/StateVersionHeader" }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/WikiArticleInput" } } }
+          },
+          responses: {
+            "201": { description: "Created article" },
+            "403": { description: "Admin access required" },
+            "409": { description: "Duplicate slug or stale state version" }
+          }
+        }
+      },
+      "/api/wiki/export": {
+        get: {
+          summary: "Export the complete versioned wiki",
+          description: "Admin-only endpoint for local backup and authoring workspace synchronization.",
+          responses: {
+            "200": { description: "Wiki revision, articles, source records, and export timestamp" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/wiki/changes": {
+        get: {
+          summary: "Read the wiki change feed",
+          description: "Admin-only incremental change feed. Use export when the requested revision predates retained events.",
+          parameters: [
+            { name: "after", in: "query", required: false, schema: { type: "integer", minimum: 0, default: 0 } }
+          ],
+          responses: {
+            "200": { description: "Current revision, article/source change events, and whether a full export is required" }
+          }
+        }
+      },
+      "/api/wiki/sources": {
+        get: {
+          summary: "List wiki provenance records",
+          description: "Admin-only source metadata. Raw source documents remain in the private local workspace.",
+          responses: {
+            "200": { description: "Wiki source records and current wiki revision" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/wiki/sync/preview": {
+        post: {
+          summary: "Validate and preview a wiki synchronization",
+          description: "Admin-only, read-only semantic preview. No server state is changed.",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/WikiSyncInput" } } }
+          },
+          responses: {
+            "200": { description: "Create/update/delete counts and knowledge-base validation results" },
+            "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/wiki/sync/apply": {
+        post: {
+          summary: "Transactionally apply a wiki synchronization",
+          description: "Admin-only. Rejects stale base revisions and invalid provenance or publication metadata.",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/WikiSyncInput" } } }
+          },
+          responses: {
+            "200": { description: "Applied wiki revision and change summary" },
+            "400": { description: "Knowledge-base validation failed" },
+            "403": { description: "Admin access required" },
+            "409": { description: "Wiki base revision is stale" }
+          }
+        }
+      },
+      "/api/wiki/{slug}": {
+        get: {
+          summary: "Read one linked residency wiki article",
+          parameters: [{ name: "slug", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Article, outbound linked summaries, and backlinks" },
+            "404": { description: "Article not found" }
+          }
+        },
+        patch: {
+          summary: "Update a residency wiki article",
+          description: "Requires an admin browser session or the admin X-API-Key. Renaming a slug updates inbound links.",
+          parameters: [
+            { name: "slug", in: "path", required: true, schema: { type: "string" } },
+            { $ref: "#/components/parameters/StateVersionHeader" }
+          ],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/WikiArticleInput" } } }
+          },
+          responses: {
+            "200": { description: "Updated article" },
+            "403": { description: "Admin access required" },
+            "404": { description: "Article not found" },
+            "409": { description: "Duplicate slug or stale state version" }
+          }
+        },
+        delete: {
+          summary: "Delete a residency wiki article",
+          description: "Requires an admin browser session or the admin X-API-Key. Removes inbound links to the deleted article.",
+          parameters: [
+            { name: "slug", in: "path", required: true, schema: { type: "string" } },
+            { $ref: "#/components/parameters/StateVersionHeader" }
+          ],
+          responses: {
+            "200": { description: "Deleted article slug" },
+            "403": { description: "Admin access required" },
+            "404": { description: "Article not found" },
+            "409": { description: "Stale state version" }
           }
         }
       },
@@ -838,7 +1116,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create an attending coverage assignment",
           description:
-            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice, Vascular, and Pediatrics are supported here without adding entries to the rounding calendar.",
+            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice weekend call uses a Friday date and shift=weekend for the Friday 5 PM through Monday 6 AM span. A minimally invasive fellow may be assigned through fellowResidentId only to that Practice slot.",
           requestBody: {
             required: true,
             content: {

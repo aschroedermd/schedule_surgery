@@ -85,9 +85,9 @@ describe("client API requests", () => {
         return new Response(new Uint8Array([73, 68, 51]), {
           headers: {
             "content-type": "audio/mpeg",
-            "x-voice-used": "3",
+            "x-voice-used": "5",
             "x-voice-remaining": "0",
-            "x-voice-limit": "3",
+            "x-voice-limit": "5",
             "x-voice-unlimited": "false"
           }
         });
@@ -97,6 +97,6 @@ describe("client API requests", () => {
     const result = await synthesizeChatSpeech("token", "You are on call Saturday.", 1);
 
     expect(result.audio.type).toBe("audio/mpeg");
-    expect(result.quota).toEqual({ used: 3, remaining: 0, limit: 3, unlimited: false });
+    expect(result.quota).toEqual({ used: 5, remaining: 0, limit: 5, unlimited: false });
   });
 });

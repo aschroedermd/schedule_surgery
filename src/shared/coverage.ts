@@ -21,6 +21,18 @@ export function isWeekendCoverageRequired(date: string): boolean {
   return isRoundingDate(date);
 }
 
+export function isMinimallyInvasiveFellow(resident: Pick<Resident, "designation">): boolean {
+  return resident.designation === "minimally-invasive-fellow";
+}
+
+export function isResidentCallEligible(resident: Pick<Resident, "designation" | "trainingLevel">): boolean {
+  return resident.trainingLevel !== "Medical Student" && !isMinimallyInvasiveFellow(resident);
+}
+
+export function isPracticeWeekendStart(date: string): boolean {
+  return parseLocalDate(date).getDay() === 5;
+}
+
 export function isCoverageKindAllowedOnDate(kind: CoverageKind, date: string): boolean {
   if (kind === "call" || kind === "attending-call") return isCallDate(date);
   if (kind === "rounding") return isRoundingDate(date);

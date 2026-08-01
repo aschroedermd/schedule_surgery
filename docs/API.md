@@ -50,7 +50,7 @@ For `POST /api/users` and `POST /api/users/bulk`, use `accountType: "user"`, `ac
 
 Admins can read and partially update the assistant's persisted AI settings with `GET/PATCH /api/admin/chat-settings`. Supported fields are `chatProvider` (`openai` or `openrouter`), `primaryModel`, ordered `fallbackModels`, `transcriptionModel`, `voiceModel`, `voiceName`, `elevenLabsModel`, and `elevenLabsVoiceIds`; provider API keys remain environment-only. Changing `chatProvider` without model fields resets the text models to that provider's defaults.
 
-Spoken assistant output uses `GET /api/chat/voice/quota` for the signed-in user's allowance and `POST /api/chat/speech` with `{ "input": "final assistant text", "voicePreset": 1 }` to return an MP3. Presets 1–3 use the configured ElevenLabs model and ordered voice ids; preset 4 uses the configured OpenRouter model and voice. Regular users receive three spoken responses per Eastern-time day; admins are unlimited. See the [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert), [Fish Audio S2.1 Pro page](https://fish.audio/blog/s2-1-pro-free-api/), and [OpenRouter TTS guide](https://openrouter.ai/docs/guides/overview/multimodal/tts).
+Spoken assistant output uses `GET /api/chat/voice/quota` for the signed-in user's allowance and `POST /api/chat/speech` with `{ "input": "final assistant text", "voicePreset": 1 }` to return an MP3. Presets 1–3 use the configured ElevenLabs model and ordered voice ids; preset 4 uses the configured OpenRouter model and voice. Users receive five spoken responses per Eastern-time day. Admins and the comma-separated usernames in `UNLIMITED_VOICE_USERNAMES` are unlimited; the allowlist changes only spoken-response quota. See the [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert), [Fish Audio S2.1 Pro page](https://fish.audio/blog/s2-1-pro-free-api/), and [OpenRouter TTS guide](https://openrouter.ai/docs/guides/overview/multimodal/tts).
 
 Create a regular user with the admin API key:
 
@@ -95,6 +95,55 @@ Human landing page:
 GET /api/docs
 ```
 
+## Residency Wiki
+
+The server stores a linked, revisioned institutional wiki in `state.wikiArticles`. Authenticated users may search and read published articles. Draft, review, and archived content is admin-only. Only an admin browser session or `ADMIN_API_KEY` may write knowledge or provenance records:
+
+```text
+GET    /api/wiki
+GET    /api/wiki?query=FMH+coverage
+GET    /api/wiki?includeUnpublished=true       # admin only
+GET    /api/wiki/:slug
+POST   /api/wiki
+PATCH  /api/wiki/:slug
+DELETE /api/wiki/:slug
+
+GET    /api/wiki/export                        # admin only
+GET    /api/wiki/changes?after=<wikiRevision>  # admin only
+GET    /api/wiki/sources                       # admin only
+POST   /api/wiki/sync/preview                  # admin only, no write
+POST   /api/wiki/sync/apply                    # admin only, transactional
+```
+
+Articles have a stable `slug`, title, concise summary, body, category, aliases, tags, and outbound `links` containing other article slugs. They also carry `status`, `authority`, an article `revision`, a semantic `contentHash`, and `sourceRefs`. A single-article read returns resolved outbound links and backlinks so tools can traverse the knowledge graph without loading the entire wiki. Renaming a slug updates inbound links; deleting an article removes them.
+
+Use one of these authorities: `program-reference`, `institutional-policy`, `attending-preference`, `workflow`, or `educational-template`. Published clinical knowledge requires `owner`, `reviewedBy`, `reviewedAt`, and at least one source reference; `reviewDueAt` is recommended. Source records retain source type, author/origin, effective date, capture time, and a SHA-256 hash. Raw source documents stay in the private local workspace and are not returned by the server.
+
+Ordinary single-article writes use the planner's optional `X-State-Version` optimistic-concurrency header. Bulk sync uses the independent `wikiRevision`: export or pull the current revision, send it as `baseRevision` to preview/apply, and pull again if the server returns `409`. The apply endpoint validates the entire knowledge graph and commits all article/source changes as one state update.
+
+Example:
+
+```bash
+curl -X POST https://your-domain.example/api/wiki \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "slug":"workflow-example",
+    "title":"Example Workflow",
+    "summary":"Locally verified steps for an example workflow.",
+    "body":"Add concise verified steps here.",
+    "category":"workflow",
+    "status":"draft",
+    "authority":"workflow",
+    "aliases":["example task"],
+    "tags":["workflow"],
+    "links":["workflows"],
+    "owner":"Residency program"
+  }'
+```
+
+The local authoring CLI implements source ingestion, review gates, semantic diff, conflict detection, and sync. See [WIKI_INGESTION.md](WIKI_INGESTION.md).
+
 ## Core Read Endpoints
 
 ```text
@@ -122,7 +171,7 @@ GET /api/events?token=<browser bearer token>
 
 `/api/residents/:residentId/calendar.ics` returns a resident-specific ICS feed containing OR, clinic, call, rounding, off, and note entries. Admins can export any resident; non-admin browser users can export only the resident linked by `residents[].username`. Residents also support editable `aliases` for alternate display names.
 
-The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one OR `service` plus optional `coverageLines`, `email`, aliases, and `qgendaStaffId`; residents have editable `serviceTags` plus a dated `rotationSchedule`. An attending login account links to one of these records through `attendingId`. Off-service residents can also carry `rosterKind: "off-service"`, `sourceProgram`, `sourceProgramAbbreviation` such as `EM` or `Pl Sx`, and `accountEligible: false` when they should be manually selectable without seeded login accounts.
+The app supports service lines `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`. Use the optional `service` query parameter for schedule, warning, uncovered-message, and suggestion endpoints to match the browser's selected service-line view. Attendings have one OR `service` plus optional `coverageLines`, `email`, aliases, and `qgendaStaffId`; residents have editable `serviceTags` plus a dated `rotationSchedule`. An attending login account links to one of these records through `attendingId`. Off-service residents can also carry `rosterKind: "off-service"`, `sourceProgram`, `sourceProgramAbbreviation` such as `EM` or `Pl Sx`, and `accountEligible: false` when they should be manually selectable without seeded login accounts. A case-covering minimally invasive fellow uses `designation: "minimally-invasive-fellow"`; normalization fixes that profile to `trainingLevel: "Fellow"`, Davies service for the full year, and excludes it from resident call while retaining OR/clinic assignment behavior.
 
 Calendar call entries are shared across all services. Surgery call uses `kind: "call"` with one `residentId` from `state.residents` for each `callPosition`: `senior`, `mid-level`, and `intern`. The one SCC/ICU resident is an additional call entry with `note: "SCC"` or `note: "ICU"` and no `callPosition`. Call `note` must otherwise be blank; do not store role labels, source text, or pasted names there.
 
@@ -130,7 +179,7 @@ Legacy `kind: "attending-call"` entries are migrated into the dedicated attendin
 
 ## Attending Coverage And QGenda
 
-`state.attendingCoverageAssignments` is the canonical attending call roster. Its coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`; roles are `primary` or `backup`; shifts are `day`, `night`, or `24h`. The EGS Night, Trauma Night, and SCC Night tasks are represented once as primary `ACS` night call. Practice, Vascular, and Pediatrics coverage is available on the Call tab and to the schedule assistant, but is intentionally excluded from the rounding calendar.
+`state.attendingCoverageAssignments` is the canonical attending call roster. Its coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`; roles are `primary` or `backup`; shifts are `day`, `night`, `24h`, or `weekend`. The EGS Night, Trauma Night, and SCC Night tasks are represented once as primary `ACS` night call. Practice, Vascular, and Pediatrics coverage is available on the Call tab and to the schedule assistant, but is intentionally excluded from the rounding calendar. `weekend` is a single Practice call span anchored on Friday and running from Friday 5 PM through Monday 6 AM.
 
 ```text
 POST   /api/attending-coverage
@@ -139,23 +188,23 @@ DELETE /api/attending-coverage/:id
 POST   /api/integrations/qgenda/sync
 ```
 
-Create a practice-call assignment with an admin API key:
+Create a practice-call assignment for the minimally invasive fellow with an admin API key:
 
 ```bash
 curl -X POST https://your-domain.example/api/attending-coverage \
   -H "X-API-Key: $ADMIN_API_KEY" \
   -H "content-type: application/json" \
   -d '{
-    "date":"2026-08-03",
+    "date":"2026-08-07",
     "line":"Practice",
-    "shift":"24h",
+    "shift":"weekend",
     "role":"primary",
-    "attendingId":"att_9f4a9822",
+    "fellowResidentId":"res_mi_fellow",
     "note":""
   }'
 ```
 
-API-key entries receive `source: "api"`; entries created in the admin UI receive `source: "manual"`. A date/line/shift/role slot may only be assigned once. QGenda-owned entries cannot be patched or deleted locally because the next sync would replace them; make those changes in QGenda and sync again.
+API-key entries receive `source: "api"`; entries created in the admin UI receive `source: "manual"`. Send exactly one of `attendingId` or `fellowResidentId`. The latter must reference a minimally invasive fellow and is accepted only for primary Practice `weekend` coverage on a Friday. A date/line/shift/role slot may only be assigned once. QGenda-owned entries cannot be patched or deleted locally because the next sync would replace them; make those changes in QGenda and sync again.
 
 The server reads the configured published QGenda schedule daily around 03:00 in `QGENDA_SYNC_TIME_ZONE` (default `America/New_York`). The supplied schedule's EGS Day, Trauma Day, SCC Day, EGS/Trauma/SCC Night, Backup Day, and Backup Night tasks are normalized into this collection. Each import is transactional: an invalid or inconsistent ACS-night triplet leaves the prior assignments unchanged and records the failed sync status in `state.qgendaSync`.
 

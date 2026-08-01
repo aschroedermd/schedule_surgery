@@ -5246,3 +5246,41 @@ h2 {
     font-weight: 800;
   }
 }
+.chat-choice-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.chat-choice-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-width: 7rem;
+  max-width: 18rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border-color, #cbd5df);
+  border-radius: 0.75rem;
+  background: var(--panel-bg, #fff);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-choice-button:hover:not(:disabled) {
+  border-color: #2f776a;
+  background: #f1f8f6;
+}
+
+.chat-choice-button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.chat-choice-button span {
+  color: #607080;
+  font-size: 0.78rem;
+  line-height: 1.3;
+}

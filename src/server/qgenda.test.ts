@@ -39,7 +39,7 @@ describe("QGenda published schedule merge", () => {
         id: "manual_practice",
         date: "2026-07-10",
         line: "Practice",
-        shift: "24h",
+        shift: "weekend",
         role: "primary",
         attendingId: "att_chen",
         source: "manual",

@@ -29,6 +29,7 @@ import {
   getResidentColor,
   hasServiceRoundingCoverage,
   isCallDate,
+  isResidentCallEligible,
   isRoundingDate,
   isWeekendCoverageRequired
 } from "../shared/coverage";
@@ -598,7 +599,9 @@ function CoverageSlotSelect({
           (residentOption) =>
             residentOption.id === entry?.residentId || isResidentAvailableForWork(state, residentOption, date)
         )
-      : visibleResidents;
+      : visibleResidents.filter(
+          (residentOption) => residentOption.id === entry?.residentId || isResidentCallEligible(residentOption)
+        );
   const style = resident
     ? ({
         "--resident-color": getResidentColor(resident)
@@ -620,7 +623,11 @@ function CoverageSlotSelect({
   const tradeResidentOptions = useMemo(
     () =>
       state.residents
-        .filter((residentOption) => residentOption.id !== currentResident?.id)
+        .filter(
+          (residentOption) =>
+            residentOption.id !== currentResident?.id &&
+            (kind !== "call" || isResidentCallEligible(residentOption))
+        )
         .sort((a, b) => {
           const serviceDelta =
             Number(isResidentOnService(b, selectedService, date)) -
@@ -628,7 +635,7 @@ function CoverageSlotSelect({
           if (serviceDelta !== 0) return serviceDelta;
           return a.name.localeCompare(b.name);
         }),
-    [currentResident?.id, date, selectedService, state.residents]
+    [currentResident?.id, date, kind, selectedService, state.residents]
   );
   const swapEntryOptions = useMemo(
     () =>

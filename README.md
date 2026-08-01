@@ -33,15 +33,17 @@ DATABASE_URL=memory npm run dev
 
 - Username/password browser logins. Seeded account-eligible residents use first-initial-plus-last-name usernames such as `aadeleke`; off-service rotators from outside programs remain assignable-only unless `accountEligible` is enabled. Set `SEED_USER_PASSWORD` privately if those accounts should be login-ready.
 - The signed-in landing page is a schedule assistant powered by the OpenAI Responses API by default. It uses `gpt-5.6-luna`, with `gpt-5.6-terra` as its automatic fallback. Admins can change the text provider and model ids for all users in the chatbot settings panel or through `/api/admin/chat-settings`; OpenRouter remains available as an alternate text provider. The assistant can read OR/clinic, call, calendar, and vacation context through permission-aware tools. Each user has 20 requests per Eastern-time day and receives a warning at five remaining.
+- The assistant has a server-persisted, API-editable residency wiki with linked articles for program rules, services, hospitals, attendings, workflows, and reviewed clinical references. It injects a small relevant wiki context when possible and can search/read linked pages when more detail is needed. Structured clarification and confirmation questions render as response buttons in chat.
+- A private, nested Git wiki workspace can pull the server knowledge base, ingest PDF/DOCX/text sources into agent-generated drafts, preserve source hashes and review metadata, validate links and publication requirements, and transactionally sync approved changes back through the admin API.
 - Hold-to-record voice messages are transcribed server-side with `nvidia/parakeet-tdt-0.6b-v3`; set `OPENROUTER_API_KEY` privately before starting the app.
-- The assistant's muted speaker control enables concise spoken-response mode with four voice buttons. Voices 1–3 use ElevenLabs (`kSvMZug5ZFM9sKGpLAei`/James by default, then `dWAnId3mzfl4fTszwtOG` and `0rEo3eAjssGDUCXHYENf`); voice 4 uses OpenRouter with Fish Audio. Set `ELEVENLABS_API_KEY` privately, and use the admin chat-settings API to change either provider's model or voice ids. Regular users receive three spoken responses per Eastern-time day; admins have unlimited chat, transcription, and speech use. See the [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert), [Fish Audio S2.1 Pro](https://fish.audio/blog/s2-1-pro-free-api/), and [OpenRouter Fish Audio model page](https://openrouter.ai/fish-audio/s2.1-pro-free:free).
+- The assistant's muted speaker control enables concise spoken-response mode with four voice buttons. Voices 1–3 use ElevenLabs (`kSvMZug5ZFM9sKGpLAei`/James by default, then `dWAnId3mzfl4fTszwtOG` and `0rEo3eAjssGDUCXHYENf`); voice 4 uses OpenRouter with Fish Audio. Set `ELEVENLABS_API_KEY` privately, and use the admin chat-settings API to change either provider's model or voice ids. Users receive five spoken responses per Eastern-time day. Admins and usernames listed in `UNLIMITED_VOICE_USERNAMES` have unlimited spoken responses; the allowlist does not grant additional planner privileges. See the [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert), [Fish Audio S2.1 Pro](https://fish.audio/blog/s2-1-pro-free-api/), and [OpenRouter Fish Audio model page](https://openrouter.ai/fish-audio/s2.1-pro-free:free).
 - No `guest` account is seeded. `admin` starts with the private `ADMIN_PASSWORD` configured when the user store is first created.
 - Admins get a Users tab for single or bulk user creation, deleting users, generating temporary reset passwords, linking attending accounts to roster records, and granting per-service `view`, `request`, or `edit` privileges. The `ADMIN_API_KEY` can also create new accounts and generate or set a temporary reset password.
 - New accounts can use view/request/edit presets, custom service privileges, or copied privileges from an existing user. If neither `password` nor `temporaryPassword` is supplied, the temporary password is `schroeder1`; it is shown once and opens the password-change screen on every login until the user chooses a new password. Users can select `Skip for now` to continue in the current session; a fresh login shows the screen again.
 - Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` instead of plaintext, so current passwords are not viewable; admin resets and generated new-user passwords are temporary and shown once.
 - Weekly Monday-Friday board with OR blocks, turnover-aware sequential case timing, clinic sessions, warnings, and activity feed.
 - Monthly rounding calendar with resident colors, shared Friday-Sunday call-team summaries, service-specific Saturday-Sunday rounders, weekday off/note entries, and red weekend blocks when the visible service has neither an on-service call resident nor an assigned rounder.
-- Dedicated attending coverage on the Call tab for EGS, Trauma, SCC, consolidated ACS night call, day/night backup, Practice, Vascular, and Pediatrics. Practice/Vascular/Pediatrics stay out of the rounding calendar but remain available to the schedule assistant.
+- Dedicated attending coverage on the Call tab for EGS, Trauma, SCC, consolidated ACS night call, day/night backup, Practice, Vascular, and Pediatrics. Practice includes a Friday 5 PM–Monday 6 AM weekend shift that can be covered by a designated minimally invasive fellow; that fellow covers cases like a resident but stays out of the resident call pool.
 - QGenda published-schedule synchronization on every server startup and daily around 03:00 Eastern, with an admin **Sync now** action, persisted success/failure status, transactional ACS-night validation, and manual/API coverage endpoints.
 - Request-privileged calendar edits are submitted as requests; users with edit privilege for that service can approve or deny them from the Requests tab.
 - Manual setup for hospitals, attendings, residents/fellows, off-service rotators, resident block rotations, unavailable time, case defaults, OR blocks, cases, and clinic sessions.
@@ -66,9 +68,22 @@ npm audit
 
 The app is designed for no-PHI scheduling metadata only. Do not enter patient names, MRNs, DOBs, or patient identifiers into procedure labels or notes.
 
+## Wiki Authoring
+
+```bash
+npm run wiki -- init --server https://your-domain.example
+npm run wiki -- pull
+npm run wiki -- ingest ./path/to/reviewed-source.docx --source-type direct-review --author "Reviewer name"
+npm run wiki -- validate
+npm run wiki -- diff
+```
+
+Agent-generated material remains draft until explicitly reviewed and published. See [docs/WIKI_INGESTION.md](docs/WIKI_INGESTION.md) for the complete ingestion, provenance, review, synchronization, and private-backup workflow.
+
 ## Deployment And API
 
 - DigitalOcean deployment guide: [docs/DEPLOY_DIGITALOCEAN.md](docs/DEPLOY_DIGITALOCEAN.md)
 - API/MCP guide: [docs/API.md](docs/API.md)
+- Private wiki ingestion and synchronization: [docs/WIKI_INGESTION.md](docs/WIKI_INGESTION.md)
 - OpenAPI is served at `/api/openapi.json` when the app is running.
 - Configure the QGenda poller with `QGENDA_SYNC_ENABLED`, `QGENDA_PUBLIC_LINK_URL`, and the optional sync-window/time-zone variables documented in [docs/API.md](docs/API.md#attending-coverage-and-qgenda).

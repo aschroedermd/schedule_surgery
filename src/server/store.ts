@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { buildResidentUsername, isPlaceholderResidentUsername } from "../shared/id";
 import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
+import { ROTATION_BLOCK_DATES } from "../shared/rotations";
 import {
   ATTENDING_COVERAGE_LINES,
   ActivityEvent,
@@ -15,6 +16,7 @@ import {
 } from "../shared/types";
 import { createInitialState, createSeedCoverageEntries } from "./sampleData";
 import { createRotationResidents, getRotationResidentMatchNames, getSeedMigrationBlockNumbers } from "./residentRotationSeed";
+import { createSeedWikiArticles, normalizeWikiArticles, normalizeWikiSources } from "./wiki";
 
 export class StateConflictError extends Error {
   constructor(
@@ -321,6 +323,12 @@ export function normalizePlannerState(
     },
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
     coverageRequests: partial.coverageRequests ?? [],
+    wikiArticles: normalizeWikiArticles(partial.wikiArticles ?? createSeedWikiArticles()),
+    wikiSources: normalizeWikiSources(partial.wikiSources ?? []),
+    wikiRevision: Number.isInteger(partial.wikiRevision) && Number(partial.wikiRevision) > 0
+      ? Number(partial.wikiRevision)
+      : 1,
+    wikiChanges: Array.isArray(partial.wikiChanges) ? partial.wikiChanges.slice(-1_000) : [],
     goldStarAwards: normalizeGoldStarAwards(partial.goldStarAwards ?? []),
     activityEvents: normalizeActivityEvents(partial.activityEvents ?? [])
   };
@@ -343,7 +351,8 @@ function normalizeActivityEventType(value: unknown, event: Partial<ActivityEvent
     value === "calendar" ||
     value === "account" ||
     value === "resident" ||
-    value === "assistant"
+    value === "assistant" ||
+    value === "wiki"
   ) {
     return value;
   }
@@ -353,6 +362,7 @@ function normalizeActivityEventType(value: unknown, event: Partial<ActivityEvent
   if (action.includes("account") || action.includes("password") || action.includes("profile") || entityType === "user") return "account";
   if (action.includes("resident") || action.includes("star") || entityType === "goldstaraward") return "resident";
   if (action.includes("assistant") || entityType === "assistant") return "assistant";
+  if (action.includes("wiki") || entityType === "wikiArticle") return "wiki";
   if (action.includes("calendar") || action.includes("call trade") || entityType === "coverageentry" || entityType === "coveragerequest") {
     return "calendar";
   }
@@ -386,10 +396,12 @@ function normalizeResident(resident: Resident): Resident {
   const sourceProgramAbbreviation = normalizeOptionalString(resident.sourceProgramAbbreviation);
   const sourceProgram = normalizeOptionalString(resident.sourceProgram);
   const tags = resident.tags ?? [];
+  const designation = resident.designation === "minimally-invasive-fellow" ? resident.designation : "resident";
   const rosterKind = normalizeResidentRosterKind(resident, sourceProgramAbbreviation, tags);
   const accountEligible = normalizeResidentAccountEligible(resident, rosterKind);
   return {
     ...resident,
+    designation,
     username: normalizeResidentUsername(resident, accountEligible),
     aliases: normalizeResidentAliases(resident.aliases),
     emoji: normalizeResidentEmoji(resident.emoji),
@@ -397,12 +409,23 @@ function normalizeResident(resident: Resident): Resident {
     sourceProgram,
     sourceProgramAbbreviation,
     accountEligible,
-    serviceTags: normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),
+    trainingLevel: designation === "minimally-invasive-fellow" ? "Fellow" : resident.trainingLevel,
+    serviceTags: designation === "minimally-invasive-fellow"
+      ? ["Davies"]
+      : normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),
     tags,
     trainingInterests: resident.trainingInterests ?? [],
     unavailable: resident.unavailable ?? [],
     vacation: normalizeVacationBlocks(resident.vacation),
-    rotationSchedule: normalizeRotationSchedule(resident.rotationSchedule)
+    rotationSchedule: designation === "minimally-invasive-fellow"
+      ? ROTATION_BLOCK_DATES.map((block) => ({
+          id: `rot_mi_fellow_${block.blockNumber}`,
+          blockNumber: block.blockNumber,
+          startDate: block.startDate,
+          endDate: block.endDate,
+          service: "Davies"
+        }))
+      : normalizeRotationSchedule(resident.rotationSchedule)
   };
 }
 
@@ -539,6 +562,7 @@ function mergeSeededResident(resident: Resident, seeded: Resident, hasExistingRo
     username: resident.username && !isPlaceholderResidentUsername(resident.username) ? resident.username : seeded.username,
     name: shouldUseSeedIdentity ? seeded.name : resident.name,
     aliases: resident.aliases?.length ? resident.aliases : seeded.aliases ?? [],
+    designation: resident.designation ?? seeded.designation,
     trainingLevel: shouldUseSeedIdentity ? seeded.trainingLevel : resident.trainingLevel,
     rosterKind: resident.rosterKind ?? seeded.rosterKind,
     sourceProgram: resident.sourceProgram ?? seeded.sourceProgram,
@@ -598,8 +622,9 @@ function normalizeAttendingCoverageAssignments(assignments: AttendingCoverageAss
         assignment &&
         isIsoDate(assignment.date) &&
         ATTENDING_COVERAGE_LINES.includes(assignment.line) &&
-        (assignment.shift === "day" || assignment.shift === "night" || assignment.shift === "24h") &&
-        (assignment.role === "primary" || assignment.role === "backup")
+        (assignment.shift === "day" || assignment.shift === "night" || assignment.shift === "24h" || assignment.shift === "weekend") &&
+        (assignment.role === "primary" || assignment.role === "backup") &&
+        Boolean(assignment.attendingId) !== Boolean(assignment.fellowResidentId)
     )
     .map((assignment) => {
       const createdAt = normalizeOptionalString(assignment.createdAt) ?? new Date().toISOString();
@@ -751,7 +776,11 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
       if (assignment.kind === "clinic") return clinicIds.has(assignment.targetId);
       return false;
     }),
-    attendingCoverageAssignments: state.attendingCoverageAssignments.filter((assignment) => attendingIds.has(assignment.attendingId)),
+    attendingCoverageAssignments: state.attendingCoverageAssignments.filter(
+      (assignment) =>
+        Boolean(assignment.attendingId && attendingIds.has(assignment.attendingId)) ||
+        Boolean(assignment.fellowResidentId && residentIds.has(assignment.fellowResidentId))
+    ),
     coverageEntries: state.coverageEntries.filter(
       (entry) =>
         (!entry.residentId || residentIds.has(entry.residentId)) &&

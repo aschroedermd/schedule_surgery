@@ -127,6 +127,7 @@ ELEVENLABS_API_KEY=<ElevenLabs API key>
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
 ELEVENLABS_VOICE_IDS=kSvMZug5ZFM9sKGpLAei,dWAnId3mzfl4fTszwtOG,0rEo3eAjssGDUCXHYENf
 CHAT_QUOTA_TIME_ZONE=America/New_York
+UNLIMITED_VOICE_USERNAMES=aschroeder
 ```
 
 `ADMIN_PASSWORD` is only used when the persistent browser-user store is first created. `SEED_USER_PASSWORD` is only used when resident-linked seeded users are created for the first time; users see the password-change screen on every login with that temporary password until they change it. The production compose file stores browser users and password hashes in the `planner-users` Docker volume at `/data/users.json`, so rebuilds do not reset changed passwords or privileges.

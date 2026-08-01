@@ -1,6 +1,7 @@
 import { addDays, getCurrentMonday } from "../shared/date";
 import { CoverageEntry, PlannerState } from "../shared/types";
 import { createRotationResidents } from "./residentRotationSeed";
+import { createSeedWikiArticles } from "./wiki";
 
 const seedCreatedAt = "2026-06-27T14:36:21.000Z";
 
@@ -158,6 +159,10 @@ export function createInitialState(): PlannerState {
     qgendaSync: { enabled: false },
     coverageEntries: createSeedCoverageEntries(),
     coverageRequests: [],
+    wikiArticles: createSeedWikiArticles(),
+    wikiSources: [],
+    wikiRevision: 1,
+    wikiChanges: [],
     goldStarAwards: [],
     activityEvents: [
       {

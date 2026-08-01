@@ -4,6 +4,9 @@ import {
   hasServiceRoundingCoverage,
   hasWeekendCoverage,
   isCoverageKindAllowedOnDate,
+  isMinimallyInvasiveFellow,
+  isPracticeWeekendStart,
+  isResidentCallEligible,
   isWeekendCoverageRequired
 } from "./coverage";
 import { CoverageEntry, Resident } from "./types";
@@ -69,6 +72,21 @@ describe("coverage calendar rules", () => {
     expect(callCreatesPostCallDay("2026-07-03")).toBe(true);
     expect(callCreatesPostCallDay("2026-07-04")).toBe(true);
     expect(callCreatesPostCallDay("2026-07-05")).toBe(false);
+  });
+
+  it("distinguishes the minimally invasive fellow from the resident call pool", () => {
+    const fellow: Resident = {
+      ...residents[0],
+      id: "res_mi_fellow",
+      trainingLevel: "Fellow",
+      designation: "minimally-invasive-fellow"
+    };
+
+    expect(isMinimallyInvasiveFellow(fellow)).toBe(true);
+    expect(isResidentCallEligible(fellow)).toBe(false);
+    expect(isResidentCallEligible(residents[0])).toBe(true);
+    expect(isPracticeWeekendStart("2026-07-03")).toBe(true);
+    expect(isPracticeWeekendStart("2026-07-04")).toBe(false);
   });
 
   it("covers a service when its resident is on call or explicitly rounding", () => {

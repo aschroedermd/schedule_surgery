@@ -64,7 +64,13 @@ import {
   type NavigationTab,
   type Tab
 } from "./navigation";
-import { formatMonthLabel, getMonthFromDate, isCallDate } from "../shared/coverage";
+import {
+  formatMonthLabel,
+  getMonthFromDate,
+  isCallDate,
+  isMinimallyInvasiveFellow,
+  isPracticeWeekendStart
+} from "../shared/coverage";
 import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
 import {
@@ -148,6 +154,7 @@ const emptyResident: Resident = {
   aliases: [],
   emoji: "",
   trainingLevel: "PGY3",
+  designation: "resident",
   rosterKind: "primary",
   sourceProgram: "General Surgery",
   sourceProgramAbbreviation: "",
@@ -1534,6 +1541,11 @@ function MyScheduleTab({
     .filter((entry) => entry.residentId === resident.id && entry.kind !== "call" && weekDates.has(entry.date))
     .sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
   const callEntries = getPersonalCallEntries(state, resident.id);
+  const fellowPracticeCoverage = isMinimallyInvasiveFellow(resident)
+    ? state.attendingCoverageAssignments
+        .filter((assignment) => assignment.fellowResidentId === resident.id)
+        .sort(compareAttendingCoverageForDisplay)
+    : [];
 
   return (
     <section className="my-schedule-page">
@@ -1608,6 +1620,26 @@ function MyScheduleTab({
             </div>
           )}
         </section>
+
+        {isMinimallyInvasiveFellow(resident) && (
+          <section className="editor-panel">
+            <h2>Practice Call</h2>
+            {fellowPracticeCoverage.length === 0 ? (
+              <p className="muted-copy">No practice call weekends listed.</p>
+            ) : (
+              <div className="entity-list">
+                {fellowPracticeCoverage.map((assignment) => (
+                  <div key={assignment.id} className="compact-entity">
+                    <div>
+                      <strong>{displayDate(assignment.date)}</strong>
+                      <span>{formatCoverageShift(assignment.shift)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="editor-panel">
           <h2>Calendar</h2>
@@ -2160,16 +2192,17 @@ function AttendingCoveragePanel({
     line: AttendingCoverageLine;
     shift: AttendingCoverageShift;
     role: AttendingCoverageRole;
-    attendingId: string;
+    providerKey: string;
     note: string;
   }>(() => ({
-    date: getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`,
+    date: getPracticeCallFriday(getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`),
     line: "Practice",
-    shift: "24h",
+    shift: "weekend",
     role: "primary",
-    attendingId: state.attendings[0]?.id ?? "",
+    providerKey: state.attendings[0] ? `attending:${state.attendings[0].id}` : "",
     note: ""
   }));
+  const practiceFellows = state.residents.filter(isMinimallyInvasiveFellow);
   const visible = state.attendingCoverageAssignments
     .filter((assignment) => assignment.date.startsWith(month))
     .sort(compareAttendingCoverageForDisplay);
@@ -2179,12 +2212,14 @@ function AttendingCoveragePanel({
   useEffect(() => {
     setDraft((current) => ({
       ...current,
-      date: current.date.startsWith(month) ? current.date : `${month}-01`,
-      attendingId: state.attendings.some((attending) => attending.id === current.attendingId)
-        ? current.attendingId
-        : state.attendings[0]?.id ?? ""
+      date: current.date.startsWith(month)
+        ? current.date
+        : current.line === "Practice" ? getPracticeCallFriday(`${month}-01`) : `${month}-01`,
+      providerKey: isValidAttendingCoverageProviderKey(current.providerKey, current.line, state)
+        ? current.providerKey
+        : state.attendings[0] ? `attending:${state.attendings[0].id}` : ""
     }));
-  }, [month, state.attendings]);
+  }, [month, state.attendings, state.residents]);
 
   return (
     <section className="attending-coverage-panel">
@@ -2222,20 +2257,45 @@ function AttendingCoveragePanel({
           className="attending-coverage-form"
           onSubmit={(event) => {
             event.preventDefault();
+            const [providerType, providerId] = draft.providerKey.split(":", 2);
             void onMutate(
-              () => createAttendingCoverage(token, draft),
+              () => createAttendingCoverage(token, {
+                date: draft.date,
+                line: draft.line,
+                shift: draft.shift,
+                role: draft.role,
+                attendingId: providerType === "attending" ? providerId : undefined,
+                fellowResidentId: providerType === "fellow" ? providerId : undefined,
+                note: draft.note
+              }),
               "Attending coverage added"
             );
           }}
         >
-          <label>Date<input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
+          <label>{draft.line === "Practice" ? "Start date (Friday)" : "Date"}<input
+            type="date"
+            value={draft.date}
+            onChange={(event) => setDraft({
+              ...draft,
+              date: draft.line === "Practice" ? getPracticeCallFriday(event.target.value) : event.target.value
+            })}
+          /></label>
           <label>
             Line
             <select
               value={draft.line}
               onChange={(event) => {
                 const line = event.target.value as AttendingCoverageLine;
-                setDraft({ ...draft, line, shift: line === "ACS" && draft.role === "primary" ? "night" : draft.shift });
+                const providerKey = line === "Practice" || !draft.providerKey.startsWith("fellow:")
+                  ? draft.providerKey
+                  : state.attendings[0] ? `attending:${state.attendings[0].id}` : "";
+                setDraft({
+                  ...draft,
+                  line,
+                  providerKey,
+                  date: line === "Practice" ? getPracticeCallFriday(draft.date) : draft.date,
+                  shift: line === "Practice" ? "weekend" : line === "ACS" && draft.role === "primary" ? "night" : "day"
+                });
               }}
             >
               {ATTENDING_COVERAGE_LINES.map((line) => <option key={line} value={line}>{line === "ACS" ? "ACS call" : line}</option>)}
@@ -2245,6 +2305,7 @@ function AttendingCoveragePanel({
             Role
             <select
               value={draft.role}
+              disabled={draft.providerKey.startsWith("fellow:")}
               onChange={(event) => {
                 const role = event.target.value as AttendingCoverageRole;
                 setDraft({ ...draft, role, shift: draft.line === "ACS" && role === "primary" ? "night" : draft.shift });
@@ -2258,22 +2319,38 @@ function AttendingCoveragePanel({
             Shift
             <select
               value={draft.shift}
-              disabled={draft.line === "ACS" && draft.role === "primary"}
+              disabled={draft.line === "Practice" || (draft.line === "ACS" && draft.role === "primary") || draft.providerKey.startsWith("fellow:")}
               onChange={(event) => setDraft({ ...draft, shift: event.target.value as AttendingCoverageShift })}
             >
               <option value="day">Day</option>
               <option value="night">Night</option>
               <option value="24h">24 hours</option>
+              {draft.line === "Practice" && <option value="weekend">Weekend (Fri 5 PM–Mon 6 AM)</option>}
             </select>
           </label>
           <label>
-            Attending
-            <select value={draft.attendingId} onChange={(event) => setDraft({ ...draft, attendingId: event.target.value })}>
-              {state.attendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
+            Covering clinician
+            <select
+              value={draft.providerKey}
+              onChange={(event) => {
+                const providerKey = event.target.value;
+                setDraft(providerKey.startsWith("fellow:")
+                  ? { ...draft, providerKey, line: "Practice", shift: "weekend", role: "primary", date: getPracticeCallFriday(draft.date) }
+                  : { ...draft, providerKey });
+              }}
+            >
+              <optgroup label="Attendings">
+                {state.attendings.map((attending) => <option key={attending.id} value={`attending:${attending.id}`}>{attending.name}</option>)}
+              </optgroup>
+              {draft.line === "Practice" && practiceFellows.length > 0 && (
+                <optgroup label="Minimally invasive fellow">
+                  {practiceFellows.map((fellow) => <option key={fellow.id} value={`fellow:${fellow.id}`}>{fellow.name}</option>)}
+                </optgroup>
+              )}
             </select>
           </label>
           <label>Note<input value={draft.note} placeholder="Optional" onChange={(event) => setDraft({ ...draft, note: event.target.value })} /></label>
-          <button className="primary-button" type="submit" disabled={!draft.date || !draft.attendingId}><Plus size={15} />Add</button>
+          <button className="primary-button" type="submit" disabled={!draft.date || !draft.providerKey}><Plus size={15} />Add</button>
         </form>
       )}
 
@@ -2289,13 +2366,16 @@ function AttendingCoveragePanel({
               </div>
               <div className="attending-coverage-assignments">
                 {assignments.map((assignment) => {
-                  const attending = state.attendings.find((candidate) => candidate.id === assignment.attendingId);
+                  const clinician = assignment.attendingId
+                    ? state.attendings.find((candidate) => candidate.id === assignment.attendingId)
+                    : state.residents.find((candidate) => candidate.id === assignment.fellowResidentId);
                   return (
                     <div key={assignment.id} className="attending-coverage-line">
                       <span className={`coverage-line-badge line-${assignment.line.toLowerCase()}`}>
                         {assignment.line === "ACS" && assignment.role === "primary" ? "ACS call" : assignment.line}
                       </span>
-                      <strong>{attending ? getResidentLastName(attending.name) : "Unknown"}</strong>
+                      <strong>{clinician ? getResidentLastName(clinician.name) : "Unknown"}</strong>
+                      {assignment.fellowResidentId && <span className="qgenda-badge">MI fellow</span>}
                       <span>{assignment.role === "backup" ? "backup · " : ""}{formatCoverageShift(assignment.shift)}</span>
                       {assignment.source === "qgenda" && <span className="qgenda-badge">QGenda</span>}
                       {assignment.note && <span className="coverage-note">{assignment.note}</span>}
@@ -2341,7 +2421,23 @@ function compareAttendingCoverageForDisplay(a: AttendingCoverageAssignment, b: A
 
 function formatCoverageShift(shift: AttendingCoverageShift): string {
   if (shift === "24h") return "24 hours";
+  if (shift === "weekend") return "Fri 5 PM–Mon 6 AM";
   return shift;
+}
+
+function getPracticeCallFriday(date: string): string {
+  if (!date) return date;
+  if (isPracticeWeekendStart(date)) return date;
+  const daysUntilFriday = (5 - parseLocalDate(date).getDay() + 7) % 7;
+  return addDays(date, daysUntilFriday);
+}
+
+function isValidAttendingCoverageProviderKey(providerKey: string, line: AttendingCoverageLine, state: PlannerState): boolean {
+  const [providerType, providerId] = providerKey.split(":", 2);
+  if (providerType === "attending") return state.attendings.some((attending) => attending.id === providerId);
+  return line === "Practice" && state.residents.some(
+    (resident) => resident.id === providerId && isMinimallyInvasiveFellow(resident)
+  );
 }
 
 function formatSyncTime(value: string): string {
@@ -3226,7 +3322,32 @@ function RosterTab({
           <label>Display name<input value={editing.name} onChange={(event) => setEditing(updateResidentNameDraft(editing, event.target.value))} /></label>
           <label>Aliases<input value={(editing.aliases ?? []).join(", ")} onChange={(event) => setEditing({ ...editing, aliases: splitTags(event.target.value) })} /></label>
           <label>Emoji<input value={editing.emoji ?? ""} onChange={(event) => setEditing({ ...editing, emoji: firstInputCharacter(event.target.value) })} /></label>
-          <label>Level<select value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
+          <label>Schedule role<select
+            value={editing.designation ?? "resident"}
+            onChange={(event) => {
+              const designation = event.target.value as NonNullable<Resident["designation"]>;
+              setEditing(designation === "minimally-invasive-fellow"
+                ? {
+                    ...editing,
+                    designation,
+                    trainingLevel: "Fellow",
+                    rosterKind: "primary",
+                    serviceTags: ["Davies"],
+                    rotationSchedule: ROTATION_BLOCK_DATES.map((block) => ({
+                      id: `rot_mi_fellow_${block.blockNumber}`,
+                      blockNumber: block.blockNumber,
+                      startDate: block.startDate,
+                      endDate: block.endDate,
+                      service: "Davies"
+                    }))
+                  }
+                : { ...editing, designation });
+            }}
+          >
+            <option value="resident">Resident</option>
+            <option value="minimally-invasive-fellow">Minimally invasive fellow</option>
+          </select></label>
+          <label>Level<select disabled={isMinimallyInvasiveFellow(editing)} value={editing.trainingLevel} onChange={(event) => setEditing({ ...editing, trainingLevel: event.target.value as TrainingLevel })}>
             {["Medical Student", "PGY1", "PGY2", "PGY3", "PGY4", "PGY5", "Fellow"].map((level) => <option key={level}>{level}</option>)}
           </select></label>
           <label>Roster<select value={editing.rosterKind ?? "primary"} onChange={(event) => setEditing({ ...editing, rosterKind: event.target.value as Resident["rosterKind"] })}>
@@ -3283,7 +3404,7 @@ function RosterTab({
           {sortResidentsForService(state.residents, selectedService, week.startDate).map((resident) => (
             <CompactEntity
               key={resident.id}
-              title={`${formatResidentName(resident)} · ${resident.trainingLevel}`}
+              title={`${formatResidentName(resident)} · ${isMinimallyInvasiveFellow(resident) ? "MI Fellow" : resident.trainingLevel}`}
               subtitle={`${formatResidentRosterSummary(resident, week.startDate)} · ${formatResidentAliases(resident)} · ${resident.trainingInterests.join(", ") || "no interests"} · ${resident.unavailable.length} unavailable`}
               disabled={disabled}
               onEdit={() => setEditing(resident)}
@@ -3867,7 +3988,8 @@ const activityTypeOptions: Array<{ type: ActivityEventType; label: string }> = [
   { type: "calendar", label: "Calendar" },
   { type: "account", label: "Account" },
   { type: "resident", label: "Resident" },
-  { type: "assistant", label: "Assistant" }
+  { type: "assistant", label: "Assistant" },
+  { type: "wiki", label: "Wiki" }
 ];
 
 function ActivityTab({ state }: { state: PlannerState }) {
@@ -3877,7 +3999,8 @@ function ActivityTab({ state }: { state: PlannerState }) {
     calendar: true,
     account: true,
     resident: true,
-    assistant: true
+    assistant: true,
+    wiki: true
   });
   const visibleEvents = state.activityEvents.filter((event) => selectedTypes[event.activityType]);
 

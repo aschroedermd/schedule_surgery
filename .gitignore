@@ -14,3 +14,4 @@ coverage
 planner-backup*
 tmp
 tmp/
+.wiki-workspace/
