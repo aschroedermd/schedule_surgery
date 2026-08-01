@@ -171,7 +171,7 @@ export function ChatTab({
   const recordingIntervalRef = useRef<number>();
   const responseDelayTimeoutRef = useRef<number>();
   const responseAbortRef = useRef<AbortController>();
-  const speechAudioRef = useRef<HTMLAudioElement>();
+  const speechAudioRef = useRef<HTMLAudioElement>(null);
   const speechUrlRef = useRef<string>();
   const workingMessageQueueRef = useRef<string[]>([]);
   const almostDoneMessageQueueRef = useRef<string[]>([]);
@@ -251,7 +251,7 @@ export function ChatTab({
       window.clearInterval(recordingIntervalRef.current);
       window.clearTimeout(responseDelayTimeoutRef.current);
       responseAbortRef.current?.abort();
-      stopSpeech(true);
+      stopSpeech();
       if (recorderRef.current?.state === "recording") {
         recorderRef.current.onstop = null;
         recorderRef.current.stop();
@@ -501,9 +501,13 @@ export function ChatTab({
   async function playSpeech(blob: Blob) {
     stopSpeech();
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.preload = "auto";
-    speechAudioRef.current = audio;
+    const audio = speechAudioRef.current;
+    if (!audio) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    audio.src = url;
+    audio.load();
     speechUrlRef.current = url;
     audio.onended = () => stopSpeech();
     audio.onerror = () => setSpeechStatus("ready");
@@ -521,11 +525,10 @@ export function ChatTab({
     setSpeechStatus("playing");
     if (!(await tryStartAudioPlayback(audio))) {
       setSpeechStatus("ready");
-      setError("The generated audio could not be played. Check this site's audio permissions and try again.");
     }
   }
 
-  function stopSpeech(releaseAudio = false) {
+  function stopSpeech() {
     const audio = speechAudioRef.current;
     if (audio) {
       audio.pause();
@@ -534,7 +537,6 @@ export function ChatTab({
       audio.removeAttribute("src");
       audio.load();
       audio.muted = false;
-      if (releaseAudio) speechAudioRef.current = undefined;
     }
     if (speechUrlRef.current) {
       URL.revokeObjectURL(speechUrlRef.current);
@@ -755,6 +757,7 @@ export function ChatTab({
   return (
     <section className="chat-page" aria-label="Schedule assistant">
       <div className="chat-surface">
+        <audio ref={speechAudioRef} className="sr-only" preload="auto" />
         <div className="chat-voice-controls" aria-label="Spoken response controls" ref={chatSettingsRef}>
           <button
             type="button"
