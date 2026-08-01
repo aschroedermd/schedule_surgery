@@ -2807,14 +2807,11 @@ h2 {
 }
 
 .chat-audio-ready {
-  align-self: center;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 9px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--border-color));
-  border-radius: 999px;
-  background: var(--bg-surface-hover);
-  padding: 5px 6px 5px 12px;
+  margin: 0 4px 9px;
   color: var(--text-muted);
   font-size: 0.78rem;
   font-weight: 700;
@@ -2829,7 +2826,7 @@ h2 {
   border-radius: 999px;
   background: var(--color-primary);
   color: #fff;
-  padding: 6px 11px;
+  padding: 6px 12px;
   font-size: 0.75rem;
   font-weight: 800;
 }

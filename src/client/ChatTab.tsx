@@ -46,7 +46,6 @@ const HOLD_TO_SEND_MS = 400;
 const COLLAPSED_MESSAGE_LENGTH = 560;
 const MAX_VISIBLE_CARDS = 4;
 const INPUT_PREFERENCE_KEY = "schedule-chat-input-preference";
-const SILENT_AUDIO_DATA_URL = "data:audio/wav;base64,UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA";
 const VOICE_PRESETS: Array<{ id: VoicePreset; description: string }> = [
   { id: 1, description: "James · ElevenLabs" },
   { id: 2, description: "Voice 2 · ElevenLabs" },
@@ -174,7 +173,6 @@ export function ChatTab({
   const responseAbortRef = useRef<AbortController>();
   const speechAudioRef = useRef<HTMLAudioElement>();
   const speechUrlRef = useRef<string>();
-  const speechPlaybackPrimeRef = useRef<Promise<void>>();
   const workingMessageQueueRef = useRef<string[]>([]);
   const almostDoneMessageQueueRef = useRef<string[]>([]);
   const shouldAutoScrollRef = useRef(true);
@@ -495,60 +493,22 @@ export function ChatTab({
     if (voiceQuotaExhausted || isBusy) return;
     if (voiceMode) {
       stopSpeech();
-    } else {
-      primeSpeechPlayback();
     }
     setVoiceMode((current) => !current);
     setError(undefined);
   }
 
-  function getSpeechAudio(): HTMLAudioElement {
-    if (!speechAudioRef.current) {
-      speechAudioRef.current = new Audio();
-      speechAudioRef.current.preload = "auto";
-    }
-    return speechAudioRef.current;
-  }
-
-  function primeSpeechPlayback() {
-    const audio = getSpeechAudio();
-    audio.onended = null;
-    audio.onerror = null;
-    audio.muted = true;
-    audio.src = SILENT_AUDIO_DATA_URL;
-    speechPlaybackPrimeRef.current = audio.play()
-      .then(() => {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-        audio.muted = false;
-      })
-      .catch(() => {
-        audio.muted = false;
-      });
-  }
-
   async function playSpeech(blob: Blob) {
-    await speechPlaybackPrimeRef.current;
     stopSpeech();
     const url = URL.createObjectURL(blob);
-    const audio = getSpeechAudio();
-    audio.src = url;
-    audio.muted = false;
+    const audio = new Audio(url);
+    audio.preload = "auto";
+    speechAudioRef.current = audio;
     speechUrlRef.current = url;
     audio.onended = () => stopSpeech();
-    audio.onerror = () => stopSpeech();
+    audio.onerror = () => setSpeechStatus("ready");
     setSpeechStatus("playing");
-    try {
-      await audio.play();
-    } catch (playbackError) {
-      if (isAutoplayBlocked(playbackError)) {
-        setSpeechStatus("ready");
-        return;
-      }
-      stopSpeech();
-      throw new Error("The generated audio could not be played");
-    }
+    if (!(await tryStartAudioPlayback(audio))) setSpeechStatus("ready");
   }
 
   async function playReadySpeech() {
@@ -559,9 +519,7 @@ export function ChatTab({
     }
     setError(undefined);
     setSpeechStatus("playing");
-    try {
-      await audio.play();
-    } catch {
+    if (!(await tryStartAudioPlayback(audio))) {
       setSpeechStatus("ready");
       setError("The generated audio could not be played. Check this site's audio permissions and try again.");
     }
@@ -1034,14 +992,6 @@ export function ChatTab({
           {speechStatus === "generating" && (
             <div className="chat-processing-pill" role="status">Preparing spoken response…</div>
           )}
-          {speechStatus === "ready" && (
-            <div className="chat-audio-ready" role="status">
-              <span>Audio ready</span>
-              <button type="button" onClick={() => void playReadySpeech()}>
-                <Play size={14} fill="currentColor" /> Play response
-              </button>
-            </div>
-          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -1074,6 +1024,14 @@ export function ChatTab({
             <p className="chat-quota-warning exhausted" role="alert">
               Daily limit reached. Your 20 requests reset at midnight Eastern time.
             </p>
+          )}
+          {speechStatus === "ready" && (
+            <div className="chat-audio-ready" role="status">
+              <span>Spoken response:</span>
+              <button type="button" onClick={() => void playReadySpeech()} aria-label="Play spoken response">
+                <Play size={14} fill="currentColor" /> Play
+              </button>
+            </div>
           )}
           <form className="chat-composer" onSubmit={submit}>
             <textarea
@@ -1466,6 +1424,15 @@ function createChatMessageId(): string {
     : `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+export async function tryStartAudioPlayback(audio: Pick<HTMLAudioElement, "play">): Promise<boolean> {
+  try {
+    await audio.play();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function formatCheckedTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "just now";
@@ -1510,10 +1477,6 @@ function voiceModeTitle(
       ? `${quota.remaining} of ${quota.limit} spoken responses left today`
       : "3 spoken responses per day";
   return `${voiceMode ? "Spoken responses on" : "Spoken responses off"} · voice ${voicePreset} · ${allowance}`;
-}
-
-function isAutoplayBlocked(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "name" in error && error.name === "NotAllowedError";
 }
 
 function formatScheduleKind(kind: string): string {
