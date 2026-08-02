@@ -325,6 +325,64 @@ describe("scheduler core", () => {
     expect(berrySchedule).toEqual([]);
   });
 
+  it("aggregates endoscopy blocks from multiple services into ENDO without copying assignments", () => {
+    const state = createInitialState();
+    state.attendingBlocks[0].notes = "Endoscopy X-9";
+    state.attendingBlocks.push({
+      id: "block_berry_endo",
+      weekId: "week_current",
+      date: state.weeks[0].startDate,
+      attendingId: "att_nussbaum",
+      hospitalId: "hosp_main",
+      firstCaseStartTime: "13:00",
+      notes: "Endo X-4"
+    });
+    state.cases.push({
+      id: "case_berry_scope",
+      blockId: "block_berry_endo",
+      procedureLabel: "Upper GI endoscopy",
+      durationMinutes: 60,
+      priority: 2,
+      tags: ["endoscopy"],
+      notes: "",
+      order: 0
+    });
+    state.assignments.push({
+      id: "assignment_berry_endo",
+      kind: "block",
+      targetId: "block_berry_endo",
+      residentId: "res_blue",
+      locked: true,
+      source: "admin",
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z"
+    });
+
+    const endoSchedule = buildWeekSchedule(state, "week_current", "ENDO");
+    const endoBlocks = endoSchedule.days.flatMap((day) => day.blocks);
+    const berrySchedule = buildWeekSchedule(state, "week_current", "Berry");
+    const berryBlock = berrySchedule.days.flatMap((day) => day.blocks).find((block) => block.id === "block_berry_endo");
+
+    expect(endoBlocks.map((block) => block.id)).toEqual(expect.arrayContaining(["block_chen_mon", "block_berry_endo"]));
+    expect(endoBlocks.find((block) => block.id === "block_berry_endo")?.assignment).toBe(
+      state.assignments[0]
+    );
+    expect(berryBlock?.assignment).toBe(state.assignments[0]);
+  });
+
+  it("includes endoscopy procedure clinics from their source services in ENDO", () => {
+    const state = createInitialState();
+    state.clinicSessions[0] = {
+      ...state.clinicSessions[0],
+      location: "Endoscopy X-9",
+      isProcedure: true
+    };
+
+    const endoSchedule = buildWeekSchedule(state, "week_current", "ENDO");
+
+    expect(endoSchedule.days.flatMap((day) => day.clinics).map((clinic) => clinic.id)).toContain("clinic_hpb_tue");
+  });
+
   it("labels clinics by surgeon and procedure setting", () => {
     const state = createInitialState();
     const clinic = state.clinicSessions[0];

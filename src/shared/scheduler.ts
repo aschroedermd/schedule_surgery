@@ -19,7 +19,13 @@ import {
 } from "./types";
 import { addDays, getWeekDates, minutesToTime, timeToMinutes } from "./date";
 import { createId } from "./id";
-import { isResidentOnService, servicesMatch } from "./services";
+import {
+  clinicMatchesService,
+  ENDOSCOPY_SERVICE_LINE,
+  isEndoscopyBlock,
+  isResidentOnService,
+  servicesMatch
+} from "./services";
 import { callCreatesPostCallDay } from "./coverage";
 
 interface Interval {
@@ -78,7 +84,7 @@ export function buildWeekSchedule(state: PlannerState, weekId: string, serviceLi
     .sort((a, b) => a.date.localeCompare(b.date) || timeToMinutes(a.firstCaseStartTime) - timeToMinutes(b.firstCaseStartTime));
 
   const clinics = state.clinicSessions
-    .filter((clinic) => clinic.weekId === week.id && servicesMatch(clinic.service, serviceLine))
+    .filter((clinic) => clinic.weekId === week.id && (!serviceLine || clinicMatchesService(clinic, serviceLine)))
     .map<ScheduledClinicSession>((clinic) => ({
       ...clinic,
       attending: clinic.attendingId ? state.attendings.find((attending) => attending.id === clinic.attendingId) : undefined,
@@ -304,7 +310,7 @@ export function applySuggestion(
   const caseIds = new Set(weekCases.map((surgeryCase) => surgeryCase.id));
   const clinicIds = new Set(
     state.clinicSessions
-      .filter((clinic) => clinic.weekId === weekId && servicesMatch(clinic.service, serviceLine))
+      .filter((clinic) => clinic.weekId === weekId && (!serviceLine || clinicMatchesService(clinic, serviceLine)))
       .map((clinic) => clinic.id)
   );
   const preservedAssignments = state.assignments.filter((assignment) => {
@@ -335,7 +341,9 @@ export function applySuggestion(
     };
   }
 
-  for (const clinic of state.clinicSessions.filter((candidate) => candidate.weekId === weekId && servicesMatch(candidate.service, serviceLine))) {
+  for (const clinic of state.clinicSessions.filter(
+    (candidate) => candidate.weekId === weekId && (!serviceLine || clinicMatchesService(candidate, serviceLine))
+  )) {
     const scheduledClinic = buildWeekSchedule(draft, weekId, serviceLine).days.flatMap((day) => day.clinics).find((candidate) => candidate.id === clinic.id);
     if (!scheduledClinic) continue;
     const remainingCapacity = Math.max(0, clinic.capacity - scheduledClinic.assignments.length);
@@ -546,7 +554,7 @@ function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string, s
       };
     });
   const clinics = state.clinicSessions
-    .filter((clinic) => clinic.weekId === week.id && servicesMatch(clinic.service, serviceLine))
+    .filter((clinic) => clinic.weekId === week.id && (!serviceLine || clinicMatchesService(clinic, serviceLine)))
     .map<ScheduledClinicSession>((clinic) => ({
       ...clinic,
       attending: clinic.attendingId ? state.attendings.find((attending) => attending.id === clinic.attendingId) : undefined,
@@ -696,6 +704,7 @@ function getTargetDate(target: AssignmentTarget): string {
 
 function blockMatchesService(state: PlannerState, block: AttendingBlock, serviceLine?: string): boolean {
   if (!serviceLine) return true;
+  if (servicesMatch(serviceLine, ENDOSCOPY_SERVICE_LINE)) return isEndoscopyBlock(state, block);
   const attending = state.attendings.find((candidate) => candidate.id === block.attendingId);
   return servicesMatch(attending?.service, serviceLine);
 }

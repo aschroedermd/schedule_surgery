@@ -320,6 +320,17 @@ describe("planner API", () => {
       summary: "Verified local test workflow.",
       body: "For patient care, use the verified local workflow or call the office at 540-555-0188.",
       category: "workflow",
+      kind: "workflow",
+      scope: {
+        services: ["Davies"],
+        attendings: [],
+        procedures: [],
+        hospitals: ["RMH"],
+        phases: ["administrative"],
+        patientPopulations: []
+      },
+      relationships: [{ type: "belongs-to", target: "workflows", note: "Workflow index" }],
+      audience: ["residents"],
       aliases: ["test workflow"],
       tags: ["workflow"],
       links: ["workflows"],
@@ -336,7 +347,13 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${adminToken}`)
       .send(newArticle)
       .expect(201)
-      .expect((response) => expect(response.body.article.slug).toBe("workflow-test"));
+      .expect((response) => expect(response.body.article).toEqual(expect.objectContaining({
+        slug: "workflow-test",
+        kind: "workflow",
+        scope: expect.objectContaining({ services: ["Davies"], phases: ["administrative"] }),
+        relationships: [{ type: "belongs-to", target: "workflows", note: "Workflow index" }],
+        audience: ["residents"]
+      })));
     await request(app)
       .post("/api/wiki")
       .set("authorization", `Bearer ${adminToken}`)
@@ -506,7 +523,7 @@ describe("planner API", () => {
         voiceModel: "fish-audio/s2-pro",
         voiceName: "Custom Narrator",
         elevenLabsModel: "eleven_flash_v2_5",
-        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf", "onwK4e9ZLuTAKqWW03F9", "ia2hmHnWgMXcUgmY4yVU"]
       })
       .expect(200);
     expect(updated.body).toEqual(
@@ -518,7 +535,7 @@ describe("planner API", () => {
         voiceModel: "fish-audio/s2-pro",
         voiceName: "Custom Narrator",
         elevenLabsModel: "eleven_flash_v2_5",
-        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf", "onwK4e9ZLuTAKqWW03F9", "ia2hmHnWgMXcUgmY4yVU"]
       })
     );
 
@@ -633,6 +650,31 @@ describe("planner API", () => {
       if (previousElevenLabsKey === undefined) delete process.env.ELEVENLABS_API_KEY;
       else process.env.ELEVENLABS_API_KEY = previousElevenLabsKey;
     }
+  });
+
+  it("remembers a user's selected spoken-response voice across new logins", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+    const token = await loginOnApp(app, "cblue");
+
+    await request(app)
+      .get("/api/session")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect(({ body }) => expect(body.preferredVoicePreset).toBe(1));
+
+    await request(app)
+      .patch("/api/me/voice-preset")
+      .set("authorization", `Bearer ${token}`)
+      .send({ preferredVoicePreset: 5 })
+      .expect(200)
+      .expect(({ body }) => expect(body).toEqual({ preferredVoicePreset: 5 }));
+
+    const nextToken = await loginOnApp(app, "cblue");
+    await request(app)
+      .get("/api/session")
+      .set("authorization", `Bearer ${nextToken}`)
+      .expect(200)
+      .expect(({ body }) => expect(body.preferredVoicePreset).toBe(5));
   });
 
   it("records login activity with user names and hides activity from non-admin state", async () => {

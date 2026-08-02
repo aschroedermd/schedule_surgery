@@ -115,17 +115,17 @@ CHAT_PROVIDER=openai
 OPENAI_PRIMARY_MODEL=gpt-5.6-luna
 OPENAI_FALLBACK_MODELS=gpt-5.6-terra
 
-# Required for voice transcription and voice 4; also supports the optional OpenRouter text provider.
+# Required for voice transcription and the optional OpenRouter text provider.
 OPENROUTER_API_KEY=<OpenRouter API key>
 CHAT_SETTINGS_PATH=/data/chat-settings.json
 OPENROUTER_PRIMARY_MODEL=deepseek/deepseek-v4-flash
 OPENROUTER_FALLBACK_MODELS=google/gemma-3-27b-it
 OPENROUTER_TRANSCRIPTION_MODEL=nvidia/parakeet-tdt-0.6b-v3
 
-# Required for spoken-response voices 1–3.
+# Required for spoken-response voices 1–5.
 ELEVENLABS_API_KEY=<ElevenLabs API key>
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
-ELEVENLABS_VOICE_IDS=kSvMZug5ZFM9sKGpLAei,dWAnId3mzfl4fTszwtOG,0rEo3eAjssGDUCXHYENf
+ELEVENLABS_VOICE_IDS=kSvMZug5ZFM9sKGpLAei,dWAnId3mzfl4fTszwtOG,0rEo3eAjssGDUCXHYENf,onwK4e9ZLuTAKqWW03F9,ia2hmHnWgMXcUgmY4yVU
 CHAT_QUOTA_TIME_ZONE=America/New_York
 ```
 

@@ -56,13 +56,19 @@ import {
   SessionUser,
   SurgeryCase,
   WikiArticle,
+  WikiArticleKind,
+  WikiArticleRelationship,
+  WikiArticleScope,
   WikiAuthority,
   WikiChangeEvent,
   WikiSource,
   WikiSourceReference,
   WikiStatus,
+  WIKI_ARTICLE_KINDS,
   WIKI_AUTHORITIES,
   WIKI_CATEGORIES,
+  WIKI_CLINICAL_PHASES,
+  WIKI_RELATIONSHIP_TYPES,
   WIKI_SOURCE_TYPES,
   WIKI_STATUSES
 } from "../shared/types";
@@ -258,6 +264,19 @@ export function createApp(
 
   app.get("/api/session", requireAuth, (req: AuthenticatedRequest, res) => {
     res.json(req.user);
+  });
+
+  app.patch("/api/me/voice-preset", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!req.body || typeof req.body !== "object" || !("preferredVoicePreset" in req.body)) {
+        throw new HttpError(400, "preferredVoicePreset is required");
+      }
+      const preferredVoicePreset = readVoicePreset(req.body.preferredVoicePreset);
+      const user = await userStore.updatePreferredVoicePreset(req.user!.username, preferredVoicePreset);
+      res.json({ preferredVoicePreset: user.preferredVoicePreset });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get("/api/admin/chat-settings", requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res, next) => {
@@ -621,11 +640,7 @@ export function createApp(
         return;
       }
       const voicePreset = readVoicePreset(req.body.voicePreset);
-      if (voicePreset === 4 && !process.env.OPENROUTER_API_KEY) {
-        res.status(503).json({ error: "OpenRouter voice is not configured yet" });
-        return;
-      }
-      if (voicePreset !== 4 && !process.env.ELEVENLABS_API_KEY) {
+      if (!process.env.ELEVENLABS_API_KEY) {
         res.status(503).json({ error: "ElevenLabs voice is not configured yet" });
         return;
       }
@@ -4018,6 +4033,15 @@ function buildWikiArticle(input: unknown, existing: WikiArticle | undefined, use
   if (!(WIKI_CATEGORIES as readonly string[]).includes(categoryValue)) {
     throw new HttpError(400, `Invalid wiki category: ${categoryValue}`);
   }
+  const kindValue = readOptionalString(patch.kind) ?? existing?.kind;
+  if (kindValue && !(WIKI_ARTICLE_KINDS as readonly string[]).includes(kindValue)) {
+    throw new HttpError(400, `Invalid wiki article kind: ${kindValue}`);
+  }
+  const scope = "scope" in patch ? readWikiArticleScope(patch.scope) : existing?.scope;
+  const relationships = "relationships" in patch
+    ? readWikiRelationships(patch.relationships)
+    : existing?.relationships ?? [];
+  const audience = "audience" in patch ? readWikiStringList(patch.audience, "audience") : existing?.audience ?? [];
   const aliases = "aliases" in patch ? readWikiStringList(patch.aliases, "aliases") : existing?.aliases ?? [];
   const tags = "tags" in patch ? readWikiStringList(patch.tags, "tags") : existing?.tags ?? [];
   const links = "links" in patch
@@ -4054,6 +4078,10 @@ function buildWikiArticle(input: unknown, existing: WikiArticle | undefined, use
     summary,
     body,
     category: categoryValue as WikiArticle["category"],
+    kind: kindValue as WikiArticleKind | undefined,
+    scope,
+    relationships,
+    audience,
     aliases,
     tags,
     links,
@@ -4084,6 +4112,39 @@ function readWikiStringList(value: unknown, field: string): string[] {
     const text = readOptionalString(item);
     if (!text) throw new HttpError(400, `${field}[${index}] must be a non-empty string`);
     return text;
+  });
+}
+
+function readWikiArticleScope(value: unknown): WikiArticleScope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "scope must be an object");
+  }
+  const input = value as Record<string, unknown>;
+  const phases = readOptionalStringArray(input.phases, "scope.phases");
+  for (const phase of phases) {
+    if (!(WIKI_CLINICAL_PHASES as readonly string[]).includes(phase)) {
+      throw new HttpError(400, `Invalid clinical phase: ${phase}`);
+    }
+  }
+  return {
+    services: readOptionalStringArray(input.services, "scope.services"),
+    attendings: readOptionalStringArray(input.attendings, "scope.attendings"),
+    procedures: readOptionalStringArray(input.procedures, "scope.procedures"),
+    hospitals: readOptionalStringArray(input.hospitals, "scope.hospitals"),
+    phases: phases as WikiArticleScope["phases"],
+    patientPopulations: readOptionalStringArray(input.patientPopulations, "scope.patientPopulations")
+  };
+}
+
+function readWikiRelationships(value: unknown): WikiArticleRelationship[] {
+  return readOptionalObjectArray(value, "relationships").map((item, index) => {
+    const type = readOptionalString(item.type);
+    const target = normalizeWikiSlug(readOptionalString(item.target) ?? "");
+    if (!type || !(WIKI_RELATIONSHIP_TYPES as readonly string[]).includes(type)) {
+      throw new HttpError(400, `relationships[${index}].type is invalid`);
+    }
+    if (!target) throw new HttpError(400, `relationships[${index}].target is required`);
+    return { type: type as WikiArticleRelationship["type"], target, note: readOptionalString(item.note) };
   });
 }
 
@@ -4165,12 +4226,12 @@ function readChatModelSettingsPatch(body: unknown): Partial<ChatModelSettings> {
     patch.elevenLabsModel = readRequiredString(input.elevenLabsModel, "elevenLabsModel");
   }
   if ("elevenLabsVoiceIds" in input) {
-    if (!Array.isArray(input.elevenLabsVoiceIds) || input.elevenLabsVoiceIds.length !== 3) {
-      throw new HttpError(400, "elevenLabsVoiceIds must contain exactly 3 voice ids");
+    if (!Array.isArray(input.elevenLabsVoiceIds) || input.elevenLabsVoiceIds.length !== 5) {
+      throw new HttpError(400, "elevenLabsVoiceIds must contain exactly 5 voice ids");
     }
     patch.elevenLabsVoiceIds = input.elevenLabsVoiceIds.map((voiceId, index) =>
       readRequiredString(voiceId, `elevenLabsVoiceIds[${index}]`)
-    ) as [string, string, string];
+    ) as [string, string, string, string, string];
   }
   if (Object.keys(patch).length === 0) {
     throw new HttpError(
@@ -4189,8 +4250,8 @@ function isChatProviderConfigured(settings: ChatModelSettings): boolean {
 
 function readVoicePreset(value: unknown): VoicePreset {
   const preset = value === undefined ? 1 : Number(value);
-  if (!Number.isInteger(preset) || preset < 1 || preset > 4) {
-    throw new HttpError(400, "voicePreset must be 1, 2, 3, or 4");
+  if (!Number.isInteger(preset) || preset < 1 || preset > 5) {
+    throw new HttpError(400, "voicePreset must be 1, 2, 3, 4, or 5");
   }
   return preset as VoicePreset;
 }

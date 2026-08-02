@@ -69,6 +69,7 @@ export function normalizeRotationServiceToServiceLine(value: string | undefined)
   if (lower.includes("fogel")) return "Fogel";
   if (lower.includes("nrv")) return "NRV";
   if (lower.includes("ped surg") || lower.includes("pediatric")) return "Peds";
+  if (lower === "endo" || lower.includes("endoscopy")) return "ENDO";
   return undefined;
 }
 

@@ -39,6 +39,7 @@ export async function validateLogin(userStore: UserStore, username: string, pass
         attendingId: user.attendingId,
         servicePrivileges: user.servicePrivileges,
         canAddContacts: user.canAddContacts,
+        preferredVoicePreset: user.preferredVoicePreset,
         passwordUpdatedAt: user.passwordUpdatedAt,
         mustChangePassword: user.mustChangePassword
       }
@@ -88,6 +89,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     attendingId: user.attendingId,
     servicePrivileges: user.servicePrivileges,
     canAddContacts: user.canAddContacts,
+    preferredVoicePreset: user.preferredVoicePreset,
     passwordUpdatedAt: user.passwordUpdatedAt,
     mustChangePassword: user.mustChangePassword && !passwordChangeDeferred
   };
@@ -174,6 +176,7 @@ function makeApiKeyUser(username: string, displayName: string, role: Role, privi
     role,
     servicePrivileges: Object.fromEntries(SERVICE_LINES.map((service) => [service, privilege])),
     canAddContacts: role === "admin",
+    preferredVoicePreset: 1,
     passwordUpdatedAt: new Date(0).toISOString(),
     mustChangePassword: false
   };

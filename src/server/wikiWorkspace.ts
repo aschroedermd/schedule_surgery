@@ -4,6 +4,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   WikiArticle,
+  WikiArticleKind,
+  WikiArticleRelationship,
+  WikiArticleScope,
   WikiAuthority,
   WikiCategory,
   WikiSource,
@@ -88,6 +91,11 @@ export async function initializeWikiWorkspace(workspacePath: string, serverUrl =
   } satisfies WikiWorkspaceConfig, null, 2)}\n`);
   await writeIfMissing(path.join(workspacePath, "README.md"), WORKSPACE_README);
   await writeIfMissing(path.join(workspacePath, "templates/attending-procedure.md"), ATTENDING_PROCEDURE_TEMPLATE);
+  await writeIfMissing(path.join(workspacePath, "templates/attending-profile.md"), ATTENDING_PROFILE_TEMPLATE);
+  await writeIfMissing(path.join(workspacePath, "templates/perioperative-protocol.md"), PERIOPERATIVE_PROTOCOL_TEMPLATE);
+  await writeIfMissing(path.join(workspacePath, "templates/note-template.md"), NOTE_TEMPLATE);
+  await writeIfMissing(path.join(workspacePath, "templates/service-guide.md"), SERVICE_GUIDE_TEMPLATE);
+  await writeIfMissing(path.join(workspacePath, "templates/institutional-policy.md"), INSTITUTIONAL_POLICY_TEMPLATE);
   await writeIfMissing(path.join(workspacePath, "templates/workflow.md"), WORKFLOW_TEMPLATE);
   try {
     await fs.access(path.join(workspacePath, ".git"));
@@ -142,6 +150,14 @@ export async function readWikiArticleFile(filePath: string): Promise<WikiArticle
     summary: String(metadata.summary || "Draft article"),
     body: match[2].trim(),
     category: String(metadata.category || "program") as WikiCategory,
+    kind: optionalString(metadata.kind) as WikiArticleKind | undefined,
+    scope: metadata.scope && typeof metadata.scope === "object" && !Array.isArray(metadata.scope)
+      ? metadata.scope as WikiArticleScope
+      : undefined,
+    relationships: Array.isArray(metadata.relationships)
+      ? metadata.relationships as WikiArticleRelationship[]
+      : [],
+    audience: asStringArray(metadata.audience),
     aliases: asStringArray(metadata.aliases),
     tags: asStringArray(metadata.tags),
     links: asStringArray(metadata.links),
@@ -182,6 +198,10 @@ export async function writeWikiArticleFile(workspacePath: string, article: WikiA
     title: normalized.title,
     summary: normalized.summary,
     category: normalized.category,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    relationships: normalized.relationships,
+    audience: normalized.audience,
     status: normalized.status,
     authority: normalized.authority,
     aliases: normalized.aliases,
@@ -327,7 +347,7 @@ export function findExplicitPhi(text: string): string[] {
 
 export function createDraftArticle(
   input: Pick<WikiArticle, "slug" | "title" | "summary" | "body" | "category" | "authority"> &
-    Partial<Pick<WikiArticle, "aliases" | "tags" | "links" | "owner">>,
+    Partial<Pick<WikiArticle, "kind" | "scope" | "relationships" | "audience" | "aliases" | "tags" | "links" | "owner">>,
   sourceId: string
 ): WikiArticle {
   const now = new Date().toISOString();
@@ -339,6 +359,10 @@ export function createDraftArticle(
     summary: input.summary,
     body: input.body,
     category: input.category,
+    kind: input.kind,
+    scope: input.scope,
+    relationships: input.relationships,
+    audience: input.audience,
     aliases: input.aliases ?? [],
     tags: input.tags ?? [],
     links: input.links ?? [],
@@ -421,6 +445,8 @@ This is the private, Git-versioned authoring workspace for the Schedule Assistan
 - Clinical preferences, policies, and templates require a named owner, reviewer, review date, and source before publication.
 - Do not place PHI in this workspace.
 
+Organize broad navigation in hub articles and put actionable details in narrow leaf articles. Use structured \`scope\` for service, attending, procedure, hospital, phase, and patient population; use typed \`relationships\` to connect variants, shared preferences, workflows, and governing policies. See \`docs/WIKI_INGESTION.md\` in the application repository for the full contract.
+
 Use the application repository command \`npm run wiki -- <command>\` to pull, ingest, validate, diff, publish, and push.
 `;
 
@@ -430,8 +456,12 @@ const ATTENDING_PROCEDURE_TEMPLATE = `---
   "title": "Dr. Example — Procedure",
   "summary": "Draft attending preference for a specific procedure.",
   "category": "attending",
+  "kind": "operative-preference",
   "status": "draft",
   "authority": "attending-preference",
+  "scope": {"services": [], "attendings": ["Dr. Example"], "procedures": ["Procedure"], "hospitals": [], "phases": ["preoperative", "intraoperative"], "patientPopulations": []},
+  "relationships": [{"type": "belongs-to", "target": "attending-example"}],
+  "audience": ["residents"],
   "aliases": [],
   "tags": ["operative-preference"],
   "links": [],
@@ -458,14 +488,184 @@ const ATTENDING_PROCEDURE_TEMPLATE = `---
 ## Sources and review history
 `;
 
+const ATTENDING_PROFILE_TEMPLATE = `---
+{
+  "slug": "attending-example",
+  "title": "Dr. Example",
+  "summary": "Hub for verified practice scope, preferences, procedures, and perioperative guidance.",
+  "category": "attending",
+  "kind": "attending-profile",
+  "status": "draft",
+  "authority": "program-reference",
+  "scope": {"services": [], "attendings": ["Dr. Example"], "procedures": [], "hospitals": [], "phases": [], "patientPopulations": []},
+  "relationships": [],
+  "audience": ["residents"],
+  "aliases": [],
+  "tags": ["attending"],
+  "links": [],
+  "sourceRefs": []
+}
+---
+
+## Practice and service scope
+
+## Shared working preferences
+
+## Operative preferences
+
+## Perioperative protocols
+
+## Workflows and escalation
+
+## Sources and review history
+`;
+
+const PERIOPERATIVE_PROTOCOL_TEMPLATE = `---
+{
+  "slug": "example-procedure-perioperative-protocol",
+  "title": "Example Procedure — Perioperative Protocol",
+  "summary": "Draft scoped perioperative preparation and management guidance.",
+  "category": "clinical-reference",
+  "kind": "perioperative-protocol",
+  "status": "draft",
+  "authority": "attending-preference",
+  "scope": {"services": [], "attendings": [], "procedures": ["Example Procedure"], "hospitals": [], "phases": ["preoperative", "inpatient", "discharge", "follow-up"], "patientPopulations": []},
+  "relationships": [],
+  "audience": ["residents"],
+  "aliases": [],
+  "tags": ["perioperative"],
+  "links": [],
+  "sourceRefs": []
+}
+---
+
+## Applicability and authority
+
+## Clinic and preoperative preparation
+
+## Antibiotics and medications
+
+## Immediate postoperative management
+
+## Diet, activity, and wound care
+
+## Discharge medications and instructions
+
+## Follow-up
+
+## Variations, contraindications, and escalation
+
+## Sources and review history
+`;
+
+const NOTE_TEMPLATE = `---
+{
+  "slug": "example-procedure-note-template",
+  "title": "Example Procedure — Note Template",
+  "summary": "No-PHI documentation scaffold derived from a verified source.",
+  "category": "clinical-reference",
+  "kind": "note-template",
+  "status": "draft",
+  "authority": "educational-template",
+  "scope": {"services": [], "attendings": [], "procedures": ["Example Procedure"], "hospitals": [], "phases": ["intraoperative"], "patientPopulations": []},
+  "relationships": [],
+  "audience": ["residents"],
+  "aliases": [],
+  "tags": ["note-template", "no-PHI"],
+  "links": [],
+  "sourceRefs": []
+}
+---
+
+## Purpose and applicability
+
+## Template
+
+Use placeholders only. Never ingest or reproduce patient identifiers.
+
+## Technique represented
+
+## Variations and attending confirmation
+
+## Sources and review history
+`;
+
+const SERVICE_GUIDE_TEMPLATE = `---
+{
+  "slug": "service-example",
+  "title": "Example Service",
+  "summary": "Hub for service scope, expectations, attendings, workflows, and protocols.",
+  "category": "service",
+  "kind": "service-guide",
+  "status": "draft",
+  "authority": "program-reference",
+  "scope": {"services": ["Example"], "attendings": [], "procedures": [], "hospitals": [], "phases": [], "patientPopulations": []},
+  "relationships": [],
+  "audience": ["residents"],
+  "aliases": [],
+  "tags": ["service"],
+  "links": [],
+  "sourceRefs": []
+}
+---
+
+## Scope, sites, and patient population
+
+## Resident expectations
+
+## Attendings and practice areas
+
+## Common workflows
+
+## Perioperative protocols and policies
+
+## Escalation and unresolved questions
+
+## Sources and review history
+`;
+
+const INSTITUTIONAL_POLICY_TEMPLATE = `---
+{
+  "slug": "example-institutional-policy",
+  "title": "Example Institutional Policy",
+  "summary": "Draft local policy with explicit scope and governance.",
+  "category": "program",
+  "kind": "institutional-policy",
+  "status": "draft",
+  "authority": "institutional-policy",
+  "scope": {"services": [], "attendings": [], "procedures": [], "hospitals": [], "phases": [], "patientPopulations": []},
+  "relationships": [],
+  "audience": ["residents"],
+  "aliases": [],
+  "tags": ["policy"],
+  "links": [],
+  "sourceRefs": []
+}
+---
+
+## Policy scope and owner
+
+## Requirements
+
+## Exceptions and escalation
+
+## Related workflows and attending preferences
+
+## Sources, approval, and review history
+`;
+
 const WORKFLOW_TEMPLATE = `---
 {
   "slug": "workflow-example",
   "title": "Example Workflow",
   "summary": "Draft locally maintained workflow.",
   "category": "workflow",
+  "kind": "workflow",
   "status": "draft",
   "authority": "workflow",
+  "scope": {"services": [], "attendings": [], "procedures": [], "hospitals": [], "phases": ["administrative"], "patientPopulations": []},
+  "relationships": [],
+  "audience": ["residents"],
   "aliases": [],
   "tags": ["workflow"],
   "links": [],

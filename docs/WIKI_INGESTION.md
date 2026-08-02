@@ -4,6 +4,101 @@ The recommended design is a local, private Git authoring workspace synchronized 
 
 Raw documents never need to be uploaded to the web app. The server receives reviewed Markdown, source metadata, and SHA-256 hashes. Raw and extracted source files remain in ignored local directories.
 
+## Information architecture
+
+Organize knowledge as a linked graph rather than a collection of source summaries. Each article should answer one coherent class of question and declare its semantic `kind`, structured `scope`, and typed `relationships`.
+
+Recommended kinds:
+
+- `index`: navigation hub only.
+- `program-reference`: stable residency expectations, structure, terminology, and culture.
+- `service-guide`: one service's scope, sites, attendings, expectations, workflows, and linked protocols.
+- `hospital-guide`: site-specific logistics and stable operational facts.
+- `attending-profile`: an attending hub linking practice scope, shared preferences, procedure articles, and perioperative guidance.
+- `workflow`: one “how do I…” administrative or clinical-process task.
+- `operative-preference`: one attending and one procedure family, including equipment, setup, technique, and explicit variants.
+- `perioperative-protocol`: preparation or management across clinic, preoperative, intraoperative, PACU, inpatient, discharge, or follow-up phases.
+- `institutional-policy`: mandatory approved requirements; do not label an attending preference as policy.
+- `note-template`: no-PHI documentation scaffolding or a source-supported operative-note template.
+- `educational-reference` or `clinical-reference`: teaching/reference content that does not fit a more specific kind.
+
+Use `category` for broad navigation and storage compatibility; use `kind` for the article's precise semantic role. Attending profiles belong in `attending`. Procedure cards, operative technique, perioperative protocols, policies, and note templates generally belong in `clinical-reference`. Administrative processes belong in `workflow`.
+
+### Structured scope
+
+Clinical and operational leaves should specify all applicable dimensions and leave unsupported dimensions empty:
+
+```json
+{
+  "kind": "perioperative-protocol",
+  "scope": {
+    "services": ["Davies"],
+    "attendings": ["Kristin McCoy"],
+    "procedures": ["total thyroidectomy"],
+    "hospitals": [],
+    "phases": ["preoperative", "inpatient", "discharge", "follow-up"],
+    "patientPopulations": []
+  },
+  "audience": ["residents"]
+}
+```
+
+Audience labels help the assistant frame an answer but do not enforce access control. Do not place sensitive interpersonal judgments, gossip, diagnoses, or unverifiable characterizations in the wiki. Program dynamics should be expressed as reviewed expectations, working-style preferences, escalation norms, or operational context.
+
+### Typed relationships
+
+Use typed relationships so the assistant knows why it should follow a link:
+
+- `belongs-to`: leaf to attending, service, hospital, or topic hub.
+- `variant-of`: modification to a base procedure or workflow; state differences rather than duplicating the whole parent.
+- `shared-preference`: attending- or service-wide setup used by multiple procedures.
+- `supplements`: adds detail without replacing the target.
+- `governed-by`: points to a policy or protocol that constrains the article.
+- `overrides`: explicit, source-supported replacement within the stated scope; never infer an override.
+- `uses-workflow`: required operational process.
+- `related` or `see-also`: non-precedence navigation.
+
+Relationship targets are mirrored into legacy `links`, and the reader returns both outgoing and incoming typed relationships. Every procedure leaf should normally belong to an attending or service hub. Shared preferences should be stated once and linked from each applicable procedure.
+
+### Procedure and perioperative decomposition
+
+Do not combine every fact about an operation into one oversized article. Prefer:
+
+1. attending profile hub;
+2. shared attending preferences;
+3. one operative-preference article per procedure family;
+4. explicit variant sections or `variant-of` articles for meaningful add-ons/platform changes;
+5. perioperative-protocol articles when orders, antibiotics, preparation, diet, medications, wound care, discharge, or follow-up are substantial enough to answer independently;
+6. note-template articles kept separate from clinical instructions; and
+7. institutional policies linked with `governed-by` rather than copied into every preference.
+
+Within operative or perioperative content, preserve routine versus PRN, required versus preferred, and “ask/check with attending” language. Do not silently reconcile contradictory source statements.
+
+## Agent navigation contract
+
+The assistant should progressively navigate rather than load the entire wiki:
+
+1. Identify the attending, service, procedure, hospital, task, patient population, and perioperative phase present in the question.
+2. Search for the most specific applicable leaf article using names, aliases, procedure terms, and phase.
+3. Read that article and inspect its scope, authority, provenance, freshness, and typed relationships.
+4. Follow only relevant relationships: base/shared preferences for omitted common details; a variant when the modification is present; governing policy for constraints; workflows for execution steps; and the attending/service hub when applicability is unclear.
+5. Treat institutional policy as a constraint. Within policy, use the most specific applicable service, attending, procedure, and variant preference. Do not infer that a preference overrides policy.
+6. Preserve conflicts and explicit escalation instructions. Mention missing or stale review metadata when clinically material.
+7. Answer from the smallest sufficient set of articles. Use live schedule tools for dates and assignments and the Contacts directory for current phone numbers.
+
+## Ingestion decision checklist
+
+Before drafting articles, determine:
+
+- What type of knowledge is present: program reference, workflow, operative preference, perioperative protocol, policy, note template, or educational reference?
+- Is a fact shared across an attending/service, or specific to a procedure or variant?
+- What are the exact service, attending, procedure, hospital, phase, and population boundaries?
+- Does an existing hub, parent procedure, shared preference, workflow, or policy already exist?
+- Which statements are routine, PRN, conditional, exceptions, unresolved conflicts, or instructions to ask?
+- Can every clinical statement be tied to a useful source locator?
+
+Source `--notes` are binding organization and applicability instructions for agentic ingestion and are included with related existing-article context. Generated articles remain drafts and must not silently overwrite existing knowledge.
+
 ## First-time setup
 
 ```bash
@@ -97,7 +192,7 @@ For continuous backup, schedule `npm run wiki -- sync` from a secured machine, t
   proposals/                Agent jobs and non-overwriting proposals
   conflicts/                Pull conflicts requiring manual resolution
   archive/remote-deleted/   Recoverable copies deleted on the server
-  templates/                Attending-procedure and workflow templates
+  templates/                Hubs, operative preferences, protocols, policies, notes, and workflows
   .wiki-sync.json           Last synchronized revision and hashes
 ```
 
@@ -113,5 +208,4 @@ The ingestion agent is intentionally a drafting editor, not a clinical authority
 - avoid silently replacing existing knowledge;
 - leave publication to an identified reviewer.
 
-At answer time, the chatbot searches only published articles and can traverse article links. It receives authority, reviewer, review date, review due date, and provenance metadata so it can describe the basis and freshness of clinical knowledge when relevant.
-
+At answer time, the chatbot searches only published articles and can traverse both legacy links and typed outgoing/incoming relationships. It receives scope, kind, authority, reviewer, review date, review due date, and provenance metadata so it can choose the most specific applicable article and describe the basis and freshness of clinical knowledge when relevant.

@@ -1,7 +1,8 @@
-import { Attending, ClinicSession, PlannerState, Resident, SERVICE_LINES, ServiceLine } from "./types";
+import { Attending, AttendingBlock, ClinicSession, PlannerState, Resident, SERVICE_LINES, ServiceLine } from "./types";
 import { getResidentServiceTagsForDate, normalizeRotationServiceToServiceLine } from "./rotations";
 
 export const DEFAULT_SERVICE_LINE: ServiceLine = "Davies";
+export const ENDOSCOPY_SERVICE_LINE: ServiceLine = "ENDO";
 
 export function isServiceLine(value: string | undefined): value is ServiceLine {
   return Boolean(value && SERVICE_LINES.includes(value as ServiceLine));
@@ -47,5 +48,28 @@ export function getAttendingsForService(attendings: Attending[], selectedService
 }
 
 export function clinicMatchesService(clinic: ClinicSession, selectedService: string): boolean {
+  if (servicesMatch(selectedService, ENDOSCOPY_SERVICE_LINE)) {
+    return isEndoscopyText(clinic.service) || isEndoscopyText(clinic.location);
+  }
   return servicesMatch(clinic.service, selectedService);
+}
+
+/**
+ * ENDO is a virtual service: its blocks continue to belong to their attending's
+ * source service and are surfaced here by their schedule labels.
+ */
+export function isEndoscopyBlock(
+  state: Pick<PlannerState, "cases">,
+  block: Pick<AttendingBlock, "id" | "notes">
+): boolean {
+  if (isEndoscopyText(block.notes)) return true;
+  return state.cases.some(
+    (surgeryCase) =>
+      surgeryCase.blockId === block.id &&
+      [surgeryCase.procedureLabel, surgeryCase.notes, ...surgeryCase.tags].some(isEndoscopyText)
+  );
+}
+
+export function isEndoscopyText(value: string | undefined): boolean {
+  return /\b(?:endo|endoscop(?:e|es|ic|ies|y))\b/i.test(value ?? "");
 }

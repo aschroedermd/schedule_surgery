@@ -3,6 +3,9 @@ import path from "node:path";
 import { getDefaultUserStorePath } from "./userStore";
 
 export type ChatProvider = "openai" | "openrouter";
+export type ElevenLabsVoiceIds =
+  | [string, string, string]
+  | [string, string, string, string, string];
 
 export interface ChatModelSettings {
   chatProvider: ChatProvider;
@@ -12,7 +15,7 @@ export interface ChatModelSettings {
   voiceModel: string;
   voiceName: string;
   elevenLabsModel: string;
-  elevenLabsVoiceIds: [string, string, string];
+  elevenLabsVoiceIds: ElevenLabsVoiceIds;
 }
 
 export interface StoredChatModelSettings extends ChatModelSettings {
@@ -76,7 +79,11 @@ export class FileChatSettingsStore implements ChatSettingsStore {
         };
       }
       if (loaded?.version !== 2) throw new ChatSettingsValidationError("Unsupported chat settings file version");
-      return { version: 2, settings: normalizeSettings(loaded.settings as StoredChatModelSettings) };
+      const settings = normalizeSettings(loaded.settings as StoredChatModelSettings);
+      if (!Array.isArray(loaded.settings?.elevenLabsVoiceIds) || loaded.settings.elevenLabsVoiceIds.length !== 5) {
+        await this.save({ version: 2, settings });
+      }
+      return { version: 2, settings };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return { version: 2, settings: getDefaultChatModelSettings() };
@@ -176,14 +183,17 @@ function normalizeSettings(input: StoredChatModelSettings): StoredChatModelSetti
   };
 }
 
-function normalizeElevenLabsVoiceIds(value: unknown): [string, string, string] {
-  if (!Array.isArray(value) || value.length !== 3) {
-    throw new ChatSettingsValidationError("elevenLabsVoiceIds must contain exactly 3 voice ids");
+function normalizeElevenLabsVoiceIds(value: unknown): [string, string, string, string, string] {
+  if (!Array.isArray(value) || (value.length !== 3 && value.length !== 5)) {
+    throw new ChatSettingsValidationError("elevenLabsVoiceIds must contain 3 legacy or exactly 5 voice ids");
   }
-  return value.map((voiceId, index) => normalizeProviderId(voiceId, `elevenLabsVoiceIds[${index}]`)) as [
-    string,
-    string,
-    string
+  const configured = value.map((voiceId, index) => normalizeProviderId(voiceId, `elevenLabsVoiceIds[${index}]`));
+  return [
+    configured[0],
+    configured[1],
+    configured[2],
+    configured[3] ?? "onwK4e9ZLuTAKqWW03F9",
+    configured[4] ?? "ia2hmHnWgMXcUgmY4yVU"
   ];
 }
 
@@ -196,9 +206,9 @@ function normalizeProviderId(value: unknown, field: string): string {
   return id;
 }
 
-function readElevenLabsVoiceIds(value: string | undefined): [string, string, string] {
-  if (!value) return ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"];
-  return value.split(",").map((voiceId) => voiceId.trim()) as [string, string, string];
+function readElevenLabsVoiceIds(value: string | undefined): [string, string, string, string, string] {
+  if (!value) return ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf", "onwK4e9ZLuTAKqWW03F9", "ia2hmHnWgMXcUgmY4yVU"];
+  return value.split(",").map((voiceId) => voiceId.trim()) as [string, string, string, string, string];
 }
 
 function normalizeVoiceName(value: unknown): string {

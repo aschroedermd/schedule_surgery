@@ -738,6 +738,9 @@ describe("schedule assistant", () => {
     expect(prompt).toContain("Davies, Fogel/Colorectal, Breast, Berry, or Endoscopy");
     expect(prompt).toContain("Ferrara/EGS is busy");
     expect(prompt).toContain("Omit endoscopy and FMH from general coverage-gap answers unless explicitly requested");
+    expect(prompt).toContain("progressively navigate it");
+    expect(prompt).toContain("variant-of, shared-preference, governed-by");
+    expect(prompt).toContain("Institutional policy constrains preferences");
     expect(prompt).toContain('<WIKI_ARTICLE slug="hospital-fmh"');
     expect(prompt).toContain('<WIKI_ARTICLE slug="or-coverage"');
   });
@@ -829,14 +832,12 @@ describe("schedule assistant", () => {
     );
   });
 
-  it("uses Fish Audio S2.1 Pro with the requested dramatic voice", async () => {
+  it("uses the fourth ElevenLabs voice", async () => {
     const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      expect(String(url)).toBe("https://openrouter.ai/api/v1/audio/speech");
+      expect(String(url)).toBe("https://api.elevenlabs.io/v1/text-to-speech/onwK4e9ZLuTAKqWW03F9?output_format=mp3_44100_128");
       expect(JSON.parse(String(init?.body))).toEqual({
-        model: "fish-audio/s2.1-pro-free:free",
-        input: "You are on call Saturday.",
-        voice: "David Attenborough Dramatic",
-        response_format: "mp3"
+        text: "You are on call Saturday.",
+        model_id: "eleven_multilingual_v2"
       });
       return new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } });
     }) as typeof fetch;
@@ -847,16 +848,14 @@ describe("schedule assistant", () => {
     expect([...result.audio]).toEqual([73, 68, 51]);
   });
 
-  it("uses the configured speech model and voice", async () => {
-    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        model: "fish-audio/s2-pro",
-        voice: "Custom Narrator"
-      });
+  it("uses the configured fifth ElevenLabs voice", async () => {
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe("https://api.elevenlabs.io/v1/text-to-speech/ia2hmHnWgMXcUgmY4yVU?output_format=mp3_44100_128");
+      expect(JSON.parse(String(init?.body))).toEqual({ text: "A concise answer.", model_id: "eleven_multilingual_v2" });
       return new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } });
     }) as typeof fetch;
 
-    await synthesizeScheduleSpeech("A concise answer.", 4, fetcher, {
+    await synthesizeScheduleSpeech("A concise answer.", 5, fetcher, {
       chatProvider: "openrouter",
       primaryModel: "deepseek/deepseek-v4-flash",
       fallbackModels: ["google/gemma-3-27b-it"],
@@ -864,7 +863,7 @@ describe("schedule assistant", () => {
       voiceModel: "fish-audio/s2-pro",
       voiceName: "Custom Narrator",
       elevenLabsModel: "eleven_multilingual_v2",
-      elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+      elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf", "onwK4e9ZLuTAKqWW03F9", "ia2hmHnWgMXcUgmY4yVU"]
     });
   });
 

@@ -2,10 +2,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
+  WIKI_ARTICLE_KINDS,
   WIKI_AUTHORITIES,
   WIKI_CATEGORIES,
+  WIKI_CLINICAL_PHASES,
+  WIKI_RELATIONSHIP_TYPES,
   WIKI_SOURCE_TYPES,
   WikiArticle,
+  WikiArticleKind,
+  WikiArticleRelationship,
+  WikiArticleScope,
   WikiAuthority,
   WikiCategory,
   WikiSourceType
@@ -26,7 +32,7 @@ import {
   writeWikiSourceMetadata,
   writeWikiSyncState
 } from "./wikiWorkspace";
-import { computeWikiSourceRecordHash } from "./wiki";
+import { computeWikiSourceRecordHash, searchWikiArticles } from "./wiki";
 
 interface ParsedArguments {
   positional: string[];
@@ -40,6 +46,10 @@ interface IngestionProposal {
     summary: string;
     body: string;
     category: WikiCategory;
+    kind: WikiArticleKind;
+    scope: WikiArticleScope;
+    relationships: WikiArticleRelationship[];
+    audience: string[];
     authority: WikiAuthority;
     aliases: string[];
     tags: string[];
@@ -241,13 +251,26 @@ async function ingestSources(workspacePath: string, args: ParsedArguments): Prom
       await fs.writeFile(jobPath, `${JSON.stringify({
         sourceId: staged.source.id,
         extractedTextPath: path.relative(workspacePath, path.join(staged.sourceDirectory, "extracted.txt")),
-        instructions: "Have an authorized agent extract factual draft articles. Every proposed article must reference this source id and remain draft until reviewed."
+        instructions: "Have an authorized agent extract factual draft articles. Apply the source notes as scope and organization instructions. Every proposed article must use structured kind, scope, relationships, source locators, and remain draft until reviewed.",
+        sourceNotes: staged.source.notes
       }, null, 2)}\n`, "utf8");
       text(`Staged ${file} as ${staged.source.id}; ingestion job: ${jobPath}`);
       continue;
     }
-    const proposal = await callIngestionModel(staged.source.id, staged.source.title, staged.extractedText);
     const existing = await readWikiWorkspace(workspacePath);
+    const relatedArticles = searchWikiArticles(
+      existing.articles,
+      [staged.source.title, staged.source.author, staged.source.notes].filter(Boolean).join(" "),
+      12,
+      true
+    );
+    const proposal = await callIngestionModel(
+      staged.source.id,
+      staged.source.title,
+      staged.source.notes,
+      staged.extractedText,
+      relatedArticles
+    );
     for (const proposed of proposal.articles) {
       const article = createDraftArticle(proposed, staged.source.id);
       if (existing.articles.some((candidate) => candidate.slug === article.slug)) {
@@ -304,7 +327,13 @@ async function publishArticle(workspacePath: string, args: ParsedArguments): Pro
   text(`Published ${slug} locally; run validate, diff, and push to publish it on the server`);
 }
 
-async function callIngestionModel(sourceId: string, sourceTitle: string, sourceText: string): Promise<IngestionProposal> {
+async function callIngestionModel(
+  sourceId: string,
+  sourceTitle: string,
+  sourceNotes: string | undefined,
+  sourceText: string,
+  relatedArticles: Array<Pick<WikiArticle, "slug" | "title" | "summary" | "category" | "kind">>
+): Promise<IngestionProposal> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is required for agentic ingestion");
   const model = process.env.WIKI_INGEST_MODEL || "gpt-5.6-terra";
@@ -318,11 +347,11 @@ async function callIngestionModel(sourceId: string, sourceTitle: string, sourceT
       input: [
         {
           role: "developer",
-          content: `You are a careful knowledge-base ingestion editor. Extract only facts explicitly supported by the source. Do not invent clinical details, contacts, orders, preferences, or exceptions. Split content into coherent articles, usually one attending-procedure or workflow topic per article. Preserve uncertainty in the uncertainties array. All articles are drafts and must cite source ${sourceId}. Use concise Markdown headings. Never include PHI.`
+          content: `You are a careful residency knowledge-base ingestion editor. Extract only facts explicitly supported by the source. Do not invent clinical details, contacts, orders, preferences, scope, or exceptions. Treat source notes as binding organization and applicability instructions supplied by the authorized editor. Split content into coherent articles: attending profiles are hubs; operative cards and note templates are procedure-level leaves; perioperative management is separated by procedure/service and phase; variants should point to a base article and state only meaningful differences when possible. Repeated attending-wide facts belong in one shared article. Preserve routine versus PRN, policy versus preference, uncertainty, conflicts, and “ask” instructions. Add structured kind, scope, audience, and typed relationships. Use relationships to connect leaves to attending/service hubs, shared preferences, governing policies, workflows, and variants. Do not overwrite or duplicate a related existing article; link to it or propose a narrowly scoped supplement. All articles are drafts and must cite source ${sourceId}. Use concise Markdown headings. Never include PHI.`
         },
         {
           role: "user",
-          content: `Source title: ${sourceTitle}\nSource id: ${sourceId}\n\n${sourceText.slice(0, 120_000)}`
+          content: `Source title: ${sourceTitle}\nSource id: ${sourceId}\nSource notes: ${sourceNotes || "none"}\n\nRelated existing wiki articles (link or supplement; do not replace silently):\n${relatedArticles.map((article) => `- ${article.slug} | ${article.title} | ${article.kind || article.category} | ${article.summary}`).join("\n") || "none"}\n\nSource text:\n${sourceText.slice(0, 120_000)}`
         }
       ],
       text: {
@@ -494,13 +523,41 @@ const INGESTION_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["slug", "title", "summary", "body", "category", "authority", "aliases", "tags", "links", "owner"],
+        required: ["slug", "title", "summary", "body", "category", "kind", "scope", "relationships", "audience", "authority", "aliases", "tags", "links", "owner"],
         properties: {
           slug: { type: "string" },
           title: { type: "string" },
           summary: { type: "string" },
           body: { type: "string" },
           category: { type: "string", enum: WIKI_CATEGORIES },
+          kind: { type: "string", enum: WIKI_ARTICLE_KINDS },
+          scope: {
+            type: "object",
+            additionalProperties: false,
+            required: ["services", "attendings", "procedures", "hospitals", "phases", "patientPopulations"],
+            properties: {
+              services: { type: "array", items: { type: "string" } },
+              attendings: { type: "array", items: { type: "string" } },
+              procedures: { type: "array", items: { type: "string" } },
+              hospitals: { type: "array", items: { type: "string" } },
+              phases: { type: "array", items: { type: "string", enum: WIKI_CLINICAL_PHASES } },
+              patientPopulations: { type: "array", items: { type: "string" } }
+            }
+          },
+          relationships: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["type", "target", "note"],
+              properties: {
+                type: { type: "string", enum: WIKI_RELATIONSHIP_TYPES },
+                target: { type: "string" },
+                note: { type: ["string", "null"] }
+              }
+            }
+          },
+          audience: { type: "array", items: { type: "string" } },
           authority: { type: "string", enum: WIKI_AUTHORITIES },
           aliases: { type: "array", items: { type: "string" } },
           tags: { type: "array", items: { type: "string" } },

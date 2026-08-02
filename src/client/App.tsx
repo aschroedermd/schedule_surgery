@@ -111,6 +111,7 @@ import {
 import { buildWeekSchedule, formatClinicLabel } from "../shared/scheduler";
 import {
   DEFAULT_SERVICE_LINE,
+  ENDOSCOPY_SERVICE_LINE,
   clinicMatchesService,
   getAttendingsForService,
   getStateServiceLines,
@@ -716,6 +717,7 @@ export function App() {
         <ChatTab
           token={session.token}
           displayName={session.displayName || session.username}
+          preferredVoicePreset={session.preferredVoicePreset}
           isAdmin={isAdmin}
           serviceLine={selectedService}
           plannerVersion={state.version}
@@ -1278,15 +1280,19 @@ function BoardTab({
     <>
       {showScheduleEditor && (
         <section className="board-schedule-editor" aria-label="Edit OR and clinic schedule">
-          <ScheduleEditor
-            state={state}
-            week={schedule.week}
-            token={token}
-            selectedService={selectedService}
-            editableAttendingId={editableAttendingId}
-            disabled={!canEdit && !editableAttendingId}
-            onMutate={onMutate}
-          />
+          {selectedService === ENDOSCOPY_SERVICE_LINE ? (
+            <p className="muted-copy">ENDO is a shared view. Add or edit an endoscopy block from its attending's service.</p>
+          ) : (
+            <ScheduleEditor
+              state={state}
+              week={schedule.week}
+              token={token}
+              selectedService={selectedService}
+              editableAttendingId={editableAttendingId}
+              disabled={!canEdit && !editableAttendingId}
+              onMutate={onMutate}
+            />
+          )}
         </section>
       )}
 
@@ -2660,7 +2666,10 @@ function BlockView({
             <span className="attending-marker" style={{ backgroundColor: getAttendingColor(block.attending) }} />
             <strong>{block.attending.name}</strong>
           </div>
-          <span>{block.hospital.shortName} · {block.firstCaseStartTime}</span>
+          <span>
+            {block.hospital.shortName} · {block.firstCaseStartTime}
+            {selectedService === ENDOSCOPY_SERVICE_LINE ? ` · ${block.attending.service}` : ""}
+          </span>
           {block.notes && <span>{block.notes}</span>}
         </div>
         <div className="block-actions">
@@ -2819,7 +2828,10 @@ function ClinicView({
       <div className="clinic-card-header">
         <div className="clinic-summary">
           <strong>{formatClinicLabel(clinic)}</strong>
-          <span>{clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
+          <span>
+            {clinic.startTime}-{clinic.endTime} · {clinic.location}
+            {selectedService === ENDOSCOPY_SERVICE_LINE ? ` · ${clinic.service}` : ""}
+          </span>
         </div>
         {canEdit && <QuickClinicEditor state={state} clinic={clinic} token={token} onMutate={onMutate} />}
       </div>

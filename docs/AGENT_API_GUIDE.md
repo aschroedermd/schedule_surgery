@@ -143,20 +143,10 @@ Voice buttons map to these persisted settings:
 - Voice 1 (default): ElevenLabs, default voice id `kSvMZug5ZFM9sKGpLAei` (James).
 - Voice 2: ElevenLabs, default voice id `dWAnId3mzfl4fTszwtOG`.
 - Voice 3: ElevenLabs, default voice id `0rEo3eAjssGDUCXHYENf`.
-- Voice 4: OpenRouter, using `voiceModel` and `voiceName` (Fish Audio by default).
+- Voice 4: ElevenLabs, default voice id `onwK4e9ZLuTAKqWW03F9`.
+- Voice 5: ElevenLabs, default voice id `ia2hmHnWgMXcUgmY4yVU`.
 
-Switch the OpenRouter model and voice used by button 4 without changing chat or transcription:
-
-```bash
-curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
-  -H "X-API-Key: $ADMIN_API_KEY" \
-  -H "content-type: application/json" \
-  -d '{"voiceModel":"fish-audio/s2.1-pro-free:free","voiceName":"David Attenborough Dramatic"}'
-```
-
-`voiceName` must be the provider's exact voice identifier for the selected `voiceModel`. Confirm supported voices on that model's OpenRouter page before changing it; the built-in defaults are [Fish Audio S2.1 Pro Free](https://openrouter.ai/fish-audio/s2.1-pro-free:free) and `David Attenborough Dramatic`.
-
-Switch the ElevenLabs model and all three ElevenLabs button voices:
+Switch the ElevenLabs model and all five button voices:
 
 ```bash
 curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
@@ -167,12 +157,14 @@ curl -X PATCH "$BASE_URL/api/admin/chat-settings" \
     "elevenLabsVoiceIds":[
       "kSvMZug5ZFM9sKGpLAei",
       "dWAnId3mzfl4fTszwtOG",
-      "0rEo3eAjssGDUCXHYENf"
+      "0rEo3eAjssGDUCXHYENf",
+      "onwK4e9ZLuTAKqWW03F9",
+      "ia2hmHnWgMXcUgmY4yVU"
     ]
   }'
 ```
 
-`elevenLabsVoiceIds` must contain exactly three ids in button order. ElevenLabs requests use `POST /v1/text-to-speech/{voice_id}` and the server-only `ELEVENLABS_API_KEY`; see the [ElevenLabs API introduction](https://elevenlabs.io/docs/api-reference/introduction) and [text-to-speech endpoint](https://elevenlabs.io/docs/api-reference/text-to-speech/convert).
+`elevenLabsVoiceIds` must contain exactly five ids in button order. ElevenLabs requests use `POST /v1/text-to-speech/{voice_id}` and the server-only `ELEVENLABS_API_KEY`; see the [ElevenLabs API introduction](https://elevenlabs.io/docs/api-reference/introduction) and [text-to-speech endpoint](https://elevenlabs.io/docs/api-reference/text-to-speech/convert).
 
 The complete shape is:
 
@@ -188,12 +180,14 @@ The complete shape is:
   "elevenLabsVoiceIds": [
     "kSvMZug5ZFM9sKGpLAei",
     "dWAnId3mzfl4fTszwtOG",
-    "0rEo3eAjssGDUCXHYENf"
+    "0rEo3eAjssGDUCXHYENf",
+    "onwK4e9ZLuTAKqWW03F9",
+    "ia2hmHnWgMXcUgmY4yVU"
   ]
 }
 ```
 
-`chatProvider` selects `openai` or `openrouter` for text responses. `primaryModel` and `fallbackModels` must be model ids for that provider. `transcriptionModel` and `voiceModel` remain OpenRouter model ids, and `voiceName` is the OpenRouter provider voice identifier for button 4. `elevenLabsModel` is an ElevenLabs TTS model id, and `elevenLabsVoiceIds` contains the three ElevenLabs voice ids for buttons 1–3. `fallbackModels` is ordered, accepts up to five entries, and may be empty. A partial `PATCH` preserves omitted fields, except that changing only `chatProvider` resets the text models to the new provider's defaults. Changes apply to new requests immediately and persist in `CHAT_SETTINGS_PATH` (by default `chat-settings.json` beside `USER_STORE_PATH`). The API validates identifier shape, but not provider availability, account access, price, tool-calling support, or voice/model compatibility. After changing a provider or voice setting, read the settings back and make one representative request with the changed path.
+`chatProvider` selects `openai` or `openrouter` for text responses. `primaryModel` and `fallbackModels` must be model ids for that provider. `transcriptionModel` remains an OpenRouter model id. `elevenLabsModel` is an ElevenLabs TTS model id, and `elevenLabsVoiceIds` contains the five ElevenLabs voice ids in button order. `fallbackModels` is ordered, accepts up to five entries, and may be empty. A partial `PATCH` preserves omitted fields, except that changing only `chatProvider` resets the text models to the new provider's defaults. Changes apply to new requests immediately and persist in `CHAT_SETTINGS_PATH` (by default `chat-settings.json` beside `USER_STORE_PATH`). The API validates identifier shape, but not provider availability, account access, price, tool-calling support, or voice/model compatibility. After changing a provider or voice setting, read the settings back and make one representative request with the changed path.
 
 Environment variables provide defaults only when no persisted settings exist: `CHAT_PROVIDER`, `OPENAI_PRIMARY_MODEL`, comma-separated `OPENAI_FALLBACK_MODELS`, `OPENROUTER_PRIMARY_MODEL`, comma-separated `OPENROUTER_FALLBACK_MODELS`, `OPENROUTER_TRANSCRIPTION_MODEL`, `OPENROUTER_VOICE_MODEL`, `OPENROUTER_VOICE_NAME`, `ELEVENLABS_MODEL_ID`, and comma-separated `ELEVENLABS_VOICE_IDS`. `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and `ELEVENLABS_API_KEY` remain environment-only and are never returned by this API.
 

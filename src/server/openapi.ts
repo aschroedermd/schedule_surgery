@@ -2,8 +2,11 @@ import {
   ATTENDING_COVERAGE_LINES,
   CALL_POSITIONS,
   SERVICE_LINES,
+  WIKI_ARTICLE_KINDS,
   WIKI_AUTHORITIES,
   WIKI_CATEGORIES,
+  WIKI_CLINICAL_PHASES,
+  WIKI_RELATIONSHIP_TYPES,
   WIKI_SOURCE_TYPES,
   WIKI_STATUSES
 } from "../shared/types";
@@ -66,6 +69,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean", description: "Allows adding directory contacts without admin approval." },
+            preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             passwordUpdatedAt: { type: "string", format: "date-time" },
             mustChangePassword: { type: "boolean" }
           }
@@ -83,6 +87,7 @@ export function getOpenApiDocument() {
             },
             canAddContacts: { type: "boolean" },
             voiceDailyLimit: { type: "integer", minimum: 0, maximum: 10000, default: 12 },
+            preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             createdAt: { type: "string", format: "date-time" },
             updatedAt: { type: "string", format: "date-time" },
             passwordUpdatedAt: { type: "string", format: "date-time" },
@@ -177,10 +182,10 @@ export function getOpenApiDocument() {
             elevenLabsModel: { type: "string", example: "eleven_multilingual_v2" },
             elevenLabsVoiceIds: {
               type: "array",
-              minItems: 3,
-              maxItems: 3,
+              minItems: 5,
+              maxItems: 5,
               items: { type: "string" },
-              example: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+              example: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf", "onwK4e9ZLuTAKqWW03F9", "ia2hmHnWgMXcUgmY4yVU"]
             },
             updatedAt: { type: ["string", "null"], format: "date-time" }
           }
@@ -223,6 +228,31 @@ export function getOpenApiDocument() {
             summary: { type: "string", maxLength: 500 },
             body: { type: "string", maxLength: 20000 },
             category: { type: "string", enum: WIKI_CATEGORIES },
+            kind: { type: "string", enum: WIKI_ARTICLE_KINDS },
+            scope: {
+              type: "object",
+              properties: {
+                services: { type: "array", items: { type: "string" } },
+                attendings: { type: "array", items: { type: "string" } },
+                procedures: { type: "array", items: { type: "string" } },
+                hospitals: { type: "array", items: { type: "string" } },
+                phases: { type: "array", items: { type: "string", enum: WIKI_CLINICAL_PHASES } },
+                patientPopulations: { type: "array", items: { type: "string" } }
+              }
+            },
+            relationships: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["type", "target"],
+                properties: {
+                  type: { type: "string", enum: WIKI_RELATIONSHIP_TYPES },
+                  target: { type: "string" },
+                  note: { type: "string" }
+                }
+              }
+            },
+            audience: { type: "array", items: { type: "string" }, description: "Descriptive audience labels; not access control." },
             aliases: { type: "array", items: { type: "string" } },
             tags: { type: "array", items: { type: "string" } },
             links: {
@@ -265,6 +295,31 @@ export function getOpenApiDocument() {
             summary: { type: "string" },
             body: { type: "string" },
             category: { type: "string", enum: WIKI_CATEGORIES },
+            kind: { type: "string", enum: WIKI_ARTICLE_KINDS },
+            scope: {
+              type: "object",
+              properties: {
+                services: { type: "array", items: { type: "string" } },
+                attendings: { type: "array", items: { type: "string" } },
+                procedures: { type: "array", items: { type: "string" } },
+                hospitals: { type: "array", items: { type: "string" } },
+                phases: { type: "array", items: { type: "string", enum: WIKI_CLINICAL_PHASES } },
+                patientPopulations: { type: "array", items: { type: "string" } }
+              }
+            },
+            relationships: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["type", "target"],
+                properties: {
+                  type: { type: "string", enum: WIKI_RELATIONSHIP_TYPES },
+                  target: { type: "string" },
+                  note: { type: "string" }
+                }
+              }
+            },
+            audience: { type: "array", items: { type: "string" } },
             aliases: { type: "array", items: { type: "string" } },
             tags: { type: "array", items: { type: "string" } },
             links: { type: "array", items: { type: "string" } },
@@ -512,6 +567,30 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/me/voice-preset": {
+        patch: {
+          summary: "Save the current user's spoken-response voice",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["preferredVoicePreset"],
+                  properties: {
+                    preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5 }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Saved voice selection" },
+            "400": { description: "Invalid voice preset" },
+            "401": { description: "Unauthorized" }
+          }
+        }
+      },
       "/api/wiki": {
         get: {
           summary: "List or search residency wiki articles",
@@ -680,8 +759,8 @@ export function getOpenApiDocument() {
                     elevenLabsModel: { type: "string" },
                     elevenLabsVoiceIds: {
                       type: "array",
-                      minItems: 3,
-                      maxItems: 3,
+                      minItems: 5,
+                      maxItems: 5,
                       items: { type: "string" }
                     }
                   }

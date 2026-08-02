@@ -1,14 +1,20 @@
 import { createHash } from "node:crypto";
 import {
   WikiArticle,
+  WikiArticleKind,
+  WikiArticleRelationship,
+  WikiArticleScope,
   WikiAuthority,
   WikiCategory,
   WikiSource,
   WikiSourceReference,
   WikiSourceType,
   WikiStatus,
+  WIKI_ARTICLE_KINDS,
   WIKI_AUTHORITIES,
   WIKI_CATEGORIES,
+  WIKI_CLINICAL_PHASES,
+  WIKI_RELATIONSHIP_TYPES,
   WIKI_SOURCE_TYPES,
   WIKI_STATUSES
 } from "../shared/types";
@@ -22,6 +28,10 @@ export interface WikiArticleSummary {
   title: string;
   summary: string;
   category: WikiCategory;
+  kind?: WikiArticleKind;
+  scope?: WikiArticleScope;
+  relationships?: WikiArticleRelationship[];
+  audience?: string[];
   aliases: string[];
   tags: string[];
   links: string[];
@@ -551,6 +561,7 @@ export function normalizeWikiArticles(articles: WikiArticle[]): WikiArticle[] {
   const seen = new Set<string>();
   return articles
     .map((article) => {
+      const relationships = normalizeWikiRelationships(article.relationships);
       const normalized = {
       ...article,
       slug: normalizeWikiSlug(article.slug),
@@ -558,9 +569,14 @@ export function normalizeWikiArticles(articles: WikiArticle[]): WikiArticle[] {
       summary: cleanText(article.summary, 500),
       body: cleanBody(article.body),
       category: isWikiCategory(article.category) ? article.category : "program",
+      kind: isWikiArticleKind(article.kind) ? article.kind : defaultArticleKind(article.category, article.authority),
+      scope: normalizeWikiScope(article.scope),
+      relationships,
+      audience: cleanList(article.audience, 20, 80),
       aliases: cleanList(article.aliases, 20, 100),
       tags: cleanList(article.tags, 30, 60),
-      links: cleanList(article.links, 50, 100).map(normalizeWikiSlug),
+      links: cleanList([...(article.links ?? []), ...relationships.map((relationship) => relationship.target)], 100, 100)
+        .map(normalizeWikiSlug),
       status: isWikiStatus(article.status) ? article.status : "published",
       authority: isWikiAuthority(article.authority) ? article.authority : defaultAuthority(article.category),
       revision: Number.isInteger(article.revision) && article.revision > 0 ? article.revision : 1,
@@ -614,6 +630,10 @@ export function summarizeWikiArticle(article: WikiArticle): WikiArticleSummary {
     title: article.title,
     summary: article.summary,
     category: article.category,
+    kind: article.kind,
+    scope: article.scope,
+    relationships: article.relationships,
+    audience: article.audience,
     aliases: article.aliases,
     tags: article.tags,
     links: article.links,
@@ -645,12 +665,30 @@ export function searchWikiArticles(
       .slice(0, clampLimit(limit))
       .map(summarizeWikiArticle);
   }
+  const baseScores = new Map(visibleArticles.map((article) => [article.slug, scoreArticle(article, normalizedQuery, tokens)]));
   return visibleArticles
-    .map((article) => ({ article, score: scoreArticle(article, normalizedQuery, tokens) }))
+    .map((article) => ({ article, score: (baseScores.get(article.slug) ?? 0) + graphSearchBoost(article, visibleArticles, baseScores) }))
     .filter((candidate) => candidate.score > 0)
     .sort((left, right) => right.score - left.score || left.article.title.localeCompare(right.article.title))
     .slice(0, clampLimit(limit))
     .map(({ article }) => summarizeWikiArticle(article));
+}
+
+function graphSearchBoost(article: WikiArticle, articles: WikiArticle[], baseScores: Map<string, number>): number {
+  const outgoing = (article.relationships ?? []).map((relationship) => ({
+    slug: relationship.target,
+    weight: ["variant-of", "shared-preference", "governed-by", "belongs-to"].includes(relationship.type) ? 0.22 : 0.12
+  }));
+  const incoming = articles.flatMap((candidate) =>
+    (candidate.relationships ?? [])
+      .filter((relationship) => relationship.target === article.slug)
+      .map((relationship) => ({
+        slug: candidate.slug,
+        weight: ["variant-of", "shared-preference", "governed-by", "belongs-to"].includes(relationship.type) ? 0.18 : 0.1
+      }))
+  );
+  return Math.min(24, [...outgoing, ...incoming].reduce((best, edge) =>
+    Math.max(best, (baseScores.get(edge.slug) ?? 0) * edge.weight), 0));
 }
 
 export function readWikiArticle(articles: WikiArticle[], slug: string, includeUnpublished = false) {
@@ -665,7 +703,16 @@ export function readWikiArticle(articles: WikiArticle[], slug: string, includeUn
   const backlinks = visibleArticles
     .filter((candidate) => candidate.links.includes(article.slug))
     .map(summarizeWikiArticle);
-  return { article, linked, backlinks };
+  const related = (article.relationships ?? []).flatMap((relationship) => {
+    const target = visibleArticles.find((candidate) => candidate.slug === relationship.target);
+    return target ? [{ relationship, article: summarizeWikiArticle(target) }] : [];
+  });
+  const incomingRelationships = visibleArticles.flatMap((candidate) =>
+    (candidate.relationships ?? [])
+      .filter((relationship) => relationship.target === article.slug)
+      .map((relationship) => ({ relationship, article: summarizeWikiArticle(candidate) }))
+  );
+  return { article, linked, backlinks, related, incomingRelationships };
 }
 
 export function buildFastWikiContext(question: string, articles: WikiArticle[]): string {
@@ -678,11 +725,13 @@ export function buildFastWikiContext(question: string, articles: WikiArticle[]):
   for (const article of matches) {
     const body = truncateWikiBody(article.body, 3_500);
     const section = [
-      `\n<WIKI_ARTICLE slug="${wikiValue(article.slug)}" title="${wikiValue(article.title)}" category="${article.category}" authority="${article.authority}" revision="${article.revision}" updated="${article.updatedAt}"${article.reviewedAt ? ` reviewed="${article.reviewedAt}"` : ""}${article.reviewedBy ? ` reviewer="${wikiValue(article.reviewedBy)}"` : ""}${article.reviewDueAt ? ` review_due="${article.reviewDueAt}"` : ""}>`,
+      `\n<WIKI_ARTICLE slug="${wikiValue(article.slug)}" title="${wikiValue(article.title)}" category="${article.category}" kind="${article.kind ?? "unspecified"}" authority="${article.authority}" revision="${article.revision}" updated="${article.updatedAt}"${article.reviewedAt ? ` reviewed="${article.reviewedAt}"` : ""}${article.reviewedBy ? ` reviewer="${wikiValue(article.reviewedBy)}"` : ""}${article.reviewDueAt ? ` review_due="${article.reviewDueAt}"` : ""}>`,
       article.summary,
+      `Scope: ${formatWikiScope(article.scope)}`,
       body,
       `Sources: ${article.sourceRefs.length ? article.sourceRefs.map((reference) => `${reference.sourceId}${reference.locator ? ` (${reference.locator})` : ""}`).join(", ") : "none listed"}`,
       `Links: ${article.links.join(", ") || "none"}`,
+      `Relationships: ${(article.relationships ?? []).map((relationship) => `${relationship.type}:${relationship.target}`).join(", ") || "none"}`,
       "</WIKI_ARTICLE>"
     ].join("\n");
     if (output.length + section.length > MAX_FAST_WIKI_CHARS) continue;
@@ -723,6 +772,13 @@ export function validateWikiKnowledgeBase(
     for (const link of article.links) {
       if (!articleSlugs.has(link)) warnings.push(`${article.slug}: linked article does not exist: ${link}`);
     }
+    for (const relationship of article.relationships ?? []) {
+      if (relationship.target === article.slug) {
+        errors.push(`${article.slug}: relationship ${relationship.type} cannot target itself`);
+      } else if (!articleSlugs.has(relationship.target)) {
+        warnings.push(`${article.slug}: ${relationship.type} target does not exist: ${relationship.target}`);
+      }
+    }
     for (const reference of article.sourceRefs) {
       if (!sourceIds.has(reference.sourceId)) {
         errors.push(`${article.slug}: source does not exist: ${reference.sourceId}`);
@@ -732,6 +788,25 @@ export function validateWikiKnowledgeBase(
       article.authority === "institutional-policy" ||
       article.authority === "attending-preference" ||
       article.authority === "educational-template";
+    const clinicallyScoped = requiresClinicalReview || [
+      "operative-preference",
+      "perioperative-protocol",
+      "institutional-policy",
+      "note-template",
+      "clinical-reference"
+    ].includes(article.kind ?? "");
+    if (clinicallyScoped && !hasWikiScope(article.scope)) {
+      warnings.push(`${article.slug}: clinical knowledge has no structured scope`);
+    }
+    if (article.kind === "operative-preference" && !(article.scope?.attendings.length)) {
+      warnings.push(`${article.slug}: operative preference does not identify an attending in scope`);
+    }
+    if (article.kind === "perioperative-protocol" && !(article.scope?.phases.length)) {
+      warnings.push(`${article.slug}: perioperative protocol does not identify any clinical phases`);
+    }
+    if (clinicallyScoped && article.sourceRefs.some((reference) => !reference.locator)) {
+      warnings.push(`${article.slug}: clinical source reference has no locator`);
+    }
     if (
       article.status === "published" &&
       requiresClinicalReview &&
@@ -786,6 +861,12 @@ export function computeWikiArticleHash(article: Omit<WikiArticle, "contentHash">
     summary: article.summary,
     body: article.body,
     category: article.category,
+    kind: article.kind,
+    scope: article.scope,
+    relationships: [...(article.relationships ?? [])]
+      .map((relationship) => ({ type: relationship.type, target: relationship.target, note: relationship.note }))
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+    audience: [...(article.audience ?? [])].sort(),
     aliases: [...article.aliases].sort(),
     tags: [...article.tags].sort(),
     links: [...article.links].sort(),
@@ -870,6 +951,19 @@ function scoreArticle(article: WikiArticle, normalizedQuery: string, tokens: str
   const tags = article.tags.map(normalizeSearchText);
   const summary = normalizeSearchText(article.summary);
   const body = normalizeSearchText(article.body);
+  const kind = normalizeSearchText(article.kind ?? "");
+  const scopeValues = article.scope ? [
+    ...article.scope.services,
+    ...article.scope.attendings,
+    ...article.scope.procedures,
+    ...article.scope.hospitals,
+    ...article.scope.phases,
+    ...article.scope.patientPopulations
+  ].map(normalizeSearchText) : [];
+  const relationshipValues = (article.relationships ?? [])
+    .flatMap((relationship) => [relationship.type, relationship.target, relationship.note ?? ""])
+    .map(normalizeSearchText);
+  const audience = (article.audience ?? []).map(normalizeSearchText);
   const titleWords = new Set(title.split(" "));
   const slugWords = new Set(slug.split(" "));
   const summaryWords = new Set(summary.split(" "));
@@ -884,8 +978,90 @@ function scoreArticle(article: WikiArticle, normalizedQuery: string, tokens: str
     if (tags.some((tag) => tag.split(" ").includes(token))) score += 8;
     if (summaryWords.has(token)) score += 3;
     if (bodyWords.has(token)) score += 1;
+    if (kind.split(" ").includes(token)) score += 8;
+    if (scopeValues.some((value) => value.split(" ").includes(token))) score += 9;
+    if (relationshipValues.some((value) => value.split(" ").includes(token))) score += 4;
+    if (audience.some((value) => value.split(" ").includes(token))) score += 2;
   }
   return score;
+}
+
+function normalizeWikiScope(scope: WikiArticleScope | undefined): WikiArticleScope {
+  const phases = cleanList(scope?.phases, WIKI_CLINICAL_PHASES.length, 40)
+    .filter((phase): phase is WikiArticleScope["phases"][number] =>
+      (WIKI_CLINICAL_PHASES as readonly string[]).includes(phase)
+    );
+  return {
+    services: cleanList(scope?.services, 20, 100),
+    attendings: cleanList(scope?.attendings, 30, 120),
+    procedures: cleanList(scope?.procedures, 40, 120),
+    hospitals: cleanList(scope?.hospitals, 20, 120),
+    phases,
+    patientPopulations: cleanList(scope?.patientPopulations, 20, 120)
+  };
+}
+
+function normalizeWikiRelationships(relationships: WikiArticleRelationship[] | undefined): WikiArticleRelationship[] {
+  if (!Array.isArray(relationships)) return [];
+  const seen = new Set<string>();
+  return relationships.flatMap((relationship) => {
+    if (!relationship || typeof relationship !== "object") return [];
+    if (!(WIKI_RELATIONSHIP_TYPES as readonly string[]).includes(relationship.type)) return [];
+    const target = normalizeWikiSlug(relationship.target);
+    if (!target) return [];
+    const normalized: WikiArticleRelationship = {
+      type: relationship.type,
+      target,
+      note: cleanOptionalText(relationship.note, 240)
+    };
+    const key = JSON.stringify(normalized);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [normalized];
+  });
+}
+
+function defaultArticleKind(category: WikiCategory, authority: WikiAuthority | undefined): WikiArticleKind {
+  if (category === "index") return "index";
+  if (category === "service") return "service-guide";
+  if (category === "hospital") return "hospital-guide";
+  if (category === "attending") return authority === "attending-preference" ? "operative-preference" : "attending-profile";
+  if (category === "workflow") return "workflow";
+  if (category === "clinical-reference") {
+    if (authority === "attending-preference") return "operative-preference";
+    if (authority === "institutional-policy") return "institutional-policy";
+    if (authority === "educational-template") return "note-template";
+    return "clinical-reference";
+  }
+  return "program-reference";
+}
+
+function isWikiArticleKind(value: string | undefined): value is WikiArticleKind {
+  return Boolean(value && (WIKI_ARTICLE_KINDS as readonly string[]).includes(value));
+}
+
+function hasWikiScope(scope: WikiArticleScope | undefined): boolean {
+  return Boolean(scope && [
+    scope.services,
+    scope.attendings,
+    scope.procedures,
+    scope.hospitals,
+    scope.phases,
+    scope.patientPopulations
+  ].some((values) => values.length));
+}
+
+function formatWikiScope(scope: WikiArticleScope | undefined): string {
+  if (!scope || !hasWikiScope(scope)) return "not specified";
+  const fields = [
+    ["services", scope.services],
+    ["attendings", scope.attendings],
+    ["procedures", scope.procedures],
+    ["hospitals", scope.hospitals],
+    ["phases", scope.phases],
+    ["patient populations", scope.patientPopulations]
+  ] as const;
+  return fields.filter(([, values]) => values.length).map(([label, values]) => `${label}=${values.join("|")}`).join("; ");
 }
 
 function tokenize(value: string): string[] {

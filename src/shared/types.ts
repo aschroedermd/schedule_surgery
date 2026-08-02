@@ -6,7 +6,7 @@ export type ServicePrivileges = Record<string, ServicePrivilege>;
 
 export type ServiceStatus = "on-service" | "off-service";
 
-export const SERVICE_LINES = ["ICU", "Gilbert", "Vascular", "Davies", "Berry", "Ferrara", "Fogel", "NRV", "Peds"] as const;
+export const SERVICE_LINES = ["ICU", "Gilbert", "Vascular", "Davies", "Berry", "Ferrara", "Fogel", "NRV", "Peds", "ENDO"] as const;
 
 export type ServiceLine = (typeof SERVICE_LINES)[number];
 
@@ -337,6 +337,65 @@ export const WIKI_AUTHORITIES = [
 ] as const;
 export type WikiAuthority = (typeof WIKI_AUTHORITIES)[number];
 
+export const WIKI_ARTICLE_KINDS = [
+  "index",
+  "program-reference",
+  "service-guide",
+  "hospital-guide",
+  "attending-profile",
+  "workflow",
+  "operative-preference",
+  "perioperative-protocol",
+  "institutional-policy",
+  "educational-reference",
+  "note-template",
+  "clinical-reference"
+] as const;
+
+export type WikiArticleKind = (typeof WIKI_ARTICLE_KINDS)[number];
+
+export const WIKI_CLINICAL_PHASES = [
+  "clinic",
+  "preoperative",
+  "intraoperative",
+  "post-anesthesia",
+  "inpatient",
+  "discharge",
+  "follow-up",
+  "administrative"
+] as const;
+
+export type WikiClinicalPhase = (typeof WIKI_CLINICAL_PHASES)[number];
+
+export const WIKI_RELATIONSHIP_TYPES = [
+  "belongs-to",
+  "variant-of",
+  "shared-preference",
+  "supplements",
+  "governed-by",
+  "overrides",
+  "uses-workflow",
+  "related",
+  "see-also"
+] as const;
+
+export type WikiRelationshipType = (typeof WIKI_RELATIONSHIP_TYPES)[number];
+
+export interface WikiArticleScope {
+  services: string[];
+  attendings: string[];
+  procedures: string[];
+  hospitals: string[];
+  phases: WikiClinicalPhase[];
+  patientPopulations: string[];
+}
+
+export interface WikiArticleRelationship {
+  type: WikiRelationshipType;
+  target: string;
+  note?: string;
+}
+
 export const WIKI_SOURCE_TYPES = [
   "direct-review",
   "interview",
@@ -376,6 +435,14 @@ export interface WikiArticle {
   summary: string;
   body: string;
   category: WikiCategory;
+  /** Structured semantic kind. Optional only for backward-compatible legacy articles. */
+  kind?: WikiArticleKind;
+  /** Explicit clinical/operational applicability. Empty values mean the scope has not yet been migrated. */
+  scope?: WikiArticleScope;
+  /** Typed graph edges; targets are also mirrored into links for legacy traversal. */
+  relationships?: WikiArticleRelationship[];
+  /** Descriptive audience labels, not an access-control mechanism. */
+  audience?: string[];
   aliases: string[];
   tags: string[];
   links: string[];
@@ -505,6 +572,7 @@ export interface UserSummary {
   servicePrivileges: ServicePrivileges;
   canAddContacts: boolean;
   voiceDailyLimit: number;
+  preferredVoicePreset?: 1 | 2 | 3 | 4 | 5;
   createdAt: string;
   updatedAt: string;
   passwordUpdatedAt: string;
@@ -518,6 +586,7 @@ export interface SessionUser {
   attendingId?: string;
   servicePrivileges: ServicePrivileges;
   canAddContacts: boolean;
+  preferredVoicePreset?: 1 | 2 | 3 | 4 | 5;
   passwordUpdatedAt: string;
   mustChangePassword: boolean;
 }

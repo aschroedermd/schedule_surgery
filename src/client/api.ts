@@ -40,7 +40,7 @@ export interface VoiceQuota {
   unlimited?: boolean;
 }
 
-export type VoicePreset = 1 | 2 | 3 | 4;
+export type VoicePreset = 1 | 2 | 3 | 4 | 5;
 export type ChatProvider = "openai" | "openrouter";
 
 export interface ChatModelSettings {
@@ -175,6 +175,15 @@ export async function skipPasswordChange(token: string): Promise<PasswordChangeS
 
 export async function fetchSession(token: string): Promise<Omit<Session, "token">> {
   return request<Omit<Session, "token">>("/api/session", { token });
+}
+
+export async function updatePreferredVoicePreset(token: string, preferredVoicePreset: VoicePreset): Promise<VoicePreset> {
+  const response = await request<{ preferredVoicePreset: VoicePreset }>("/api/me/voice-preset", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ preferredVoicePreset })
+  });
+  return response.preferredVoicePreset;
 }
 
 export async function fetchState(token: string): Promise<PlannerState> {

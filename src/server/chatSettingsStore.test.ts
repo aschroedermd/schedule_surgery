@@ -41,7 +41,7 @@ describe("chat settings store", () => {
         voiceModel: "fish-audio/s2-pro",
         voiceName: "Custom Narrator",
         elevenLabsModel: "eleven_flash_v2_5",
-        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+        elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf", "onwK4e9ZLuTAKqWW03F9", "ia2hmHnWgMXcUgmY4yVU"]
       });
 
       await expect(new FileChatSettingsStore(filePath).get()).resolves.toEqual(
@@ -53,7 +53,7 @@ describe("chat settings store", () => {
           voiceModel: "fish-audio/s2-pro",
           voiceName: "Custom Narrator",
           elevenLabsModel: "eleven_flash_v2_5",
-          elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"],
+          elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf", "onwK4e9ZLuTAKqWW03F9", "ia2hmHnWgMXcUgmY4yVU"],
           updatedAt: expect.any(String)
         })
       );
@@ -82,6 +82,31 @@ describe("chat settings store", () => {
       await expect(new FileChatSettingsStore(filePath).get()).resolves.toMatchObject({
         chatProvider: "openrouter",
         primaryModel: "deepseek/deepseek-v4-flash"
+      });
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades legacy three-voice settings with the two new ElevenLabs voices", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "planner-chat-settings-voices-"));
+    const filePath = path.join(directory, "chat-settings.json");
+    try {
+      await fs.writeFile(filePath, JSON.stringify({
+        version: 2,
+        settings: {
+          ...getDefaultChatModelSettings(),
+          elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
+        }
+      }));
+      await expect(new FileChatSettingsStore(filePath).get()).resolves.toMatchObject({
+        elevenLabsVoiceIds: [
+          "kSvMZug5ZFM9sKGpLAei",
+          "dWAnId3mzfl4fTszwtOG",
+          "0rEo3eAjssGDUCXHYENf",
+          "onwK4e9ZLuTAKqWW03F9",
+          "ia2hmHnWgMXcUgmY4yVU"
+        ]
       });
     } finally {
       await fs.rm(directory, { recursive: true, force: true });

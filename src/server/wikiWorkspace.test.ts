@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildFastWikiContext, computeWikiSourceRecordHash, normalizeWikiArticles } from "./wiki";
+import {
+  buildFastWikiContext,
+  computeWikiSourceRecordHash,
+  normalizeWikiArticles,
+  readWikiArticle,
+  searchWikiArticles
+} from "./wiki";
 import {
   buildWorkspaceDiff,
   createDraftArticle,
@@ -25,6 +31,15 @@ describe("private wiki workspace", () => {
 
   it("stages a source, round-trips a sourced draft, and detects source metadata edits", async () => {
     const workspace = await makeWorkspace(temporaryDirectories);
+    expect(await fs.readdir(path.join(workspace, "templates"))).toEqual(expect.arrayContaining([
+      "attending-profile.md",
+      "attending-procedure.md",
+      "institutional-policy.md",
+      "note-template.md",
+      "perioperative-protocol.md",
+      "service-guide.md",
+      "workflow.md"
+    ]));
     const sourceFile = path.join(workspace, "reviewed-preferences.txt");
     await fs.writeFile(sourceFile, "Reviewed preference: use the documented port layout.", "utf8");
 
@@ -39,6 +54,19 @@ describe("private wiki workspace", () => {
       summary: "Agent-extracted draft awaiting human review.",
       body: "## Port placement\n\nUse the documented port layout.",
       category: "attending",
+      kind: "operative-preference",
+      scope: {
+        services: ["Davies"],
+        attendings: ["Dr. Example"],
+        procedures: ["Example procedure"],
+        hospitals: ["RMH"],
+        phases: ["intraoperative"],
+        patientPopulations: []
+      },
+      relationships: [
+        { type: "belongs-to", target: "attending-example", note: "Attending preference hub" }
+      ],
+      audience: ["residents", "operating-room staff"],
       authority: "attending-preference",
       tags: ["operative-preference"]
     }, staged.source.id);
@@ -48,6 +76,10 @@ describe("private wiki workspace", () => {
       slug: article.slug,
       status: "draft",
       contentHash: article.contentHash,
+      kind: "operative-preference",
+      scope: expect.objectContaining({ attendings: ["Dr. Example"], phases: ["intraoperative"] }),
+      relationships: [{ type: "belongs-to", target: "attending-example", note: "Attending preference hub" }],
+      audience: ["residents", "operating-room staff"],
       sourceRefs: [expect.objectContaining({ sourceId: staged.source.id })]
     }));
 
@@ -102,6 +134,86 @@ describe("private wiki workspace", () => {
       updatedAt: now
     }])[0];
     expect(buildFastWikiContext("what size Fogarty balloon?", [article])).toContain("5 Fr Fogarty balloon");
+  });
+
+  it("uses typed relationships to retrieve and traverse procedure variants", () => {
+    const now = "2026-08-01T12:00:00.000Z";
+    const articles = normalizeWikiArticles([
+      {
+        id: "wiki_shared_setup",
+        slug: "example-shared-setup",
+        title: "Dr. Example: Shared Operative Setup",
+        summary: "Shared glove, positioning, and room setup preferences.",
+        body: "Use the shared setup unless the procedure article says otherwise.",
+        category: "attending",
+        kind: "operative-preference",
+        scope: {
+          services: [],
+          attendings: ["Dr. Example"],
+          procedures: [],
+          hospitals: [],
+          phases: ["intraoperative"],
+          patientPopulations: []
+        },
+        relationships: [],
+        audience: ["residents", "operating-room staff"],
+        aliases: [],
+        tags: ["shared setup"],
+        links: [],
+        status: "published",
+        authority: "attending-preference",
+        revision: 1,
+        contentHash: "",
+        sourceRefs: [],
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "wiki_variant",
+        slug: "example-robotic-procedure",
+        title: "Dr. Example: Robotic Procedure",
+        summary: "Procedure-specific card for the robotic variant.",
+        body: "Use the robotic ports described here.",
+        category: "attending",
+        kind: "operative-preference",
+        scope: {
+          services: ["Davies"],
+          attendings: ["Dr. Example"],
+          procedures: ["Robotic procedure"],
+          hospitals: [],
+          phases: ["intraoperative"],
+          patientPopulations: []
+        },
+        relationships: [{ type: "shared-preference", target: "example-shared-setup" }],
+        audience: ["residents", "operating-room staff"],
+        aliases: [],
+        tags: ["robotic"],
+        links: [],
+        status: "published",
+        authority: "attending-preference",
+        revision: 1,
+        contentHash: "",
+        sourceRefs: [],
+        createdAt: now,
+        updatedAt: now
+      }
+    ]);
+
+    expect(searchWikiArticles(articles, "Dr. Example robotic", 2).map((article) => article.slug)).toContain(
+      "example-robotic-procedure"
+    );
+    expect(readWikiArticle(articles, "example-robotic-procedure")?.related).toEqual([
+      expect.objectContaining({
+        relationship: { type: "shared-preference", target: "example-shared-setup" },
+        article: expect.objectContaining({ slug: "example-shared-setup" })
+      })
+    ]);
+    expect(readWikiArticle(articles, "example-shared-setup")?.incomingRelationships).toEqual([
+      expect.objectContaining({
+        relationship: { type: "shared-preference", target: "example-shared-setup" },
+        article: expect.objectContaining({ slug: "example-robotic-procedure" })
+      })
+    ]);
   });
 });
 

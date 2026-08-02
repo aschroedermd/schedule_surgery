@@ -292,6 +292,12 @@ h2 {
   box-shadow: var(--shadow-xl);
 }
 
+/* iOS Safari zooms focused form controls smaller than 16px. Keeping the
+   credentials fields at this threshold prevents a persisting page zoom after sign-in. */
+.login-panel input {
+  font-size: 16px;
+}
+
 .password-change-required-screen {
   position: relative;
 }
@@ -3302,6 +3308,10 @@ h2 {
   border: 0;
   background: var(--color-primary);
   color: #fff;
+}
+
+.chat-send-button.recording-ready {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 .chat-send-button.stop {

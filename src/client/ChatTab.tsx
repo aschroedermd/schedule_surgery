@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   Mic,
+  Pause,
   Pencil,
   Play,
   RotateCcw,
@@ -40,7 +41,8 @@ import {
   streamChatMessage,
   synthesizeChatSpeech,
   transcribeChatAudio,
-  updateChatModelSettings
+  updateChatModelSettings,
+  updatePreferredVoicePreset
 } from "./api";
 import { applyDictationReplacements } from "./dictationReplacements";
 
@@ -55,7 +57,8 @@ const VOICE_PRESETS: Array<{ id: VoicePreset; description: string }> = [
   { id: 1, description: "James · ElevenLabs" },
   { id: 2, description: "Voice 2 · ElevenLabs" },
   { id: 3, description: "Voice 3 · ElevenLabs" },
-  { id: 4, description: "Fish Audio · OpenRouter" }
+  { id: 4, description: "Voice 4 · ElevenLabs" },
+  { id: 5, description: "Voice 5 · ElevenLabs" }
 ];
 
 const WORKING_MESSAGES = [
@@ -89,6 +92,7 @@ const ALMOST_DONE_MESSAGES = [
 type ChatStatus = "idle" | "thinking" | "streaming" | "requesting-mic" | "recording" | "transcribing";
 type SpeechStatus = "idle" | "generating" | "playing" | "ready";
 type ChatPlannerTab = "board" | "my" | "calendar" | "call";
+type RecordingFinishMode = "cancel" | "review" | "send";
 
 interface ChatUiMessage extends ChatConversationMessage {
   id: string;
@@ -122,6 +126,7 @@ interface ScheduleCard {
 export function ChatTab({
   token,
   displayName,
+  preferredVoicePreset,
   isAdmin,
   serviceLine,
   plannerVersion,
@@ -129,6 +134,7 @@ export function ChatTab({
 }: {
   token: string;
   displayName: string;
+  preferredVoicePreset?: VoicePreset;
   isAdmin: boolean;
   serviceLine: string;
   plannerVersion: number;
@@ -148,7 +154,8 @@ export function ChatTab({
   const [quota, setQuota] = useState<ChatQuota>();
   const [voiceQuota, setVoiceQuota] = useState<VoiceQuota>();
   const [voiceMode, setVoiceMode] = useState(false);
-  const [voicePreset, setVoicePreset] = useState<VoicePreset>(1);
+  const [voicePreset, setVoicePreset] = useState<VoicePreset>(preferredVoicePreset ?? 1);
+  const [voicePresetSaving, setVoicePresetSaving] = useState(false);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [adminChatSettings, setAdminChatSettings] = useState<ChatModelSettings>();
   const [adminFallbackModels, setAdminFallbackModels] = useState("");
@@ -173,7 +180,7 @@ export function ChatTab({
   const chunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
   const holdActiveRef = useRef(false);
-  const cancelRecordingRef = useRef(false);
+  const recordingFinishModeRef = useRef<RecordingFinishMode>("review");
   const recordingTimeoutRef = useRef<number>();
   const recordingIntervalRef = useRef<number>();
   const responseDelayTimeoutRef = useRef<number>();
@@ -337,10 +344,10 @@ export function ChatTab({
 
   async function sendMessage(
     rawText: string,
-    options: { appendUser?: boolean; baseMessages?: ChatUiMessage[] } = {}
+    options: { appendUser?: boolean; baseMessages?: ChatUiMessage[]; fromVoiceTranscription?: boolean } = {}
   ) {
     const content = rawText.trim();
-    if (!content || isBusy || quotaExhausted) return;
+    if (!content || (isBusy && !options.fromVoiceTranscription) || quotaExhausted) return;
     const baseMessages = options.baseMessages ?? messages;
     const userMessage: ChatUiMessage = {
       id: createChatMessageId(),
@@ -618,7 +625,7 @@ export function ChatTab({
     rememberInputPreference("voice");
     setInputPreference("voice");
     holdActiveRef.current = true;
-    cancelRecordingRef.current = false;
+    recordingFinishModeRef.current = "review";
     setError(undefined);
     setVoiceTranscriptReady(false);
     setStatus("requesting-mic");
@@ -652,7 +659,7 @@ export function ChatTab({
       recordingIntervalRef.current = window.setInterval(() => {
         setRecordingDuration(Date.now() - recordingStartedAtRef.current);
       }, 200);
-      recordingTimeoutRef.current = window.setTimeout(() => stopRecording(false), MAX_RECORDING_MS);
+      recordingTimeoutRef.current = window.setTimeout(() => stopRecording("review"), MAX_RECORDING_MS);
     } catch (recordingError) {
       holdActiveRef.current = false;
       stopTracks();
@@ -661,14 +668,18 @@ export function ChatTab({
     }
   }
 
-  function stopRecording(cancel: boolean) {
+  function stopRecording(finishMode: RecordingFinishMode) {
     holdActiveRef.current = false;
-    cancelRecordingRef.current = cancel;
     window.clearTimeout(recordingTimeoutRef.current);
     window.clearInterval(recordingIntervalRef.current);
     if (recorderRef.current?.state === "recording") {
+      // Lock in the first action that actually stops this recording. A later
+      // pointer event must not change review into send (or vice versa) while
+      // MediaRecorder is waiting to dispatch its asynchronous stop event.
+      recordingFinishModeRef.current = finishMode;
       recorderRef.current.stop();
     } else if (status === "requesting-mic") {
+      recordingFinishModeRef.current = finishMode;
       setStatus("idle");
     }
   }
@@ -676,11 +687,12 @@ export function ChatTab({
   async function finishRecording(mimeType: string) {
     const elapsed = Date.now() - recordingStartedAtRef.current;
     const blob = new Blob(chunksRef.current, { type: mimeType });
+    const finishMode = recordingFinishModeRef.current;
+    recordingFinishModeRef.current = "review";
     recorderRef.current = undefined;
     chunksRef.current = [];
     stopTracks();
-    if (cancelRecordingRef.current) {
-      cancelRecordingRef.current = false;
+    if (finishMode === "cancel") {
       setRecordingDuration(0);
       setStatus("idle");
       return;
@@ -693,14 +705,26 @@ export function ChatTab({
     }
 
     setStatus("transcribing");
+    setRecordingDuration(0);
     playUiTone("send");
     try {
       const wavBase64 = await audioBlobToWavBase64(blob);
       const { text } = await transcribeChatAudio(token, wavBase64, "wav");
-      setDraft(applyDictationReplacements(text));
-      setVoiceTranscriptReady(true);
-      setStatus("idle");
-      window.requestAnimationFrame(() => composerRef.current?.focus());
+      const transcript = applyDictationReplacements(text);
+      if (!transcript.trim()) {
+        setVoiceTranscriptReady(false);
+        setStatus("idle");
+        setError("No speech was detected. Please try recording again.");
+        return;
+      }
+      if (finishMode === "send") {
+        await sendMessage(transcript, { fromVoiceTranscription: true });
+      } else {
+        setDraft(transcript);
+        setVoiceTranscriptReady(true);
+        setStatus("idle");
+        window.requestAnimationFrame(() => composerRef.current?.focus());
+      }
     } catch (transcriptionError) {
       setStatus("idle");
       setError(transcriptionError instanceof Error ? transcriptionError.message : "The recording could not be transcribed");
@@ -711,7 +735,7 @@ export function ChatTab({
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     if (recorderRef.current?.state === "recording" || status === "requesting-mic") {
-      stopRecording(false);
+      stopRecording("review");
       return;
     }
     recordingStartedAtRef.current = Date.now();
@@ -721,13 +745,13 @@ export function ChatTab({
   function handleRecordPointerUp(event: PointerEvent<HTMLButtonElement>) {
     event.preventDefault();
     if (recorderRef.current?.state !== "recording" && status !== "requesting-mic") return;
-    if (Date.now() - recordingStartedAtRef.current >= HOLD_TO_SEND_MS) stopRecording(false);
+    if (Date.now() - recordingStartedAtRef.current >= HOLD_TO_SEND_MS) stopRecording("review");
   }
 
   function handleRecordKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if ((event.key === " " || event.key === "Enter") && !event.repeat) {
       event.preventDefault();
-      if (recorderRef.current?.state === "recording" || status === "requesting-mic") stopRecording(false);
+      if (recorderRef.current?.state === "recording" || status === "requesting-mic") stopRecording("review");
       else void beginRecording();
     }
   }
@@ -875,10 +899,20 @@ export function ChatTab({
                       aria-label={`Select ${preset.description}`}
                       aria-pressed={voicePreset === preset.id}
                       title={preset.description}
-                      disabled={voiceQuotaExhausted || isBusy}
-                      onClick={() => {
+                      disabled={voiceQuotaExhausted || isBusy || voicePresetSaving}
+                      onClick={async () => {
+                        const previousPreset = voicePreset;
                         setVoicePreset(preset.id);
                         setChatSettingsOpen(false);
+                        setVoicePresetSaving(true);
+                        try {
+                          await updatePreferredVoicePreset(token, preset.id);
+                        } catch (voiceError) {
+                          setVoicePreset(previousPreset);
+                          setError(voiceError instanceof Error ? voiceError.message : "Unable to save voice selection");
+                        } finally {
+                          setVoicePresetSaving(false);
+                        }
                       }}
                     >
                       {preset.id}
@@ -1094,7 +1128,7 @@ export function ChatTab({
           {status === "recording" && (
             <div className="chat-recording-status" role="status">
               <span><span className="chat-recording-dot" />Recording {formatDuration(recordingDuration)}</span>
-              <button type="button" onClick={() => stopRecording(true)}>
+              <button type="button" onClick={() => stopRecording("cancel")}>
                 <X size={15} /> Cancel
               </button>
             </div>
@@ -1159,15 +1193,15 @@ export function ChatTab({
             <button
               type="button"
               className={`chat-record-button${status === "recording" ? " recording" : ""}${inputPreference === "voice" ? " preferred" : ""}`}
-              aria-label={status === "recording" ? "Stop recording" : "Tap or hold to record"}
-              title={status === "recording" ? "Stop recording" : "Tap or hold to record"}
+              aria-label={status === "recording" ? "Pause recording and review transcript" : "Tap or hold to record"}
+              title={status === "recording" ? "Pause recording and review transcript" : "Tap or hold to record"}
               disabled={(isBusy && status !== "recording" && status !== "requesting-mic") || quotaExhausted}
               onPointerDown={handleRecordPointerDown}
               onPointerUp={handleRecordPointerUp}
-              onPointerCancel={() => stopRecording(true)}
+              onPointerCancel={() => stopRecording("cancel")}
               onKeyDown={handleRecordKeyDown}
             >
-              {status === "recording" ? <Square size={17} fill="currentColor" /> : <Mic size={19} />}
+              {status === "recording" ? <Pause size={17} fill="currentColor" /> : <Mic size={19} />}
               {status === "recording" && <span className="recording-pulse" />}
             </button>
             {isAnswering ? (
@@ -1176,10 +1210,19 @@ export function ChatTab({
               </button>
             ) : (
               <button
-                type="submit"
-                className="chat-send-button"
-                aria-label="Send message"
-                disabled={!draft.trim() || isVoiceBusy || quotaExhausted}
+                type={status === "recording" ? "button" : "submit"}
+                className={`chat-send-button${status === "recording" ? " recording-ready" : ""}`}
+                aria-label={status === "recording" ? "Transcribe and send recording" : "Send message"}
+                title={status === "recording" ? "Transcribe and send recording" : "Send message"}
+                disabled={status === "recording"
+                  ? quotaExhausted
+                  : !draft.trim() || isVoiceBusy || quotaExhausted}
+                onClick={status === "recording" ? (event) => {
+                  // The state update changes this control back into a submit
+                  // button, so explicitly suppress this click's form default.
+                  event.preventDefault();
+                  stopRecording("send");
+                } : undefined}
               >
                 <ArrowUp size={19} />
               </button>
@@ -1188,7 +1231,7 @@ export function ChatTab({
           <div className="chat-composer-meta">
             <span>
               {status === "recording"
-                ? "Tap again or release after holding to finish"
+                ? "Pause to review your transcript, or send it immediately"
                 : isAnswering
                   ? "Esc also stops the response"
                   : inputPreference === "voice"

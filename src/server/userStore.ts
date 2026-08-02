@@ -7,6 +7,7 @@ import { RESIDENT_USER_SEEDS } from "./residentRotationSeed";
 const DEFAULT_USERS = RESIDENT_USER_SEEDS;
 const DEFAULT_NEW_USER_TEMPORARY_PASSWORD = "schroeder1";
 export const DEFAULT_VOICE_DAILY_LIMIT = 12;
+export const DEFAULT_VOICE_PRESET = 1;
 
 interface PasswordHash {
   algorithm: "scrypt";
@@ -52,6 +53,7 @@ export interface UserStore {
   createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]>;
   updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts">>): Promise<UserSummary>;
   updateVoiceDailyLimit(username: string, limit: number): Promise<UserSummary>;
+  updatePreferredVoicePreset(username: string, preset: 1 | 2 | 3 | 4 | 5): Promise<UserSummary>;
   deleteUser(username: string): Promise<void>;
   resetPassword(username: string, temporaryPassword?: string): Promise<PasswordResetResult>;
   changePassword(username: string, currentPassword: string, nextPassword: string): Promise<UserSummary>;
@@ -135,6 +137,15 @@ export class FileUserStore implements UserStore {
     const data = await this.load();
     const user = requireStoredUser(data, username);
     user.voiceDailyLimit = normalizeVoiceDailyLimit(limit);
+    user.updatedAt = new Date().toISOString();
+    await this.save(data);
+    return toSummary(user);
+  }
+
+  async updatePreferredVoicePreset(username: string, preset: 1 | 2 | 3 | 4 | 5): Promise<UserSummary> {
+    const data = await this.load();
+    const user = requireStoredUser(data, username);
+    user.preferredVoicePreset = normalizeVoicePreset(preset);
     user.updatedAt = new Date().toISOString();
     await this.save(data);
     return toSummary(user);
@@ -226,6 +237,7 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       servicePrivileges: normalizePrivileges(user.servicePrivileges),
       canAddContacts: username === "admin" || user.canAddContacts === true,
       voiceDailyLimit: normalizeVoiceDailyLimit(user.voiceDailyLimit),
+      preferredVoicePreset: normalizeVoicePreset(user.preferredVoicePreset),
       createdAt: user.createdAt ?? now,
       updatedAt: user.updatedAt ?? now,
       passwordUpdatedAt: user.passwordUpdatedAt ?? user.updatedAt ?? now,
@@ -278,6 +290,7 @@ function makeSeedUser(
     servicePrivileges: normalizePrivileges(role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : {}),
     canAddContacts: role === "admin",
     voiceDailyLimit: DEFAULT_VOICE_DAILY_LIMIT,
+    preferredVoicePreset: DEFAULT_VOICE_PRESET,
     passwordHash: hashSecret(password),
     createdAt: now,
     updatedAt: now,
@@ -312,6 +325,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
       ),
       canAddContacts: role === "admin" || input.canAddContacts === true,
       voiceDailyLimit: DEFAULT_VOICE_DAILY_LIMIT,
+      preferredVoicePreset: DEFAULT_VOICE_PRESET,
       passwordHash: hashSecret(password),
       createdAt: now,
       updatedAt: now,
@@ -354,6 +368,7 @@ function toSummary(user: StoredUser): UserSummary {
     servicePrivileges: { ...user.servicePrivileges },
     canAddContacts: user.role === "admin" || user.canAddContacts,
     voiceDailyLimit: normalizeVoiceDailyLimit(user.voiceDailyLimit),
+    preferredVoicePreset: normalizeVoicePreset(user.preferredVoicePreset),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     passwordUpdatedAt: user.passwordUpdatedAt,
@@ -365,6 +380,12 @@ function normalizeVoiceDailyLimit(value: unknown): number {
   return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 10_000
     ? Number(value)
     : DEFAULT_VOICE_DAILY_LIMIT;
+}
+
+function normalizeVoicePreset(value: unknown): 1 | 2 | 3 | 4 | 5 {
+  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 5
+    ? Number(value) as 1 | 2 | 3 | 4 | 5
+    : DEFAULT_VOICE_PRESET;
 }
 
 function normalizeRole(role: unknown): Role {
