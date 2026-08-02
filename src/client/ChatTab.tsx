@@ -45,6 +45,7 @@ import {
   updatePreferredVoicePreset
 } from "./api";
 import { applyDictationReplacements } from "./dictationReplacements";
+import { presentActionError, presentBackgroundError } from "./errorPresentation";
 
 const MAX_RECORDING_MS = 60_000;
 const RESPONSE_DELAY_MS = 8_000;
@@ -128,6 +129,7 @@ export function ChatTab({
   displayName,
   preferredVoicePreset,
   isAdmin,
+  showDiagnosticErrors,
   serviceLine,
   plannerVersion,
   onOpenPlanner
@@ -136,6 +138,7 @@ export function ChatTab({
   displayName: string;
   preferredVoicePreset?: VoicePreset;
   isAdmin: boolean;
+  showDiagnosticErrors: boolean;
   serviceLine: string;
   plannerVersion: number;
   onOpenPlanner: (tab: ChatPlannerTab, date?: string) => void;
@@ -208,12 +211,15 @@ export function ChatTab({
         }
       })
       .catch((quotaError) => {
-        if (!cancelled) setError(quotaError instanceof Error ? quotaError.message : "Unable to load assistant allowance");
+        if (!cancelled) {
+          const message = presentBackgroundError(quotaError, showDiagnosticErrors);
+          if (message) setError(message);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [showDiagnosticErrors, token]);
 
   useEffect(() => {
     if (!isAdmin || !chatSettingsOpen || adminChatSettings || adminSettingsLoading) return;
@@ -475,9 +481,11 @@ export function ChatTab({
           const speechMessage = speechError instanceof Error ? speechError.message : undefined;
           setError(speechMessage === VOICE_LIMIT_MESSAGE
             ? speechMessage
-            : speechMessage
-              ? `The answer is ready, but it could not be spoken: ${speechMessage}`
-              : "The answer is ready, but it could not be spoken");
+            : presentActionError(
+                speechError,
+                "The answer is ready, but it couldn't be spoken. You can still read it above.",
+                showDiagnosticErrors
+              ));
           void fetchVoiceQuota(token).then(setVoiceQuota).catch(() => undefined);
         }
       }
@@ -488,7 +496,7 @@ export function ChatTab({
       setDraft((current) => current || content);
       setVoiceTranscriptReady(false);
       if (!isAbortError(sendError)) {
-        setError(sendError instanceof Error ? sendError.message : "The assistant could not answer");
+        setError(presentActionError(sendError, "The assistant couldn't answer. Please try again.", showDiagnosticErrors));
         setLastFailedQuestion(content);
       }
       void fetchChatQuota(token).then(setQuota).catch(() => undefined);
@@ -547,7 +555,7 @@ export function ChatTab({
           }]);
         })
         .catch((actionError) => {
-          setError(actionError instanceof Error ? actionError.message : "The schedule action could not be completed");
+          setError(presentActionError(actionError, "That schedule action couldn't be completed. Please try again.", showDiagnosticErrors));
         })
         .finally(() => {
           setStatus("idle");
@@ -664,7 +672,11 @@ export function ChatTab({
       holdActiveRef.current = false;
       stopTracks();
       setStatus("idle");
-      setError(recordingError instanceof Error ? recordingError.message : "Microphone access failed");
+      setError(presentActionError(
+        recordingError,
+        "The microphone couldn't be started. Check this site's microphone permission and try again.",
+        showDiagnosticErrors
+      ));
     }
   }
 
@@ -727,7 +739,11 @@ export function ChatTab({
       }
     } catch (transcriptionError) {
       setStatus("idle");
-      setError(transcriptionError instanceof Error ? transcriptionError.message : "The recording could not be transcribed");
+      setError(presentActionError(
+        transcriptionError,
+        "The recording couldn't be transcribed. Please try again or type your question.",
+        showDiagnosticErrors
+      ));
     }
   }
 
@@ -909,7 +925,7 @@ export function ChatTab({
                           await updatePreferredVoicePreset(token, preset.id);
                         } catch (voiceError) {
                           setVoicePreset(previousPreset);
-                          setError(voiceError instanceof Error ? voiceError.message : "Unable to save voice selection");
+                          setError(presentActionError(voiceError, "That voice selection couldn't be saved.", showDiagnosticErrors));
                         } finally {
                           setVoicePresetSaving(false);
                         }

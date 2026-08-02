@@ -60,6 +60,12 @@ export interface UserStore {
 }
 
 export class FileUserStore implements UserStore {
+  // A single app process owns this file. Keep reads in memory, serialize every
+  // mutation, and publish complete snapshots so auth can never parse half a write.
+  private data: UserStoreData | undefined;
+  private loading: Promise<UserStoreData> | undefined;
+  private mutationQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly filePath = getDefaultUserStorePath()) {}
 
   async authenticate(username: string, password: string): Promise<UserSummary | undefined> {
@@ -87,99 +93,111 @@ export class FileUserStore implements UserStore {
 
   async createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]> {
     if (inputs.length === 0) throw new Error("At least one user is required");
-    const data = await this.load();
-    const existingUsernames = new Set(data.users.map((user) => user.username));
-    const batchUsernames = new Set<string>();
-    const now = new Date().toISOString();
-    const created: Array<{ stored: StoredUser; temporaryPassword?: string }> = [];
+    return this.mutate(async (data) => {
+      const existingUsernames = new Set(data.users.map((user) => user.username));
+      const batchUsernames = new Set<string>();
+      const now = new Date().toISOString();
+      const created: Array<{ stored: StoredUser; temporaryPassword?: string }> = [];
 
-    for (const input of inputs) {
-      const username = normalizeUsername(input.username);
-      if (existingUsernames.has(username) || batchUsernames.has(username)) {
-        throw new Error(`User already exists: ${username}`);
+      for (const input of inputs) {
+        const username = normalizeUsername(input.username);
+        if (existingUsernames.has(username) || batchUsernames.has(username)) {
+          throw new Error(`User already exists: ${username}`);
+        }
+        batchUsernames.add(username);
+        created.push(makeCreatedUser({ ...input, username }, now));
       }
-      batchUsernames.add(username);
-      created.push(makeCreatedUser({ ...input, username }, now));
-    }
 
-    data.users.push(...created.map(({ stored }) => stored));
-    await this.save(data);
-    return created.map(({ stored, temporaryPassword }) => ({ user: toSummary(stored), temporaryPassword }));
+      data.users.push(...created.map(({ stored }) => stored));
+      return created.map(({ stored, temporaryPassword }) => ({ user: toSummary(stored), temporaryPassword }));
+    });
   }
 
   async updateUser(
     username: string,
     patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts">>
   ): Promise<UserSummary> {
-    const data = await this.load();
-    const user = requireStoredUser(data, username);
-    user.displayName = readOptionalString(patch.displayName) ?? user.displayName;
-    user.role = user.username === "admin" ? "admin" : normalizeRole(patch.role ?? user.role);
-    user.attendingId = user.role === "attending" ? readOptionalString(patch.attendingId) ?? user.attendingId : undefined;
-    if (user.role === "attending" && !user.attendingId) throw new Error("Attending accounts must be linked to an attending");
-    if (patch.servicePrivileges) user.servicePrivileges = normalizePrivileges(patch.servicePrivileges);
-    if (typeof patch.canAddContacts === "boolean") user.canAddContacts = user.role === "admin" || patch.canAddContacts;
-    user.updatedAt = new Date().toISOString();
-    await this.save(data);
-    return toSummary(user);
+    return this.mutate(async (data) => {
+      const user = requireStoredUser(data, username);
+      user.displayName = readOptionalString(patch.displayName) ?? user.displayName;
+      user.role = user.username === "admin" ? "admin" : normalizeRole(patch.role ?? user.role);
+      user.attendingId = user.role === "attending" ? readOptionalString(patch.attendingId) ?? user.attendingId : undefined;
+      if (user.role === "attending" && !user.attendingId) throw new Error("Attending accounts must be linked to an attending");
+      if (patch.servicePrivileges) user.servicePrivileges = normalizePrivileges(patch.servicePrivileges);
+      if (typeof patch.canAddContacts === "boolean") user.canAddContacts = user.role === "admin" || patch.canAddContacts;
+      user.updatedAt = new Date().toISOString();
+      return toSummary(user);
+    });
   }
 
   async deleteUser(username: string): Promise<void> {
-    const data = await this.load();
-    const normalized = normalizeUsername(username);
-    if (normalized === "admin") throw new Error("The built-in admin account cannot be deleted");
-    if (!data.users.some((user) => user.username === normalized)) throw new Error(`User not found: ${normalized}`);
-    data.users = data.users.filter((user) => user.username !== normalized);
-    await this.save(data);
+    await this.mutate(async (data) => {
+      const normalized = normalizeUsername(username);
+      if (normalized === "admin") throw new Error("The built-in admin account cannot be deleted");
+      if (!data.users.some((user) => user.username === normalized)) throw new Error(`User not found: ${normalized}`);
+      data.users = data.users.filter((user) => user.username !== normalized);
+    });
   }
 
   async updateVoiceDailyLimit(username: string, limit: number): Promise<UserSummary> {
-    const data = await this.load();
-    const user = requireStoredUser(data, username);
-    user.voiceDailyLimit = normalizeVoiceDailyLimit(limit);
-    user.updatedAt = new Date().toISOString();
-    await this.save(data);
-    return toSummary(user);
+    return this.mutate(async (data) => {
+      const user = requireStoredUser(data, username);
+      user.voiceDailyLimit = normalizeVoiceDailyLimit(limit);
+      user.updatedAt = new Date().toISOString();
+      return toSummary(user);
+    });
   }
 
   async updatePreferredVoicePreset(username: string, preset: 1 | 2 | 3 | 4 | 5): Promise<UserSummary> {
-    const data = await this.load();
-    const user = requireStoredUser(data, username);
-    user.preferredVoicePreset = normalizeVoicePreset(preset);
-    user.updatedAt = new Date().toISOString();
-    await this.save(data);
-    return toSummary(user);
+    return this.mutate(async (data) => {
+      const user = requireStoredUser(data, username);
+      user.preferredVoicePreset = normalizeVoicePreset(preset);
+      user.updatedAt = new Date().toISOString();
+      return toSummary(user);
+    });
   }
 
   async resetPassword(username: string, requestedTemporaryPassword?: string): Promise<PasswordResetResult> {
-    const data = await this.load();
-    const user = requireStoredUser(data, username);
-    const now = new Date().toISOString();
-    const temporaryPassword = readOptionalString(requestedTemporaryPassword) ?? generateTemporaryPassword();
-    assertUsableSecret(temporaryPassword, "Temporary password");
-    user.passwordHash = hashSecret(temporaryPassword);
-    user.passwordUpdatedAt = now;
-    user.updatedAt = now;
-    user.mustChangePassword = true;
-    await this.save(data);
-    return { user: toSummary(user), temporaryPassword };
+    return this.mutate(async (data) => {
+      const user = requireStoredUser(data, username);
+      const now = new Date().toISOString();
+      const temporaryPassword = readOptionalString(requestedTemporaryPassword) ?? generateTemporaryPassword();
+      assertUsableSecret(temporaryPassword, "Temporary password");
+      user.passwordHash = hashSecret(temporaryPassword);
+      user.passwordUpdatedAt = now;
+      user.updatedAt = now;
+      user.mustChangePassword = true;
+      return { user: toSummary(user), temporaryPassword };
+    });
   }
 
   async changePassword(username: string, currentPassword: string, nextPassword: string): Promise<UserSummary> {
     assertUsableSecret(nextPassword, "Password");
-    const data = await this.load();
-    const user = requireStoredUser(data, username);
-    if (!verifySecret(currentPassword, user.passwordHash)) throw new Error("Current password is incorrect");
-    const now = new Date().toISOString();
-    user.passwordHash = hashSecret(nextPassword);
-    user.passwordUpdatedAt = now;
-    user.updatedAt = now;
-    user.mustChangePassword = false;
-    await this.save(data);
-    return toSummary(user);
+    return this.mutate(async (data) => {
+      const user = requireStoredUser(data, username);
+      if (!verifySecret(currentPassword, user.passwordHash)) throw new Error("Current password is incorrect");
+      const now = new Date().toISOString();
+      user.passwordHash = hashSecret(nextPassword);
+      user.passwordUpdatedAt = now;
+      user.updatedAt = now;
+      user.mustChangePassword = false;
+      return toSummary(user);
+    });
   }
 
   private async load(): Promise<UserStoreData> {
+    if (this.data) return this.data;
+    if (this.loading) return this.loading;
+    this.loading = this.loadFromDisk();
+    try {
+      this.data = await this.loading;
+      return this.data;
+    } finally {
+      this.loading = undefined;
+    }
+  }
+
+  private async loadFromDisk(): Promise<UserStoreData> {
     let loaded: UserStoreData | undefined;
     try {
       loaded = JSON.parse(await fs.readFile(this.filePath, "utf8")) as UserStoreData;
@@ -188,14 +206,34 @@ export class FileUserStore implements UserStore {
     }
 
     const data = normalizeUserStoreData(loaded);
-    if (!loaded || data !== loaded) await this.save(data);
+    if (!loaded || JSON.stringify(data) !== JSON.stringify(loaded)) await this.save(data);
     return data;
+  }
+
+  private mutate<T>(action: (data: UserStoreData) => Promise<T> | T): Promise<T> {
+    const run = async () => {
+      const data = structuredClone(await this.load());
+      const result = await action(data);
+      await this.save(data);
+      this.data = data;
+      return result;
+    };
+    const pending = this.mutationQueue.then(run, run);
+    this.mutationQueue = pending.then(() => undefined, () => undefined);
+    return pending;
   }
 
   private async save(data: UserStoreData): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
-    await fs.writeFile(this.filePath, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-    await fs.chmod(this.filePath, 0o600).catch(() => undefined);
+    const temporaryPath = `${this.filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+      await fs.rename(temporaryPath, this.filePath);
+      await fs.chmod(this.filePath, 0o600).catch(() => undefined);
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
   }
 }
 

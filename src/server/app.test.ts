@@ -77,6 +77,26 @@ describe("planner API", () => {
       .expect(401);
   });
 
+  it("hides internal server errors from regular users while retaining admin diagnostics", async () => {
+    const store = new MemoryStateStore(createInitialState());
+    const app = createApp(store);
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const viewerToken = await loginOnApp(app, "cblue");
+    vi.spyOn(store, "load").mockRejectedValue(new SyntaxError("Unexpected end of JSON input"));
+
+    await request(app)
+      .get("/api/state")
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(500)
+      .expect(({ body }) => expect(body.error).toBe("Something went wrong. Please try again."));
+
+    await request(app)
+      .get("/api/state")
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(500)
+      .expect(({ body }) => expect(body.error).toBe("Unexpected end of JSON input"));
+  });
+
   it("allows admin writes and blocks view-only users", async () => {
     const admin = await loginAs("admin");
     await request(admin.app)
@@ -669,7 +689,7 @@ describe("planner API", () => {
       .expect(200)
       .expect(({ body }) => expect(body).toEqual({ preferredVoicePreset: 5 }));
 
-    const nextToken = await loginOnApp(app, "cblue");
+    const nextToken = await loginOnApp(app, "cblue", `${TEST_SEED_USER_PASSWORD}-cblue`);
     await request(app)
       .get("/api/session")
       .set("authorization", `Bearer ${nextToken}`)

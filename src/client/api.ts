@@ -117,6 +117,8 @@ export interface ChatStreamMeta extends ChatQuota {
 }
 
 export class UnauthorizedError extends Error {
+  readonly status = 401;
+
   constructor(message = "Unauthorized") {
     super(message);
     this.name = "UnauthorizedError";
@@ -124,12 +126,21 @@ export class UnauthorizedError extends Error {
 }
 
 export class ConflictError extends Error {
+  readonly status = 409;
+
   constructor(
     message = "Planner changed; refresh and retry",
     readonly currentVersion?: number
   ) {
     super(message);
     this.name = "ConflictError";
+  }
+}
+
+export class ApiRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "ApiRequestError";
   }
 }
 
@@ -235,7 +246,7 @@ export async function streamChatMessage(
   if (!response.ok) {
     const payload = await readOptionalJson<{ error?: string }>(response);
     if (response.status === 401) throw new UnauthorizedError(payload?.error);
-    throw new Error(payload?.error ?? `Request failed: ${response.status}`);
+    throw new ApiRequestError(payload?.error ?? `Request failed: ${response.status}`, response.status);
   }
   if (!response.body) throw new Error("The assistant returned an empty response");
 
@@ -332,7 +343,7 @@ export async function synthesizeChatSpeech(
   if (!response.ok) {
     const payload = await readOptionalJson<{ error?: string }>(response);
     if (response.status === 401) throw new UnauthorizedError(payload?.error);
-    throw new Error(payload?.error ?? `Request failed: ${response.status}`);
+    throw new ApiRequestError(payload?.error ?? `Request failed: ${response.status}`, response.status);
   }
   const used = Number(response.headers.get("x-voice-used") ?? 0);
   const remaining = Number(response.headers.get("x-voice-remaining") ?? 0);
@@ -675,7 +686,7 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
     if (response.status === 409) {
       throw new ConflictError(payload?.error, payload?.currentVersion);
     }
-    throw new Error(payload?.error ?? `Request failed: ${response.status}`);
+    throw new ApiRequestError(payload?.error ?? `Request failed: ${response.status}`, response.status);
   }
 
   return readJson<T>(response, url);

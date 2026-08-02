@@ -39,6 +39,20 @@ export function sortResidentsForService(residents: Resident[], selectedService: 
   });
 }
 
+export function isGeneralOrPlasticSurgeryResident(
+  resident: Pick<Resident, "rosterKind" | "sourceProgram" | "sourceProgramAbbreviation">
+): boolean {
+  if (resident.rosterKind === "primary") return true;
+
+  const sourceProgram = `${resident.sourceProgramAbbreviation ?? ""} ${resident.sourceProgram ?? ""}`
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  if (sourceProgram.includes("plsx") || sourceProgram.includes("plasticsurgery")) return true;
+
+  if (resident.rosterKind === "off-service") return false;
+  return !resident.sourceProgram && !resident.sourceProgramAbbreviation;
+}
+
 export function getStateServiceLines(state: PlannerState): string[] {
   return [...SERVICE_LINES];
 }

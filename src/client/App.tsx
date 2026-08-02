@@ -55,6 +55,7 @@ import {
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { ChatTab } from "./ChatTab";
 import { ContactsTab } from "./ContactsTab";
+import { canSeeDiagnosticErrors, presentActionError, presentBackgroundError } from "./errorPresentation";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import {
@@ -115,6 +116,7 @@ import {
   clinicMatchesService,
   getAttendingsForService,
   getStateServiceLines,
+  isGeneralOrPlasticSurgeryResident,
   isResidentOnService,
   sortResidentsForService
 } from "../shared/services";
@@ -193,6 +195,7 @@ export function App() {
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
   const isAdmin = session?.role === "admin";
+  const showDiagnosticErrors = canSeeDiagnosticErrors(session);
   const isAttending = session?.role === "attending";
   const selectedPrivilege = session ? getSessionPrivilege(session, selectedService) : "view";
   const canEditSelectedService = Boolean(session && canEditScheduleForSelectedService(isAdmin, selectedPrivilege));
@@ -365,11 +368,11 @@ export function App() {
             return;
           } catch (retryError) {
             if (handleExpiredSession(retryError)) return;
-            setError(retryError instanceof Error ? retryError.message : "Planner changed; refresh and retry");
+            setError(presentActionError(retryError, "The schedule changed before your update could be saved. Please try again.", showDiagnosticErrors));
             return;
           }
         }
-        setError(mutationError instanceof Error ? mutationError.message : "Something went wrong");
+        setError(presentActionError(mutationError, "That change couldn't be saved. Please try again.", showDiagnosticErrors));
       }
     });
   }
@@ -383,7 +386,7 @@ export function App() {
         await loadSchedule(session.token, weekId, selectedService);
       } catch (loadError) {
         if (handleExpiredSession(loadError)) return;
-        setError(loadError instanceof Error ? loadError.message : "Unable to load week");
+        setError(presentActionError(loadError, "That week couldn't be loaded. Please try again.", showDiagnosticErrors));
       }
     });
   }
@@ -420,7 +423,7 @@ export function App() {
         await loadSchedule(session.token, selectedWeekId, serviceLine);
       } catch (loadError) {
         if (handleExpiredSession(loadError)) return;
-        setError(loadError instanceof Error ? loadError.message : "Unable to load service");
+        setError(presentActionError(loadError, "That service couldn't be loaded. Please try again.", showDiagnosticErrors));
       }
     });
   }
@@ -433,7 +436,7 @@ export function App() {
         setToast("Schedule refreshed");
       } catch (refreshError) {
         if (handleExpiredSession(refreshError)) return;
-        setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
+        setError(presentActionError(refreshError, "The schedule couldn't be refreshed. Please try again.", showDiagnosticErrors));
       }
     });
   }
@@ -485,7 +488,7 @@ export function App() {
         await refresh(loadedState, selectedWeekId, serviceLine, token);
       } catch (loadError) {
         if (cancelled || handleExpiredSession(loadError)) return;
-        setError(loadError instanceof Error ? loadError.message : "Unable to load planner");
+        setError(presentActionError(loadError, "The planner couldn't be loaded. Please try again.", showDiagnosticErrors));
       }
     }
     if (session.mustChangePassword) return;
@@ -528,7 +531,8 @@ export function App() {
         if ((stateVersionRef.current ?? 0) >= event.version) return;
         refresh(undefined, selectedWeekId, selectedService, session.token).catch((refreshError) => {
           if (handleExpiredSession(refreshError)) return;
-          setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
+          const message = presentBackgroundError(refreshError, showDiagnosticErrors);
+          if (message) setError(message);
         });
       },
       endSession
@@ -547,7 +551,8 @@ export function App() {
       })
       .catch((sessionError) => {
         if (cancelled || handleExpiredSession(sessionError)) return;
-        setError(sessionError instanceof Error ? sessionError.message : "Unable to refresh contact permissions");
+        const message = presentBackgroundError(sessionError, showDiagnosticErrors);
+        if (message) setError(message);
       });
     return () => { cancelled = true; };
   }, [activeTab, state?.version, session?.token]);
@@ -719,6 +724,7 @@ export function App() {
           displayName={session.displayName || session.username}
           preferredVoicePreset={session.preferredVoicePreset}
           isAdmin={isAdmin}
+          showDiagnosticErrors={showDiagnosticErrors}
           serviceLine={selectedService}
           plannerVersion={state.version}
           onOpenPlanner={(tab, date) => void handleChatOpenPlanner(tab, date)}
@@ -3224,6 +3230,7 @@ function AssignmentControl({
   const assignmentDate = getAssignmentDate(state, kind, targetId);
   const residents = sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
     (resident) =>
+      (isGeneralOrPlasticSurgeryResident(resident) || resident.id === assignment?.residentId) &&
       (kind === "case" || resident.trainingLevel !== "Medical Student") &&
       (!excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId) &&
       (kind === "clinic" || resident.id === assignment?.residentId || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
@@ -4571,7 +4578,7 @@ function serviceLineOptions(state: PlannerState): { id: string; name: string }[]
 
 function getGoldStarResidents(state: PlannerState): Resident[] {
   return state.residents
-    .filter((resident) => resident.accountEligible !== false)
+    .filter(isGeneralOrPlasticSurgeryResident)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

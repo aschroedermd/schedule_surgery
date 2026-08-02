@@ -1922,7 +1922,7 @@ export function createApp(
     }
   });
 
-  app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.use((error: unknown, req: AuthenticatedRequest, res: express.Response, _next: express.NextFunction) => {
     console.error(error);
     if (error instanceof StateConflictError) {
       res.status(409).json({
@@ -1939,7 +1939,12 @@ export function createApp(
       res.status(400).json({ error: error.message });
       return;
     }
-    res.status(500).json({ error: error instanceof Error ? error.message : "Internal server error" });
+    const showDiagnostics = req.user?.role === "admin" || req.user?.username?.trim().toLowerCase() === "aschroeder";
+    res.status(500).json({
+      error: showDiagnostics && error instanceof Error
+        ? error.message
+        : "Something went wrong. Please try again."
+    });
   });
 
   return app;
