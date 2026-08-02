@@ -92,7 +92,7 @@ import {
   createDefaultChatSettingsStore
 } from "./chatSettingsStore";
 import { StateConflictError, StateStore } from "./store";
-import { UpsertUserInput, UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
+import { DEFAULT_VOICE_DAILY_LIMIT, UpsertUserInput, UserStore, createDefaultUserStore, hasServicePrivilege } from "./userStore";
 import { syncQgenda } from "./qgenda";
 import {
   normalizeWikiArticles,
@@ -107,7 +107,6 @@ import {
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
 const DAILY_CHAT_LIMIT = 20;
-const DAILY_VOICE_LIMIT = 5;
 
 const collections: CollectionName[] = [
   "hospitals",
@@ -225,6 +224,38 @@ export function createApp(
     }
   });
 
+  app.get("/api/admin/users/:username/voice-quota", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const username = getParam(req.params.username).trim().toLowerCase();
+      const user = await userStore.getUser(username);
+      if (!user) throw new HttpError(404, "User not found");
+      res.json(await getUserVoiceQuota(store, user.username, user.voiceDailyLimit));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/admin/users/:username/voice-quota", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const username = getParam(req.params.username).trim().toLowerCase();
+      let user = await userStore.getUser(username);
+      if (!user) throw new HttpError(404, "User not found");
+      const hasLimit = Object.prototype.hasOwnProperty.call(req.body, "limit");
+      const resetUsed = req.body.resetUsed === true;
+      if (!hasLimit && !resetUsed) throw new HttpError(400, "Provide limit and/or resetUsed: true");
+      if (hasLimit) {
+        if (!Number.isInteger(req.body.limit) || req.body.limit < 0 || req.body.limit > 10_000) {
+          throw new HttpError(400, "Voice limit must be an integer from 0 to 10000");
+        }
+        user = await userStore.updateVoiceDailyLimit(username, req.body.limit);
+      }
+      if (resetUsed) await store.resetVoiceQuota(username, getChatQuotaDateKey());
+      res.json(await getUserVoiceQuota(store, user.username, user.voiceDailyLimit));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/chat/quota", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const unlimited = req.user!.role === "admin";
@@ -239,11 +270,9 @@ export function createApp(
 
   app.get("/api/chat/voice/quota", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
-      const unlimited = hasUnlimitedVoiceQuota(req.user!);
-      const quota = unlimited
-        ? { used: 0, remaining: DAILY_VOICE_LIMIT }
-        : await store.getVoiceQuota(req.user!.username, getChatQuotaDateKey(), DAILY_VOICE_LIMIT);
-      res.json({ ...quota, limit: DAILY_VOICE_LIMIT, unlimited });
+      const limit = (await userStore.getUser(req.user!.username))?.voiceDailyLimit ?? DEFAULT_VOICE_DAILY_LIMIT;
+      const quota = await store.getVoiceQuota(req.user!.username, getChatQuotaDateKey(), limit);
+      res.json({ ...quota, limit, unlimited: false });
     } catch (error) {
       next(error);
     }
@@ -501,16 +530,14 @@ export function createApp(
         res.status(503).json({ error: "ElevenLabs voice is not configured yet" });
         return;
       }
-      const unlimited = hasUnlimitedVoiceQuota(req.user!);
-      const quota = unlimited
-        ? { allowed: true, used: 0, remaining: DAILY_VOICE_LIMIT }
-        : await store.consumeVoiceQuota(req.user!.username, getChatQuotaDateKey(), DAILY_VOICE_LIMIT);
+      const limit = (await userStore.getUser(req.user!.username))?.voiceDailyLimit ?? DEFAULT_VOICE_DAILY_LIMIT;
+      const quota = await store.consumeVoiceQuota(req.user!.username, getChatQuotaDateKey(), limit);
       if (!quota.allowed) {
         res.status(429).json({
-          error: "Daily voice limit reached. Try again after midnight Eastern time.",
+          error: "Voice limit reached",
           ...quota,
-          limit: DAILY_VOICE_LIMIT,
-          unlimited
+          limit,
+          unlimited: false
         });
         return;
       }
@@ -519,8 +546,8 @@ export function createApp(
       res.setHeader("cache-control", "no-store");
       res.setHeader("x-voice-used", String(quota.used));
       res.setHeader("x-voice-remaining", String(quota.remaining));
-      res.setHeader("x-voice-limit", String(DAILY_VOICE_LIMIT));
-      res.setHeader("x-voice-unlimited", String(unlimited));
+      res.setHeader("x-voice-limit", String(limit));
+      res.setHeader("x-voice-unlimited", "false");
       res.setHeader("x-voice-preset", String(voicePreset));
       res.send(Buffer.from(speech.audio));
     } catch (error) {
@@ -1796,13 +1823,10 @@ export function createApp(
   return app;
 }
 
-function hasUnlimitedVoiceQuota(user: SessionUser): boolean {
-  if (user.role === "admin") return true;
-  const usernames = (process.env.UNLIMITED_VOICE_USERNAMES ?? "")
-    .split(",")
-    .map((username) => username.trim().toLowerCase())
-    .filter(Boolean);
-  return usernames.includes(user.username.toLowerCase());
+async function getUserVoiceQuota(store: StateStore, username: string, limit: number) {
+  const date = getChatQuotaDateKey();
+  const quota = await store.getVoiceQuota(username, date, limit);
+  return { username, date, ...quota, limit };
 }
 
 function requestActivityActor(req: AuthenticatedRequest, fallbackRole: Role = "admin"): ActivityActor {

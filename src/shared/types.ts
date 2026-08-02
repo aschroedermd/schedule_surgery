@@ -483,6 +483,7 @@ export interface UserSummary {
   attendingId?: string;
   servicePrivileges: ServicePrivileges;
   canAddContacts: boolean;
+  voiceDailyLimit: number;
   createdAt: string;
   updatedAt: string;
   passwordUpdatedAt: string;

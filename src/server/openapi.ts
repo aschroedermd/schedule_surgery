@@ -82,6 +82,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean" },
+            voiceDailyLimit: { type: "integer", minimum: 0, maximum: 10000, default: 12 },
             createdAt: { type: "string", format: "date-time" },
             updatedAt: { type: "string", format: "date-time" },
             passwordUpdatedAt: { type: "string", format: "date-time" },
@@ -182,6 +183,17 @@ export function getOpenApiDocument() {
               example: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"]
             },
             updatedAt: { type: ["string", "null"], format: "date-time" }
+          }
+        },
+        AdminVoiceQuota: {
+          type: "object",
+          required: ["username", "date", "used", "remaining", "limit"],
+          properties: {
+            username: { type: "string" },
+            date: { type: "string", format: "date", description: "Current Eastern-time quota date." },
+            used: { type: "integer", minimum: 0 },
+            remaining: { type: "integer", minimum: 0 },
+            limit: { type: "integer", minimum: 0, maximum: 10000 }
           }
         },
         WikiArticle: {
@@ -684,6 +696,50 @@ export function getOpenApiDocument() {
             },
             "400": { description: "Invalid assistant provider settings" },
             "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/admin/users/{username}/voice-quota": {
+        get: {
+          summary: "Read a user's voice quota and today's usage",
+          description: "Requires an admin browser session or the admin X-API-Key.",
+          parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": {
+              description: "Configured limit and current Eastern-day usage",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/AdminVoiceQuota" } } }
+            },
+            "403": { description: "Admin access required" },
+            "404": { description: "User not found" }
+          }
+        },
+        patch: {
+          summary: "Change a user's voice limit and/or reset today's usage",
+          description: "Requires an admin browser session or the admin X-API-Key. Send limit, resetUsed: true, or both.",
+          parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    limit: { type: "integer", minimum: 0, maximum: 10000 },
+                    resetUsed: { type: "boolean", const: true, description: "Sets today's used count to zero." }
+                  },
+                  anyOf: [{ required: ["limit"] }, { required: ["resetUsed"] }]
+                }
+              }
+            }
+          },
+          responses: {
+            "200": {
+              description: "Updated quota and usage",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/AdminVoiceQuota" } } }
+            },
+            "400": { description: "Invalid limit or empty update" },
+            "403": { description: "Admin access required" },
+            "404": { description: "User not found" }
           }
         }
       },

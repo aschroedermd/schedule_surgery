@@ -313,13 +313,13 @@ export async function synthesizeChatSpeech(
   }
   const used = Number(response.headers.get("x-voice-used") ?? 0);
   const remaining = Number(response.headers.get("x-voice-remaining") ?? 0);
-  const limit = Number(response.headers.get("x-voice-limit") ?? 5);
+  const limit = Number(response.headers.get("x-voice-limit") ?? 12);
   return {
     audio: await response.blob(),
     quota: {
       used: Number.isFinite(used) ? used : 0,
       remaining: Number.isFinite(remaining) ? remaining : 0,
-      limit: Number.isFinite(limit) ? limit : 3,
+      limit: Number.isFinite(limit) ? limit : 12,
       unlimited: response.headers.get("x-voice-unlimited") === "true"
     }
   };

@@ -546,24 +546,23 @@ describe("planner API", () => {
     });
   });
 
-  it("gives users five spoken responses per day and allows configured voice testers unlimited responses", async () => {
+  it("gives every user 12 spoken responses and lets the admin API change and reset a user's quota", async () => {
     const store = new MemoryStateStore(createInitialState());
     const app = createApp(store);
     const viewerToken = await loginOnApp(app, "cblue");
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
-    const testerToken = await loginOnApp(app, "aschroeder");
 
     const viewerVoiceQuota = await request(app)
       .get("/api/chat/voice/quota")
       .set("authorization", `Bearer ${viewerToken}`)
       .expect(200);
-    expect(viewerVoiceQuota.body).toEqual({ used: 0, remaining: 5, limit: 5, unlimited: false });
+    expect(viewerVoiceQuota.body).toEqual({ used: 0, remaining: 12, limit: 12, unlimited: false });
 
     const adminVoiceQuota = await request(app)
       .get("/api/chat/voice/quota")
       .set("authorization", `Bearer ${adminToken}`)
       .expect(200);
-    expect(adminVoiceQuota.body).toEqual({ used: 0, remaining: 5, limit: 5, unlimited: true });
+    expect(adminVoiceQuota.body).toEqual({ used: 0, remaining: 12, limit: 12, unlimited: false });
 
     const adminChatQuota = await request(app)
       .get("/api/chat/quota")
@@ -573,60 +572,66 @@ describe("planner API", () => {
 
     const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
     const previousElevenLabsKey = process.env.ELEVENLABS_API_KEY;
-    const previousUnlimitedVoiceUsernames = process.env.UNLIMITED_VOICE_USERNAMES;
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
     process.env.ELEVENLABS_API_KEY = "test-elevenlabs-key";
-    process.env.UNLIMITED_VOICE_USERNAMES = "aschroeder";
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(new Uint8Array([73, 68, 51]), { headers: { "content-type": "audio/mpeg" } }))
     );
     try {
-      const testerVoiceQuota = await request(app)
-        .get("/api/chat/voice/quota")
-        .set("authorization", `Bearer ${testerToken}`)
-        .expect(200);
-      expect(testerVoiceQuota.body).toEqual({ used: 0, remaining: 5, limit: 5, unlimited: true });
-
-      for (let use = 1; use <= 5; use += 1) {
+      for (let use = 1; use <= 3; use += 1) {
         const speech = await request(app)
           .post("/api/chat/speech")
           .set("authorization", `Bearer ${viewerToken}`)
           .send({ input: `Spoken answer ${use}`, voicePreset: ((use - 1) % 4) + 1 })
           .expect(200);
-        expect(speech.headers["x-voice-remaining"]).toBe(String(5 - use));
+        expect(speech.headers["x-voice-remaining"]).toBe(String(12 - use));
         expect(speech.headers["x-voice-preset"]).toBe(String(((use - 1) % 4) + 1));
       }
+
+      const currentQuota = await request(app)
+        .get("/api/admin/users/cblue/voice-quota")
+        .set("x-api-key", "test-admin-api-key")
+        .expect(200);
+      expect(currentQuota.body).toMatchObject({ username: "cblue", used: 3, remaining: 9, limit: 12 });
+
+      await request(app)
+        .get("/api/admin/users/cblue/voice-quota")
+        .set("x-api-key", "test-viewer-api-key")
+        .expect(403);
+
+      const loweredQuota = await request(app)
+        .patch("/api/admin/users/cblue/voice-quota")
+        .set("x-api-key", "test-admin-api-key")
+        .send({ limit: 3 })
+        .expect(200);
+      expect(loweredQuota.body).toMatchObject({ used: 3, remaining: 0, limit: 3 });
+
       await request(app)
         .post("/api/chat/speech")
         .set("authorization", `Bearer ${viewerToken}`)
         .send({ input: "One too many", voicePreset: 4 })
-        .expect(429);
+        .expect(429)
+        .expect(({ body }) => expect(body.error).toBe("Voice limit reached"));
 
-      for (let use = 1; use <= 6; use += 1) {
-        const speech = await request(app)
-          .post("/api/chat/speech")
-          .set("authorization", `Bearer ${adminToken}`)
-          .send({ input: `Unlimited admin answer ${use}`, voicePreset: ((use - 1) % 4) + 1 })
-          .expect(200);
-        expect(speech.headers["x-voice-unlimited"]).toBe("true");
-      }
-      for (let use = 1; use <= 6; use += 1) {
-        const speech = await request(app)
-          .post("/api/chat/speech")
-          .set("authorization", `Bearer ${testerToken}`)
-          .send({ input: `Unlimited tester answer ${use}`, voicePreset: ((use - 1) % 4) + 1 })
-          .expect(200);
-        expect(speech.headers["x-voice-unlimited"]).toBe("true");
-      }
+      const resetQuota = await request(app)
+        .patch("/api/admin/users/cblue/voice-quota")
+        .set("x-api-key", "test-admin-api-key")
+        .send({ limit: 7, resetUsed: true })
+        .expect(200);
+      expect(resetQuota.body).toMatchObject({ used: 0, remaining: 7, limit: 7 });
+
+      await request(app)
+        .get("/api/chat/voice/quota")
+        .set("authorization", `Bearer ${viewerToken}`)
+        .expect(200)
+        .expect(({ body }) => expect(body).toEqual({ used: 0, remaining: 7, limit: 7, unlimited: false }));
     } finally {
       vi.unstubAllGlobals();
       if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
       else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
       if (previousElevenLabsKey === undefined) delete process.env.ELEVENLABS_API_KEY;
       else process.env.ELEVENLABS_API_KEY = previousElevenLabsKey;
-      if (previousUnlimitedVoiceUsernames === undefined) delete process.env.UNLIMITED_VOICE_USERNAMES;
-      else process.env.UNLIMITED_VOICE_USERNAMES = previousUnlimitedVoiceUsernames;
     }
   });
 

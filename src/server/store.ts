@@ -41,6 +41,7 @@ export interface StateStore {
   consumeChatQuota(username: string, dateKey: string, limit: number): Promise<{ allowed: boolean; used: number; remaining: number }>;
   getVoiceQuota(username: string, dateKey: string, limit: number): Promise<{ used: number; remaining: number }>;
   consumeVoiceQuota(username: string, dateKey: string, limit: number): Promise<{ allowed: boolean; used: number; remaining: number }>;
+  resetVoiceQuota(username: string, dateKey: string): Promise<void>;
 }
 
 export class MemoryStateStore implements StateStore {
@@ -105,6 +106,10 @@ export class MemoryStateStore implements StateStore {
     const nextUsed = used + 1;
     this.voiceUsage.set(key, nextUsed);
     return { allowed: true, used: nextUsed, remaining: limit - nextUsed };
+  }
+
+  async resetVoiceQuota(username: string, dateKey: string): Promise<void> {
+    this.voiceUsage.delete(`${username}:${dateKey}`);
   }
 }
 
@@ -221,6 +226,11 @@ export class PostgresStateStore implements StateStore {
     }
     const quota = await this.getVoiceQuota(username, dateKey, limit);
     return { allowed: false, ...quota };
+  }
+
+  async resetVoiceQuota(username: string, dateKey: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.pool.query("delete from voice_daily_usage where username = $1 and usage_date = $2", [username, dateKey]);
   }
 
   async close(): Promise<void> {

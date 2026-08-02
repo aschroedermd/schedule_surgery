@@ -26,7 +26,7 @@ curl -H "X-API-Key: $ADMIN_API_KEY" "$BASE_URL/api/state"
 
 Authentication roles:
 
-- `admin`: full planner access. A browser-session admin can manage all browser users. The admin API key can create accounts, reset passwords, and manage assistant model settings, but cannot list, update, or delete browser users.
+- `admin`: full planner access. A browser-session admin can manage all browser users. The admin API key can create accounts, reset passwords, manage assistant model settings, and read/change/reset per-user voice quotas, but cannot list, update, or delete browser users.
 - `attending`: browser-session account linked to exactly one existing `attendings[]` record. It can create, update, and delete that attending's OR blocks and cases without a service edit grant. It cannot use that ownership exception for clinics, resident assignments, coverage entries, suggestions, or account management; those require the normal service privilege or admin role.
 - `viewer`: read access unless a browser user has explicit per-service `request` or `edit` privileges.
 
@@ -42,7 +42,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
 
 Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
 
-Only a logged-in admin browser session can call `GET /api/users` or `PATCH/DELETE /api/users/{username}`. An admin API key can call `POST /api/users`, `POST /api/users/bulk`, and `PATCH /api/users/{username}/password`. API-key creations use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"` (`user` is stored as the browser `viewer` role); a medical-student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
+Only a logged-in admin browser session can call `GET /api/users` or `PATCH/DELETE /api/users/{username}`. An admin API key can call `POST /api/users`, `POST /api/users/bulk`, `PATCH /api/users/{username}/password`, and the per-user voice-quota endpoints documented below. API-key creations use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"` (`user` is stored as the browser `viewer` role); a medical-student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
 
 Example attending account creation (with an admin API key):
 
@@ -67,6 +67,26 @@ Browser clients can watch state changes with `GET /api/events?token=<browser-tok
 ## Admin API Quick Reference
 
 Use the admin API key only from a trusted secret store. Never place it, a temporary password, the OpenAI key, the OpenRouter key, or the ElevenLabs key in planner data, shell history, chat transcripts, or activity notes.
+
+### Read, change, or reset a user's voice quota
+
+Every user starts with 12 spoken responses per Eastern-time day. Read one user's configured limit and today's usage:
+
+```bash
+curl -H "X-API-Key: $ADMIN_API_KEY" \
+  "$BASE_URL/api/admin/users/cblue/voice-quota"
+```
+
+Change the daily limit, reset today's `used` count to `0`, or do both in one request:
+
+```bash
+curl -X PATCH "$BASE_URL/api/admin/users/cblue/voice-quota" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"limit":20,"resetUsed":true}'
+```
+
+Use `{"limit":20}` to change only the limit or `{"resetUsed":true}` to reset only today's usage. The response contains `username`, Eastern-time `date`, `used`, `remaining`, and `limit`. No `X-State-Version` header is needed.
 
 ### Reset a browser user's password
 
@@ -253,6 +273,8 @@ GET    /api/session
 GET    /api/events?token=<browser-token>
 GET    /api/admin/chat-settings           (admin browser session or admin API key)
 PATCH  /api/admin/chat-settings           (admin browser session or admin API key)
+GET    /api/admin/users/{username}/voice-quota   (admin browser session or admin API key)
+PATCH  /api/admin/users/{username}/voice-quota   (admin browser session or admin API key)
 GET    /api/users                         (admin browser session only)
 POST   /api/users                         (admin browser session or admin API key)
 POST   /api/users/bulk                    (admin browser session or admin API key)

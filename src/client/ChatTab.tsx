@@ -48,6 +48,7 @@ const HOLD_TO_SEND_MS = 400;
 const COLLAPSED_MESSAGE_LENGTH = 560;
 const MAX_VISIBLE_CARDS = 4;
 const INPUT_PREFERENCE_KEY = "schedule-chat-input-preference";
+const VOICE_LIMIT_MESSAGE = "Voice limit reached";
 const VOICE_PRESETS: Array<{ id: VoicePreset; description: string }> = [
   { id: 1, description: "James · ElevenLabs" },
   { id: 2, description: "Voice 2 · ElevenLabs" },
@@ -462,11 +463,12 @@ export function ChatTab({
           await playSpeech(speech.audio);
         } catch (speechError) {
           setSpeechStatus("idle");
-          setError(
-            speechError instanceof Error
-              ? `The answer is ready, but it could not be spoken: ${speechError.message}`
-              : "The answer is ready, but it could not be spoken"
-          );
+          const speechMessage = speechError instanceof Error ? speechError.message : undefined;
+          setError(speechMessage === VOICE_LIMIT_MESSAGE
+            ? speechMessage
+            : speechMessage
+              ? `The answer is ready, but it could not be spoken: ${speechMessage}`
+              : "The answer is ready, but it could not be spoken");
           void fetchVoiceQuota(token).then(setVoiceQuota).catch(() => undefined);
         }
       }
@@ -504,7 +506,11 @@ export function ChatTab({
   }
 
   function toggleVoiceMode() {
-    if (voiceQuotaExhausted || isBusy) return;
+    if (isBusy) return;
+    if (voiceQuotaExhausted) {
+      setError(VOICE_LIMIT_MESSAGE);
+      return;
+    }
     if (voiceMode) {
       stopSpeech();
     }
@@ -786,7 +792,7 @@ export function ChatTab({
             }
             aria-pressed={voiceMode}
             title={voiceModeTitle(voiceMode, voiceQuota, speechStatus, voicePreset)}
-            disabled={voiceQuotaExhausted || isBusy}
+            disabled={isBusy}
             onClick={toggleVoiceMode}
           >
             {voiceMode ? <Volume2 size={18} /> : <VolumeX size={18} />}
@@ -1509,7 +1515,7 @@ function voiceModeTitle(
     ? "unlimited uses"
     : quota
       ? `${quota.remaining} of ${quota.limit} spoken responses left today`
-      : "3 spoken responses per day";
+      : "12 spoken responses per day";
   return `${voiceMode ? "Spoken responses on" : "Spoken responses off"} · voice ${voicePreset} · ${allowance}`;
 }
 
