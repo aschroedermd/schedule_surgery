@@ -1433,6 +1433,218 @@ describe("planner API", () => {
     );
   });
 
+  it("authorizes calendar mutations from the stored entry service instead of a client-supplied service", async () => {
+    const state = createInitialState();
+    state.coverageEntries.push({
+      id: "berry_entry_auth_test",
+      date: state.weeks[0].startDate,
+      kind: "note",
+      serviceLine: "Berry",
+      note: "Berry staffing note",
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z"
+    });
+    const store = new MemoryStateStore(state);
+    const app = createApp(store);
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    await grantPrivilege(app, adminToken, "cblue", "Davies", "edit");
+    const editorToken = await loginOnApp(app, "cblue");
+
+    await request(app)
+      .delete("/api/coverage-entries/berry_entry_auth_test?service=Davies")
+      .set("authorization", `Bearer ${editorToken}`)
+      .expect(403);
+
+    expect((await store.load()).coverageEntries).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "berry_entry_auth_test", serviceLine: "Berry" })])
+    );
+  });
+
+  it("previews and confirms direct assistant edits while routing request-only users through approval", async () => {
+    const store = new MemoryStateStore(createInitialState());
+    const chatSettingsStore = new MemoryChatSettingsStore({
+      chatProvider: "openrouter",
+      primaryModel: "deepseek/deepseek-v4-flash-0731",
+      fallbackModels: [],
+      transcriptionModel: "nvidia/parakeet-tdt-0.6b-v3",
+      voiceModel: "fish-audio/s2.1-pro-free:free",
+      voiceName: "David Attenborough Dramatic",
+      elevenLabsModel: "eleven_multilingual_v2",
+      elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"],
+      updatedAt: null
+    });
+    const app = createApp(store, { chatSettingsStore });
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");
+    await grantPrivilege(app, adminToken, "aswaak", "Davies", "request");
+    const editorToken = await loginOnApp(app, "aschroeder");
+    const requesterToken = await loginOnApp(app, "aswaak");
+    let assistantArguments: Record<string, unknown> = {
+      action_type: "case_coverage",
+      operation: "create",
+      date: null,
+      target_date: null,
+      service: null,
+      resident_name: "Adedayo Adeleke",
+      target_resident_name: null,
+      attending_name: null,
+      procedure: null,
+      entry_kind: null,
+      call_position: null,
+      case_id: "case_chen_whipple",
+      assignment_id: null,
+      entry_id: null,
+      request_id: null,
+      requested_order: null,
+      note: null
+    };
+    const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      model: "deepseek/deepseek-v4-flash-0731",
+      choices: [{ message: { role: "assistant", content: null, tool_calls: [{
+        id: "prepare_case_coverage",
+        type: "function",
+        function: {
+          name: "prepare_schedule_action",
+          arguments: JSON.stringify(assistantArguments)
+        }
+      }] } }]
+    })));
+
+    try {
+      const directPreview = await request(app)
+        .post("/api/chat")
+        .set("authorization", `Bearer ${editorToken}`)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "Put Adeleke on the Whipple" }] })
+        .expect(200);
+      expect(directPreview.body.interaction).toMatchObject({
+        options: [expect.objectContaining({ label: "Confirm change" }), expect.objectContaining({ label: "Cancel" })]
+      });
+      const directToken = directPreview.body.interaction.actionToken as string;
+      const directCommit = await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(directToken)}/commit`)
+        .set("authorization", `Bearer ${editorToken}`)
+        .expect(200);
+      expect(directCommit.body.message).toContain("Case coverage updated");
+      await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(directToken)}/commit`)
+        .set("authorization", `Bearer ${editorToken}`)
+        .expect(200);
+      expect((await store.load()).assignments.filter((assignment) =>
+        assignment.kind === "case" && assignment.targetId === "case_chen_whipple" && assignment.residentId === "res_fellow"
+      )).toHaveLength(1);
+
+      assistantArguments = { ...assistantArguments, resident_name: "Jessica Bradley" };
+      const requestPreview = await request(app)
+        .post("/api/chat")
+        .set("authorization", `Bearer ${requesterToken}`)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "Request Bradley for the Whipple" }] })
+        .expect(200);
+      expect(requestPreview.body.interaction.options[0].label).toBe("Submit request");
+      const requestToken = requestPreview.body.interaction.actionToken as string;
+      await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(requestToken)}/commit`)
+        .set("authorization", `Bearer ${requesterToken}`)
+        .expect(200)
+        .expect(({ body }) => expect(body.message).toContain("Request submitted"));
+
+      const pending = (await store.load()).coverageRequests.find((item) => item.requestType === "assignment-change");
+      expect(pending).toMatchObject({
+        status: "pending",
+        serviceLine: "Davies",
+        requestedAssignmentChange: { kind: "case", targetId: "case_chen_whipple", residentId: "res_bradley" }
+      });
+      await request(app)
+        .post(`/api/coverage-requests/${pending!.id}/approve`)
+        .set("authorization", `Bearer ${editorToken}`)
+        .expect(200);
+      expect((await store.load()).assignments).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "case", targetId: "case_chen_whipple", residentId: "res_bradley" })
+      ]));
+
+      assistantArguments = {
+        ...assistantArguments,
+        action_type: "case_order",
+        operation: "update",
+        resident_name: null,
+        case_id: "case_chen_whipple",
+        requested_order: 2
+      };
+      const orderPreview = await request(app)
+        .post("/api/chat")
+        .set("authorization", `Bearer ${editorToken}`)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "Move the Whipple to second" }] })
+        .expect(200);
+      await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(orderPreview.body.interaction.actionToken)}/commit`)
+        .set("authorization", `Bearer ${editorToken}`)
+        .expect(200);
+      expect((await store.load()).cases.find((surgeryCase) => surgeryCase.id === "case_chen_whipple")?.order).toBe(1);
+
+      assistantArguments = {
+        ...assistantArguments,
+        action_type: "call_swap",
+        operation: "swap",
+        date: "2026-07-24",
+        target_date: "2026-07-11",
+        resident_name: null,
+        target_resident_name: "Adedayo Adeleke",
+        case_id: null
+      };
+      const tradePreview = await request(app)
+        .post("/api/chat")
+        .set("authorization", `Bearer ${requesterToken}`)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "Swap my July 24 call with Adeleke's July 11 call" }] })
+        .expect(200);
+      expect(tradePreview.body.interaction.options[0].label).toBe("Submit request");
+      await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(tradePreview.body.interaction.actionToken)}/commit`)
+        .set("authorization", `Bearer ${requesterToken}`)
+        .expect(200);
+      expect((await store.load()).coverageRequests).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          requestType: "resident-trade",
+          requesterResidentId: "res_swaak",
+          targetResidentId: "res_fellow",
+          entryId: "cover_2026_07_24_swaak_call",
+          swapEntryId: "cover_2026_07_11_adeleke_call",
+          status: "pending"
+        })
+      ]));
+
+      assistantArguments = {
+        ...assistantArguments,
+        action_type: "case_order",
+        operation: "update",
+        date: null,
+        target_date: null,
+        target_resident_name: null,
+        case_id: "case_chen_whipple",
+        requested_order: 1
+      };
+      const stalePreview = await request(app)
+        .post("/api/chat")
+        .set("authorization", `Bearer ${editorToken}`)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "Move the Whipple back to first" }] })
+        .expect(200);
+      await request(app)
+        .post("/api/entities/hospitals")
+        .set("authorization", `Bearer ${adminToken}`)
+        .send({ id: "hospital_action_conflict", name: "Action Conflict Hospital", shortName: "ACH", color: "#111111" })
+        .expect(201);
+      await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(stalePreview.body.interaction.actionToken)}/commit`)
+        .set("authorization", `Bearer ${editorToken}`)
+        .expect(409)
+        .expect(({ body }) => expect(body.error).toContain("schedule changed after this preview"));
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
+    }
+  });
+
   it("lets service editors manage OR and clinic schedule rows only for edited services", async () => {
     const { app, token: adminToken } = await loginAs("admin");
     await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");

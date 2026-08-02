@@ -30,7 +30,13 @@ export type CoverageRequestAction = "create" | "update" | "delete";
 
 export type CoverageRequestStatus = "pending" | "approved" | "denied";
 
-export type CoverageRequestType = "calendar" | "resident-trade" | "resident-profile" | "resident-vacation";
+export type CoverageRequestType =
+  | "calendar"
+  | "resident-trade"
+  | "resident-profile"
+  | "resident-vacation"
+  | "assignment-change"
+  | "case-order-change";
 
 export type Priority = 1 | 2 | 3 | 4 | 5;
 
@@ -227,6 +233,19 @@ export interface ResidentVacationChange {
   vacation: VacationBlock[];
 }
 
+export interface AssignmentChange {
+  assignmentId?: string;
+  kind: AssignmentKind;
+  targetId: string;
+  residentId?: string;
+  locked?: boolean;
+}
+
+export interface CaseOrderChange {
+  caseId: string;
+  order: number;
+}
+
 export interface CoverageChangeRequest {
   id: string;
   requestType?: CoverageRequestType;
@@ -238,6 +257,8 @@ export interface CoverageChangeRequest {
   targetResidentId?: string;
   requestedResidentProfile?: ResidentProfileChange;
   requestedResidentVacation?: ResidentVacationChange;
+  requestedAssignmentChange?: AssignmentChange;
+  requestedCaseOrderChange?: CaseOrderChange;
   swapEntryId?: string;
   swapRequestedEntry?: CoverageEntry;
   serviceLine?: string;

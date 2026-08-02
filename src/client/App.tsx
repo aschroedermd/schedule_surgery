@@ -6,7 +6,6 @@ import {
   Ellipsis,
   LoaderCircle,
   Lock,
-  LogIn,
   LogOut,
   Pencil,
   Plus,
@@ -109,7 +108,7 @@ import {
   Week,
   WeekSchedule
 } from "../shared/types";
-import { formatClinicLabel } from "../shared/scheduler";
+import { buildWeekSchedule, formatClinicLabel } from "../shared/scheduler";
 import {
   DEFAULT_SERVICE_LINE,
   clinicMatchesService,
@@ -172,7 +171,6 @@ const emptyResident: Resident = {
 export function App() {
   useVisualViewportHeight();
   const [session, setSession] = useState<PlannerSession | undefined>(() => getStoredSession());
-  const [showLoggedOut, setShowLoggedOut] = useState(false);
   const [state, setState] = useState<PlannerState | undefined>();
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
   const [selectedWeekId, setSelectedWeekId] = useState("");
@@ -217,7 +215,7 @@ export function App() {
     return () => document.body.classList.remove("chat-viewport-locked");
   }, [chatViewportActive]);
 
-  function showLoggedOutScreen() {
+  function endSession() {
     scheduleLoadIdRef.current += 1;
     clearStoredSession();
     setSession(undefined);
@@ -228,22 +226,20 @@ export function App() {
     setToast(undefined);
     setGoldStarCelebration(undefined);
     checkedGoldStarReceiptForRef.current = undefined;
-    setShowLoggedOut(true);
   }
 
   function handleExpiredSession(error: unknown): boolean {
     if (!(error instanceof UnauthorizedError)) return false;
-    showLoggedOutScreen();
+    endSession();
     return true;
   }
 
   function handleLogout() {
-    showLoggedOutScreen();
+    endSession();
   }
 
   function handleLogin(nextSession: PlannerSession) {
     scheduleLoadIdRef.current += 1;
-    setShowLoggedOut(false);
     storeSession(nextSession);
     const storedServiceLine = getStoredServiceLine(nextSession.username);
     if (storedServiceLine) selectServiceState(storedServiceLine);
@@ -534,7 +530,7 @@ export function App() {
           setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh planner");
         });
       },
-      showLoggedOutScreen
+      endSession
     );
   }, [session?.token, session?.mustChangePassword, selectedWeekId, selectedService, liveUpdatesReady]);
 
@@ -595,9 +591,6 @@ export function App() {
   }
 
   if (!session) {
-    if (showLoggedOut) {
-      return <LoggedOutScreen onReturn={() => setShowLoggedOut(false)} />;
-    }
     return <LoginScreen onLogin={handleLogin} onOpenTamagotchi={() => setIsTamagotchiOpen(true)} />;
   }
 
@@ -747,7 +740,6 @@ export function App() {
           state={state}
           schedule={schedule}
           session={session}
-          selectedService={selectedService}
         />
       )}
       {activeTab === "contacts" && (
@@ -899,22 +891,6 @@ function LoginScreen({
           Open Planner
         </button>
       </form>
-    </main>
-  );
-}
-
-function LoggedOutScreen({ onReturn }: { onReturn: () => void }) {
-  return (
-    <main className="login-screen">
-      <section className="login-panel" aria-labelledby="logged-out-title">
-        <p className="eyebrow">Resident OR Coverage</p>
-        <h1 id="logged-out-title">Logged out...</h1>
-        <p className="muted-copy">Go back to login?</p>
-        <button className="primary-button" type="button" onClick={onReturn}>
-          <LogIn size={18} />
-          Back to Login
-        </button>
-      </section>
     </main>
   );
 }
@@ -1506,24 +1482,28 @@ function PrintClinic({ state, clinic }: { state: PlannerState; clinic: Scheduled
 function MyScheduleTab({
   state,
   schedule,
-  session,
-  selectedService
+  session
 }: {
   state: PlannerState;
   schedule: WeekSchedule;
   session: PlannerSession;
-  selectedService: string;
 }) {
+  const personalSchedule = buildAllServiceMySchedule(state, schedule.week.id);
+  const weekDates = new Set(getWeekDates(schedule.week.startDate, false));
+  const weekEndDate = [...weekDates].at(-1) ?? schedule.week.startDate;
   const resident = findResidentForSession(state, session);
   const attending = session.role === "attending" && session.attendingId
     ? state.attendings.find((candidate) => candidate.id === session.attendingId)
     : undefined;
   if (attending) {
-    const cases = schedule.days.flatMap((day) => day.blocks.flatMap((block) =>
+    const cases = personalSchedule.days.flatMap((day) => day.blocks.flatMap((block) =>
       block.attending.id === attending.id ? block.cases : []
     ));
+    const clinics = personalSchedule.days.flatMap((day) =>
+      day.clinics.filter((clinic) => clinic.attending?.id === attending.id)
+    );
     const attendingCoverage = state.attendingCoverageAssignments
-      .filter((assignment) => assignment.attendingId === attending.id)
+      .filter((assignment) => assignment.attendingId === attending.id && weekDates.has(assignment.date))
       .sort(compareAttendingCoverageForDisplay);
     return (
       <section className="my-schedule-page">
@@ -1539,6 +1519,19 @@ function MyScheduleTab({
                 <div key={surgeryCase.id} className="compact-entity"><div>
                   <strong>{surgeryCase.procedureLabel}</strong>
                   <span>{displayDate(surgeryCase.date)} · {surgeryCase.startTime}-{surgeryCase.endTime} · {surgeryCase.durationMinutes} min</span>
+                </div></div>
+              ))}
+            </div>
+          )}
+        </section>
+        <section className="editor-panel">
+          <h2>My clinics</h2>
+          {clinics.length === 0 ? <p className="muted-copy">No clinics this week.</p> : (
+            <div className="entity-list">
+              {clinics.map((clinic) => (
+                <div key={clinic.id} className="compact-entity"><div>
+                  <strong>{formatClinicLabel(clinic)}</strong>
+                  <span>{displayDate(clinic.date)} · {clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
                 </div></div>
               ))}
             </div>
@@ -1570,13 +1563,12 @@ function MyScheduleTab({
     );
   }
 
-  const weekDates = new Set(getWeekDates(schedule.week.startDate, state.settings.weekdayOnly));
-  const cases = schedule.days.flatMap((day) =>
+  const cases = personalSchedule.days.flatMap((day) =>
     day.blocks.flatMap((block) =>
       block.cases.filter((surgeryCase) => surgeryCase.assignments.some((assignment) => assignment.residentId === resident.id))
     )
   );
-  const clinics = schedule.days.flatMap((day) =>
+  const clinics = personalSchedule.days.flatMap((day) =>
     day.clinics
       .filter((clinic) => clinic.assignments.some((assignment) => assignment.residentId === resident.id))
       .map((clinic) => ({
@@ -1587,10 +1579,19 @@ function MyScheduleTab({
   const coverageEntries = state.coverageEntries
     .filter((entry) => entry.residentId === resident.id && entry.kind !== "call" && weekDates.has(entry.date))
     .sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
-  const callEntries = getPersonalCallEntries(state, resident.id);
+  const callEntries = getPersonalCallEntries(state, resident.id).filter((entry) => weekDates.has(entry.date));
+  const rotations = (resident.rotationSchedule ?? []).filter(
+    (rotation) => rotation.startDate <= weekEndDate && rotation.endDate >= schedule.week.startDate
+  );
+  const vacations = (resident.vacation ?? []).filter(
+    (vacation) => vacation.startDate <= weekEndDate && vacation.endDate >= schedule.week.startDate
+  );
+  const unavailable = (resident.unavailable ?? []).filter(
+    (block) => block.date <= weekEndDate && (block.endDate ?? block.date) >= schedule.week.startDate
+  );
   const fellowPracticeCoverage = isMinimallyInvasiveFellow(resident)
     ? state.attendingCoverageAssignments
-        .filter((assignment) => assignment.fellowResidentId === resident.id)
+        .filter((assignment) => assignment.fellowResidentId === resident.id && weekDates.has(assignment.date))
         .sort(compareAttendingCoverageForDisplay)
     : [];
 
@@ -1598,7 +1599,7 @@ function MyScheduleTab({
     <section className="my-schedule-page">
       <div className="my-schedule-header">
         <div>
-          <p className="eyebrow">{selectedService}</p>
+          <p className="eyebrow">All services</p>
           <h2>{formatResidentName(resident)}</h2>
         </div>
         <div className="my-schedule-actions">
@@ -1705,9 +1706,51 @@ function MyScheduleTab({
             </div>
           )}
         </section>
+
+        <section className="editor-panel">
+          <h2>Rotation</h2>
+          {rotations.length === 0 ? (
+            <p className="muted-copy">No rotation assignment listed this week.</p>
+          ) : (
+            <div className="entity-list">
+              {rotations.map((rotation) => (
+                <div key={rotation.id} className="compact-entity"><div>
+                  <strong>{rotation.service}</strong>
+                  <span>Block {rotation.blockNumber} · {displayDate(rotation.startDate)}-{displayDate(rotation.endDate)}</span>
+                </div></div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="editor-panel">
+          <h2>Time away</h2>
+          {vacations.length === 0 && unavailable.length === 0 ? (
+            <p className="muted-copy">No vacation or unavailable time listed this week.</p>
+          ) : (
+            <div className="entity-list">
+              {vacations.map((vacation) => (
+                <div key={vacation.id} className="compact-entity"><div>
+                  <strong>Vacation</strong>
+                  <span>{displayDate(vacation.startDate)}-{displayDate(vacation.endDate)}</span>
+                </div></div>
+              ))}
+              {unavailable.map((block) => (
+                <div key={block.id} className="compact-entity"><div>
+                  <strong>{block.label || "Unavailable"}</strong>
+                  <span>{displayDate(block.date)}{block.endDate && block.endDate !== block.date ? `-${displayDate(block.endDate)}` : ""}{block.startTime && block.endTime ? ` · ${block.startTime}-${block.endTime}` : ""}</span>
+                </div></div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </section>
   );
+}
+
+export function buildAllServiceMySchedule(state: PlannerState, weekId: string): WeekSchedule {
+  return buildWeekSchedule(state, weekId);
 }
 
 function GoldStarChartTab({
@@ -2498,7 +2541,7 @@ function AttendingCallSummary({ state, date, entry }: { state: PlannerState; dat
 
   return (
     <div className="call-duty-line attending-call-duty">
-      <span className="call-duty-label">Attending</span>
+      <span className="call-duty-label">Dr.</span>
       <strong>{attendingName}</strong>
     </div>
   );
@@ -5025,7 +5068,7 @@ function getTabTitle(tab: Tab): string {
     case "contacts":
       return "Contacts ☎️";
     case "residents":
-      return "Residents ✨";
+      return "Stars ✨";
     case "calendar":
       return "Calendar 🗓️";
     case "call":

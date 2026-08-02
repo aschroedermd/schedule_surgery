@@ -91,6 +91,13 @@ export interface ChatInteraction {
   type: "single_choice";
   prompt: string;
   options: ChatChoiceOption[];
+  actionToken?: string;
+}
+
+export interface ChatActionResponse {
+  message: string;
+  stateVersion: number;
+  dataUpdatedAt: string;
 }
 
 export interface ChatResponse extends ChatQuota {
@@ -270,6 +277,13 @@ export async function refreshChatLookups(
       serviceLine,
       lookups: lookups.map(({ tool, arguments: lookupArguments }) => ({ tool, arguments: lookupArguments }))
     })
+  });
+}
+
+export async function commitChatAction(token: string, actionToken: string): Promise<ChatActionResponse> {
+  return request<ChatActionResponse>(`/api/chat/actions/${encodeURIComponent(actionToken)}/commit`, {
+    method: "POST",
+    token
   });
 }
 

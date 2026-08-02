@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAllServiceMySchedule,
   getQuickEditHospitals,
   getAttendingNightScheduleForDate,
   getAttendingWeeklyScheduleForDate,
@@ -26,8 +27,8 @@ describe("planner navigation", () => {
     const adminTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true });
     const userTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: false });
 
-    expect(adminTabs).toContainEqual(["residents", "Residents ✨"]);
-    expect(userTabs).toContainEqual(["residents", "Residents ✨"]);
+    expect(adminTabs).toContainEqual(["residents", "Stars ✨"]);
+    expect(userTabs).toContainEqual(["residents", "Stars ✨"]);
     expect(adminTabs).toContainEqual(["roster", "Roster"]);
   });
 
@@ -85,6 +86,53 @@ describe("planner navigation", () => {
     expect(canEditScheduleForSelectedService(false, "edit")).toBe(true);
     expect(canEditScheduleForSelectedService(false, "request")).toBe(false);
     expect(canEditScheduleForSelectedService(false, "view")).toBe(false);
+  });
+});
+
+describe("My Schedule", () => {
+  it("builds the resident week across every service instead of the selected service", () => {
+    const state = createInitialState();
+    state.attendingBlocks.push({
+      id: "berry_my_schedule_block",
+      weekId: state.weeks[0].id,
+      date: state.weeks[0].startDate,
+      attendingId: "att_nussbaum",
+      hospitalId: "hosp_main",
+      firstCaseStartTime: "12:00",
+      notes: ""
+    });
+    state.cases.push({
+      id: "berry_my_schedule_case",
+      blockId: "berry_my_schedule_block",
+      procedureLabel: "Berry add-on",
+      durationMinutes: 60,
+      priority: 2,
+      tags: [],
+      notes: "",
+      order: 0
+    });
+    state.assignments.push({
+      id: "berry_my_schedule_assignment",
+      kind: "case",
+      targetId: "berry_my_schedule_case",
+      residentId: "res_blue",
+      locked: false,
+      source: "admin",
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z"
+    });
+
+    const schedule = buildAllServiceMySchedule(state, state.weeks[0].id);
+
+    expect(schedule.days.flatMap((day) => day.blocks).map((block) => block.id)).toContain("berry_my_schedule_block");
+    expect(schedule.days.flatMap((day) => day.blocks).flatMap((block) => block.cases)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "berry_my_schedule_case",
+          assignments: [expect.objectContaining({ residentId: "res_blue" })]
+        })
+      ])
+    );
   });
 });
 

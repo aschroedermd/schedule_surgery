@@ -5032,6 +5032,8 @@ h2 {
 }
 
 .attending-call-duty .call-duty-label {
+  width: auto;
+  flex: 0 0 auto;
   background: var(--color-primary-light);
   color: var(--color-primary-hover);
 }

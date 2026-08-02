@@ -31,6 +31,7 @@ import {
   ChatQuota,
   VoicePreset,
   VoiceQuota,
+  commitChatAction,
   fetchChatQuota,
   fetchChatModelSettings,
   fetchVoiceQuota,
@@ -41,6 +42,7 @@ import {
   transcribeChatAudio,
   updateChatModelSettings
 } from "./api";
+import { applyDictationReplacements } from "./dictationReplacements";
 
 const MAX_RECORDING_MS = 60_000;
 const RESPONSE_DELAY_MS = 8_000;
@@ -501,6 +503,51 @@ export function ChatTab({
     const baseMessages = messages.map((candidate) =>
       candidate.id === message.id ? { ...candidate, interactionAnswered: true } : candidate
     );
+    const actionToken = message.interaction?.actionToken;
+    if (actionToken) {
+      const choiceMessage: ChatUiMessage = {
+        id: createChatMessageId(),
+        role: "user",
+        content: option.label,
+        createdAt: new Date().toISOString()
+      };
+      if (option.id === "cancel") {
+        setMessages([
+          ...baseMessages,
+          choiceMessage,
+          {
+            id: createChatMessageId(),
+            role: "assistant",
+            content: "Canceled. No schedule change was made.",
+            createdAt: new Date().toISOString()
+          }
+        ]);
+        return;
+      }
+      setMessages([...baseMessages, choiceMessage]);
+      setError(undefined);
+      setStatus("thinking");
+      void commitChatAction(token, actionToken)
+        .then((result) => {
+          setMessages((current) => [...current, {
+            id: createChatMessageId(),
+            role: "assistant",
+            content: result.message,
+            createdAt: new Date().toISOString(),
+            checkedAt: new Date().toISOString(),
+            dataUpdatedAt: result.dataUpdatedAt,
+            stateVersion: result.stateVersion
+          }]);
+        })
+        .catch((actionError) => {
+          setError(actionError instanceof Error ? actionError.message : "The schedule action could not be completed");
+        })
+        .finally(() => {
+          setStatus("idle");
+          window.requestAnimationFrame(() => composerRef.current?.focus());
+        });
+      return;
+    }
     setMessages(baseMessages);
     void sendMessage(option.label, { baseMessages });
   }
@@ -650,7 +697,7 @@ export function ChatTab({
     try {
       const wavBase64 = await audioBlobToWavBase64(blob);
       const { text } = await transcribeChatAudio(token, wavBase64, "wav");
-      setDraft(text);
+      setDraft(applyDictationReplacements(text));
       setVoiceTranscriptReady(true);
       setStatus("idle");
       window.requestAnimationFrame(() => composerRef.current?.focus());
@@ -1381,6 +1428,37 @@ function buildScheduleCards(lookups: ChatLookup[]): ScheduleCard[] {
     }
 
     if (lookup.tool === "get_my_schedule") {
+      for (const entryValue of asArray(result.entries)) {
+        const entry = asRecord(entryValue);
+        const type = asString(entry.type) || "Schedule item";
+        const endDate = asString(entry.end_date);
+        const cases = asStringArray(entry.cases);
+        addCard({
+          date: asString(entry.date),
+          title: type,
+          subtitle: compactJoin([
+            asString(entry.time),
+            asString(entry.service),
+            asString(entry.attending),
+            asString(entry.hospital),
+            asString(entry.location),
+            asString(entry.line),
+            asString(entry.shift),
+            asString(entry.role),
+            asString(entry.position),
+            endDate ? `through ${formatCardDate(endDate)}` : undefined
+          ], " · "),
+          items: [
+            asString(entry.procedure),
+            ...cases,
+            withLabel(asString(entry.day_attending), "day attending"),
+            withLabel(asString(entry.night_attending), "night attending"),
+            asString(entry.note)
+          ].filter((value): value is string => Boolean(value)),
+          warnings: [],
+          tab: "my"
+        });
+      }
       for (const assignmentValue of asArray(result.assignments)) {
         const assignment = asRecord(assignmentValue);
         addCard({

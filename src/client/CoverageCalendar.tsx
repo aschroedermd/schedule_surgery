@@ -1287,6 +1287,17 @@ function canRequestService(isAdmin: boolean, servicePrivileges: ServicePrivilege
 }
 
 function describeRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  if (coverageRequest.requestType === "assignment-change") {
+    const change = coverageRequest.requestedAssignmentChange;
+    const surgeryCase = change ? state.cases.find((candidate) => candidate.id === change.targetId) : undefined;
+    const resident = change?.residentId ? state.residents.find((candidate) => candidate.id === change.residentId) : undefined;
+    return `${capitalize(coverageRequest.action)} case coverage${resident ? ` for ${formatResidentName(resident)}` : ""}${surgeryCase ? ` on ${surgeryCase.procedureLabel}` : ""}`;
+  }
+  if (coverageRequest.requestType === "case-order-change") {
+    const change = coverageRequest.requestedCaseOrderChange;
+    const surgeryCase = change ? state.cases.find((candidate) => candidate.id === change.caseId) : undefined;
+    return `Move ${surgeryCase?.procedureLabel ?? "OR case"} to case #${change?.order ?? "?"}`;
+  }
   if (isResidentProfileRequest(coverageRequest)) {
     return describeResidentProfileRequest(state, coverageRequest);
   }

@@ -58,12 +58,10 @@ describe("schedule assistant", () => {
     const prompt = await captureSystemPrompt("What is the Lab Hematology phone number?");
 
     expect(prompt).toContain("The Contacts directory is authoritative for hospital, resident, faculty, ACP, and administrative staff phone numbers");
-    expect(prompt).toContain('<FAST_CONTACT_DIRECTORY contacts="129" authoritative="true">');
+    expect(prompt).toContain('<FAST_CONTACT_DIRECTORY contacts="3" authoritative="true">');
     expect(prompt).toContain("name=Lab – Hematology|phone=(540) 853-0617|directory_type=Hospital|category=Ancillary Services");
-    expect(prompt).toContain("name=PACU|phone=(540) 981-7173|directory_type=Hospital|category=Perioperative");
-    expect(prompt).toContain("name=Andrew Schroeder|phone=(540) 204-5505|directory_type=Residents|category=PGY-5");
-    expect(prompt).toContain("name=David Salzberg|phone=(540) 855-0810|directory_type=Faculty & Staff|category=Faculty");
-    expect(prompt).toContain("name=Matthew Anderson|phone=(540) 566-8297|directory_type=Residents|category=Plastic Surgery Residents");
+    expect(prompt).not.toContain("name=PACU|phone=(540) 981-7173");
+    expect(prompt).not.toContain("name=Andrew Schroeder|phone=(540) 204-5505");
   });
 
   it("lets the model search persisted contacts and returns formatted numbers", async () => {
@@ -482,6 +480,165 @@ describe("schedule assistant", () => {
     expect(rotationPrompt).toContain("resident=Adedayo Adeleke");
   });
 
+  it("returns a resident's complete personal schedule across services regardless of selected service", async () => {
+    const state = createInitialState();
+    state.coverageEntries.push({
+      id: "berry_rounding_for_blue",
+      date: "2026-08-01",
+      kind: "rounding",
+      residentId: "res_blue",
+      serviceLine: "Berry",
+      note: "Berry rounds",
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z"
+    });
+    let requestNumber = 0;
+    const fetcher = vi.fn(async () => {
+      requestNumber += 1;
+      return requestNumber === 1
+        ? Response.json({
+          model: "deepseek/deepseek-v4-flash",
+          choices: [{ message: { role: "assistant", content: null, tool_calls: [{
+            id: "my_schedule_1",
+            type: "function",
+            function: {
+              name: "get_my_schedule",
+              arguments: JSON.stringify({ start_date: "2026-07-27", end_date: "2026-08-02" })
+            }
+          }] } }]
+        })
+        : Response.json({
+          model: "deepseek/deepseek-v4-flash",
+          choices: [{ message: { role: "assistant", content: "Your whole week is listed." } }]
+        });
+    }) as typeof fetch;
+
+    const answer = await answerScheduleQuestion(
+      [{ role: "user", content: "What is my schedule this week?" }],
+      { state, user, serviceLine: "Davies", now: new Date("2026-07-31T16:00:00Z") },
+      fetcher
+    );
+
+    expect(answer.lookups[0].result).toMatchObject({
+      person: "Christian Blue",
+      account_type: "resident",
+      scope: "all services"
+    });
+    expect((answer.lookups[0].result as { entries: Array<Record<string, unknown>> }).entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ date: "2026-08-01", type: "rounding", service: "Berry", note: "Berry rounds" }),
+        expect.objectContaining({ type: "rotation", service: "SCC Night" })
+      ])
+    );
+  });
+
+  it("returns linked attending OR, clinic, and attending-coverage work in My Schedule", async () => {
+    const state = createInitialState();
+    state.attendingCoverageAssignments.push({
+      id: "chen_acs_coverage",
+      date: state.weeks[0].startDate,
+      line: "ACS",
+      shift: "night",
+      role: "primary",
+      attendingId: "att_chen",
+      source: "manual",
+      note: "",
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z"
+    });
+    const attendingUser: SessionUser = { ...user, username: "chen", displayName: "Dr. Chen", role: "attending", attendingId: "att_chen" };
+    let requestNumber = 0;
+    const fetcher = vi.fn(async () => {
+      requestNumber += 1;
+      return requestNumber === 1
+        ? Response.json({
+          model: "deepseek/deepseek-v4-flash",
+          choices: [{ message: { role: "assistant", content: null, tool_calls: [{
+            id: "attending_schedule_1",
+            type: "function",
+            function: {
+              name: "get_my_schedule",
+              arguments: JSON.stringify({ start_date: state.weeks[0].startDate, end_date: state.weeks[0].startDate })
+            }
+          }] } }]
+        })
+        : Response.json({ model: "deepseek/deepseek-v4-flash", choices: [{ message: { role: "assistant", content: "Listed." } }] });
+    }) as typeof fetch;
+
+    const answer = await answerScheduleQuestion(
+      [{ role: "user", content: "Show my schedule" }],
+      { state, user: attendingUser, serviceLine: "Berry" },
+      fetcher
+    );
+    expect(answer.lookups[0].result).toMatchObject({ account_type: "attending", scope: "all services" });
+    expect((answer.lookups[0].result as { entries: Array<Record<string, unknown>> }).entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "OR attending", attending: "Dr. Chen", service: "Davies" }),
+        expect.objectContaining({ type: "attending coverage", line: "ACS", shift: "night" })
+      ])
+    );
+  });
+
+  it("publishes strict tool schemas and returns server-bound action confirmations", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({
+        model: "deepseek/deepseek-v4-flash",
+        choices: [{ message: { role: "assistant", content: null, tool_calls: [{
+          id: "prepare_1",
+          type: "function",
+          function: {
+            name: "prepare_schedule_action",
+            arguments: JSON.stringify({
+              action_type: "case_order",
+              operation: "update",
+              date: "2026-07-27",
+              target_date: null,
+              service: null,
+              resident_name: null,
+              target_resident_name: null,
+              attending_name: "Dr. Chen",
+              procedure: "Whipple",
+              entry_kind: null,
+              call_position: null,
+              case_id: null,
+              assignment_id: null,
+              entry_id: null,
+              request_id: null,
+              requested_order: 2,
+              note: null
+            })
+          }
+        }] } }]
+      });
+    }) as typeof fetch;
+    const actions = { prepare: vi.fn(() => ({
+      token: "bound-action-token",
+      prompt: "Ready to move the Whipple.",
+      summary: "Move Whipple to case #2",
+      mode: "direct" as const
+    })) };
+
+    const answer = await answerScheduleQuestion(
+      [{ role: "user", content: "Move Dr. Chen's Whipple to second" }],
+      { state: createInitialState(), user, serviceLine: "Davies", actions },
+      fetcher
+    );
+
+    expect(answer.interaction).toMatchObject({
+      actionToken: "bound-action-token",
+      options: [expect.objectContaining({ id: "confirm", label: "Confirm change" }), expect.objectContaining({ id: "cancel" })]
+    });
+    expect(answer.lookups).toEqual([]);
+    const tools = requests[0].tools as Array<{ function: { strict?: boolean; parameters: Record<string, unknown> } }>;
+    expect(tools.length).toBeGreaterThan(5);
+    for (const tool of tools) {
+      expect(tool.function.strict).toBe(true);
+      expect(tool.function.parameters).toMatchObject({ type: "object", additionalProperties: false });
+    }
+  });
+
   it("narrows fast context by month and hospital and includes pending trade requests", async () => {
     const state = createInitialState();
     state.coverageRequests.push({
@@ -583,6 +740,34 @@ describe("schedule assistant", () => {
     expect(prompt).toContain("Omit endoscopy and FMH from general coverage-gap answers unless explicitly requested");
     expect(prompt).toContain('<WIKI_ARTICLE slug="hospital-fmh"');
     expect(prompt).toContain('<WIKI_ARTICLE slug="or-coverage"');
+  });
+
+  it("uses attending notes as natural background without exposing or quoting them", async () => {
+    const prompt = await captureSystemPrompt("What should I know about Dr. Katz?");
+
+    expect(prompt).toContain("Use attending background and personal context as quiet guidance");
+    expect(prompt).toContain("Paraphrase it instead of reciting notes verbatim");
+    expect(prompt).toContain("Never mention or imply that you have a wiki article, profile, dossier, document, notes, or stored background");
+    expect(prompt).toContain("respond as though you know the local faculty a bit");
+    expect(prompt).toContain("do not present humor as a medical or other factual claim");
+    expect(prompt).toContain('<WIKI_ARTICLE slug="attending-guy-katz"');
+    expect(prompt).toContain("trained in advanced endoscopy in Cincinnati");
+    expect(prompt).toContain("his wife is Ellie");
+  });
+
+  it("answers who is on Endo from the upcoming resident rotation block only", async () => {
+    const prompt = await captureSystemPrompt("Who is on endo this upcoming block?");
+
+    expect(prompt).toContain('FAST_ROTATIONS entries="1" requested_service="Endoscopy" selected_block="2"');
+    expect(prompt).toContain("block_dates=\"2026-08-03..2026-08-30\"");
+    expect(prompt).toContain("resident=Christian Blue|block=2|start=2026-08-03|end=2026-08-30|service=Endoscopy");
+    expect(prompt).toContain("resident rotation roster; not attending blocks, night float, or weekend call");
+    expect(prompt).not.toContain("<FAST_CALL_SCHEDULE");
+    expect(prompt).not.toContain("service=NFloat");
+    expect(prompt).not.toContain("service=SCC Night");
+    expect(prompt).toContain("If asked who is \"on Endo\" for a block, answer only from resident Endoscopy rotation assignments");
+    expect(prompt).toContain('<WIKI_ARTICLE slug="service-endoscopy"');
+    expect(prompt).toContain("The resident on the Endoscopy rotation will often cover attending endoscopy blocks");
   });
 
   it("returns a validated single-choice interaction when the model asks a clarification", async () => {
@@ -755,9 +940,9 @@ describe("schedule assistant", () => {
       model: "deepseek/deepseek-v4-flash",
       checkedAt: "2026-07-28T16:00:00.000Z",
       dataUpdatedAt: state.updatedAt,
-      stateVersion: state.version,
-      lookups: []
+      stateVersion: state.version
     });
+    expect(result.lookups).toEqual([expect.objectContaining({ tool: "get_my_schedule" })]);
   });
 
   it("recovers when the model streams a preamble before requesting a schedule tool", async () => {

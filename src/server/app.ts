@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { URL } from "node:url";
@@ -28,12 +29,15 @@ import { isResidentOnService } from "../shared/services";
 import {
   CALL_POSITIONS,
   ATTENDING_COVERAGE_LINES,
+  Assignment,
+  AssignmentChange,
   AttendingCoverageAssignment,
   AttendingCoverageLine,
   AttendingCoverageRole,
   AttendingCoverageShift,
   AttendingBlock,
   CallPosition,
+  CaseOrderChange,
   ClaimRequest,
   ClinicSession,
   CollectionName,
@@ -107,6 +111,34 @@ import {
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
 const DAILY_CHAT_LIMIT = 20;
+const ASSISTANT_ACTION_TTL_MS = 10 * 60 * 1000;
+
+type AssistantScheduleAction =
+  | { kind: "coverage-request"; request: CoverageChangeRequest }
+  | { kind: "coverage-direct"; action: CoverageRequestAction; entry?: CoverageEntry; entryId?: string; serviceLine: string }
+  | { kind: "assignment-request"; request: CoverageChangeRequest }
+  | { kind: "assignment-direct"; action: CoverageRequestAction; change: AssignmentChange; serviceLine: string }
+  | { kind: "case-order-request"; request: CoverageChangeRequest }
+  | { kind: "case-order-direct"; change: CaseOrderChange; serviceLine: string }
+  | { kind: "request-resolution"; requestId: string; resolution: "approve" | "deny" };
+
+interface PendingAssistantScheduleAction {
+  token: string;
+  username: string;
+  expectedVersion: number;
+  expiresAt: number;
+  mode: "direct" | "request";
+  summary: string;
+  action: AssistantScheduleAction;
+}
+
+interface CompletedAssistantScheduleAction {
+  username: string;
+  expiresAt: number;
+  message: string;
+  stateVersion: number;
+  dataUpdatedAt: string;
+}
 
 const collections: CollectionName[] = [
   "hospitals",
@@ -133,12 +165,32 @@ export function createApp(
   const transcriptionLimiter = createRateLimiter(25, 24 * 60 * 60 * 1000);
   const chatFeedbackLimiter = createRateLimiter(50, 24 * 60 * 60 * 1000);
   const stateSubscribers = new Set<express.Response>();
+  const pendingAssistantActions = new Map<string, PendingAssistantScheduleAction>();
+  const completedAssistantActions = new Map<string, CompletedAssistantScheduleAction>();
   app.locals.broadcastPlannerState = (state: PlannerState) => broadcastStateEvent(stateSubscribers, state);
 
   app.set("trust proxy", 1);
   app.use(securityHeaders);
   app.use(cors(getCorsOptions()));
   app.use(express.json({ limit: "12mb" }));
+
+  function assistantActionPreparer(state: PlannerState, user: SessionUser, serviceLine: string) {
+    return {
+      prepare(args: Record<string, unknown>) {
+        pruneAssistantActionMaps(pendingAssistantActions, completedAssistantActions);
+        const pending = prepareAssistantScheduleAction(state, user, serviceLine, args);
+        pendingAssistantActions.set(pending.token, pending);
+        return {
+          token: pending.token,
+          mode: pending.mode,
+          summary: pending.summary,
+          prompt: pending.mode === "direct"
+            ? `Ready to make this change: ${pending.summary}`
+            : `Ready to submit this for approval: ${pending.summary}`
+        };
+      }
+    };
+  }
 
   app.get("/api/healthz", (_req, res) => {
     res.json({ ok: true });
@@ -311,7 +363,8 @@ export function createApp(
           state,
           user: req.user!,
           serviceLine,
-          voiceMode: req.body.voiceMode === true
+          voiceMode: req.body.voiceMode === true,
+          actions: assistantActionPreparer(state, req.user!, serviceLine)
         },
         fetch,
         modelSettings
@@ -389,7 +442,13 @@ export function createApp(
       });
       const answer = await streamScheduleQuestion(
         messages,
-        { state, user: req.user!, serviceLine, voiceMode: req.body.voiceMode === true },
+        {
+          state,
+          user: req.user!,
+          serviceLine,
+          voiceMode: req.body.voiceMode === true,
+          actions: assistantActionPreparer(state, req.user!, serviceLine)
+        },
         (delta) => writeChatStreamEvent(res, { type: "delta", delta }),
         fetch,
         abortController.signal,
@@ -453,6 +512,46 @@ export function createApp(
         res.status(error.status).json({ error: error.message });
         return;
       }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/actions/:token/commit", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      pruneAssistantActionMaps(pendingAssistantActions, completedAssistantActions);
+      const token = getParam(req.params.token);
+      const completed = completedAssistantActions.get(token);
+      if (completed) {
+        if (completed.username !== req.user!.username) throw new HttpError(403, "This action belongs to another account");
+        res.json({ message: completed.message, stateVersion: completed.stateVersion, dataUpdatedAt: completed.dataUpdatedAt });
+        return;
+      }
+      const pending = pendingAssistantActions.get(token);
+      if (!pending) throw new HttpError(404, "This confirmation expired. Ask the assistant to prepare the change again.");
+      if (pending.username !== req.user!.username) throw new HttpError(403, "This action belongs to another account");
+      const state = await store.load();
+      if (state.version !== pending.expectedVersion) {
+        pendingAssistantActions.delete(token);
+        res.status(409).json({
+          error: "The schedule changed after this preview. Ask the assistant to check and prepare it again.",
+          currentVersion: state.version
+        });
+        return;
+      }
+      const committed = commitAssistantScheduleAction(state, req.user!, pending);
+      const saved = await store.save(committed.state, { expectedVersion: pending.expectedVersion });
+      broadcastStateEvent(stateSubscribers, saved);
+      const result: CompletedAssistantScheduleAction = {
+        username: req.user!.username,
+        expiresAt: Date.now() + ASSISTANT_ACTION_TTL_MS,
+        message: committed.message,
+        stateVersion: saved.version,
+        dataUpdatedAt: saved.updatedAt
+      };
+      pendingAssistantActions.delete(token);
+      completedAssistantActions.set(token, result);
+      res.json({ message: result.message, stateVersion: result.stateVersion, dataUpdatedAt: result.dataUpdatedAt });
+    } catch (error) {
       next(error);
     }
   });
@@ -1421,9 +1520,9 @@ export function createApp(
   app.post("/api/coverage-entries", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
-      const serviceLine = readServiceLine(req);
-      if (!requireServiceEdit(req, res, serviceLine)) return;
       const entry = buildCoverageEntry(state, req.body);
+      const serviceLine = getCoverageEntryServiceLine(entry, readServiceLine(req));
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const nextState = upsertCoverageEntry(state, entry);
       const withActivity = addActivity(nextState, {
         ...requestActivityActor(req),
@@ -1443,10 +1542,14 @@ export function createApp(
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
-      const serviceLine = readServiceLine(req);
-      if (!requireServiceEdit(req, res, serviceLine)) return;
       const existing = requireCoverageEntry(state, id);
       const entry = buildCoverageEntry(state, { ...existing, ...req.body, id }, existing);
+      const fallbackServiceLine = readServiceLine(req);
+      const affectedServices = new Set([
+        getCoverageEntryServiceLine(existing, fallbackServiceLine),
+        getCoverageEntryServiceLine(entry, fallbackServiceLine)
+      ]);
+      if ([...affectedServices].some((serviceLine) => !requireServiceEdit(req, res, serviceLine))) return;
       const nextState = upsertCoverageEntry(state, entry);
       const withActivity = addActivity(nextState, {
         ...requestActivityActor(req),
@@ -1466,9 +1569,9 @@ export function createApp(
     try {
       const id = getParam(req.params.id);
       const state = await store.load();
-      const serviceLine = readServiceLine(req);
-      if (!requireServiceEdit(req, res, serviceLine)) return;
       const existing = requireCoverageEntry(state, id);
+      const serviceLine = getCoverageEntryServiceLine(existing, readServiceLine(req));
+      if (!requireServiceEdit(req, res, serviceLine)) return;
       const nextState: PlannerState = {
         ...state,
         coverageEntries: state.coverageEntries.filter((entry) => entry.id !== id)
@@ -1579,14 +1682,18 @@ export function createApp(
       const isResidentTrade = req.body?.requestType === "resident-trade";
       const isResidentProfile = req.body?.requestType === "resident-profile";
       const isResidentVacation = req.body?.requestType === "resident-vacation";
-      if (!isResidentTrade && !isResidentProfile && !isResidentVacation && !requireServiceRequest(req, res, serviceLine)) return;
-      const coverageRequest = isResidentTrade
+      let coverageRequest = isResidentTrade
         ? buildResidentTradeRequest(state, req.body, req.user, serviceLine)
         : isResidentProfile
           ? buildResidentProfileRequest(state, req.body, req.user)
           : isResidentVacation
             ? buildResidentVacationRequest(state, req.body, req.user)
             : buildCoverageRequest(state, req.body, req.user, serviceLine);
+      if (!isResidentTrade && !isResidentProfile && !isResidentVacation) {
+        const affectedServices = getCoverageRequestServiceLines(state, coverageRequest, serviceLine);
+        if (affectedServices.some((affectedService) => !requireServiceRequest(req, res, affectedService))) return;
+        coverageRequest = { ...coverageRequest, serviceLine: affectedServices.at(-1) ?? serviceLine };
+      }
       const nextState: PlannerState = {
         ...state,
         coverageRequests: [coverageRequest, ...state.coverageRequests]
@@ -2463,6 +2570,508 @@ function upsertCoverageEntry(state: PlannerState, entry: CoverageEntry): Planner
   };
 }
 
+function prepareAssistantScheduleAction(
+  state: PlannerState,
+  user: SessionUser,
+  currentServiceLine: string,
+  args: Record<string, unknown>
+): PendingAssistantScheduleAction {
+  const actionType = readRequiredString(args.action_type, "action_type");
+  const operation = readRequiredString(args.operation, "operation");
+  const prepared = actionType === "call_swap"
+    ? prepareAssistantCallSwap(state, user, currentServiceLine, args, operation)
+    : actionType === "case_coverage"
+      ? prepareAssistantCaseCoverage(state, user, args, operation)
+      : actionType === "case_order"
+        ? prepareAssistantCaseOrder(state, user, args, operation)
+        : actionType === "calendar_entry"
+          ? prepareAssistantCalendarEntry(state, user, currentServiceLine, args, operation)
+          : actionType === "request_resolution"
+            ? prepareAssistantRequestResolution(state, user, args, operation)
+            : (() => { throw new HttpError(400, "Unsupported assistant schedule action"); })();
+  return {
+    token: `assistant_action_${randomUUID()}`,
+    username: user.username,
+    expectedVersion: state.version,
+    expiresAt: Date.now() + ASSISTANT_ACTION_TTL_MS,
+    ...prepared
+  };
+}
+
+function prepareAssistantCallSwap(
+  state: PlannerState,
+  user: SessionUser,
+  currentServiceLine: string,
+  args: Record<string, unknown>,
+  operation: string
+): Pick<PendingAssistantScheduleAction, "mode" | "summary" | "action"> {
+  if (operation !== "swap" && operation !== "update") throw new HttpError(400, "Call trades use the swap operation");
+  const requesterResident = findResidentForUser(state, user);
+  if (!requesterResident) throw new HttpError(403, "A linked resident profile is required to trade call");
+  const date = assertDate(args.date);
+  const sourceEntry = findUniqueCoverageEntry(state, {
+    entryId: readOptionalString(args.entry_id),
+    date,
+    kind: "call",
+    residentId: requesterResident.id
+  });
+  const targetResident = findResidentByName(state, readRequiredString(args.target_resident_name, "target_resident_name"));
+  const targetDate = readOptionalString(args.target_date);
+  const swapEntry = targetDate
+    ? findUniqueCoverageEntry(state, { date: assertDate(targetDate), kind: "call", residentId: targetResident.id })
+    : undefined;
+  const serviceLine = sourceEntry.serviceLine ?? readOptionalString(args.service) ?? currentServiceLine;
+  const request = buildResidentTradeRequest(state, {
+    requestType: "resident-trade",
+    action: "update",
+    entryId: sourceEntry.id,
+    targetResidentId: targetResident.id,
+    swapEntryId: swapEntry?.id,
+    message: readOptionalString(args.note) ?? "Submitted through the schedule assistant"
+  }, user, serviceLine);
+  return {
+    mode: "request",
+    summary: swapEntry
+      ? `Ask ${targetResident.name} to swap your call on ${sourceEntry.date} for their call on ${swapEntry.date}`
+      : `Ask ${targetResident.name} to cover your call on ${sourceEntry.date}`,
+    action: { kind: "coverage-request", request }
+  };
+}
+
+function prepareAssistantCaseCoverage(
+  state: PlannerState,
+  user: SessionUser,
+  args: Record<string, unknown>,
+  operation: string
+): Pick<PendingAssistantScheduleAction, "mode" | "summary" | "action"> {
+  const action = assertCoverageRequestAction(operation);
+  const surgeryCase = findAssistantCase(state, args);
+  const block = state.attendingBlocks.find((candidate) => candidate.id === surgeryCase.blockId)!;
+  const attending = state.attendings.find((candidate) => candidate.id === block.attendingId)!;
+  const serviceLine = getBlockServiceLine(state, block.id);
+  let assignment = readOptionalString(args.assignment_id)
+    ? state.assignments.find((candidate) => candidate.id === readOptionalString(args.assignment_id))
+    : undefined;
+  const requestedResidentName = readOptionalString(args.resident_name);
+  if (!assignment && action === "delete" && requestedResidentName) {
+    const resident = findResidentByName(state, requestedResidentName);
+    assignment = state.assignments.find(
+      (candidate) => candidate.kind === "case" && candidate.targetId === surgeryCase.id && candidate.residentId === resident.id
+    );
+  }
+  if ((action === "delete" || action === "update") && (!assignment || assignment.kind !== "case" || assignment.targetId !== surgeryCase.id)) {
+    throw new HttpError(400, "Choose the specific case assignment to change");
+  }
+  const resident = action === "delete"
+    ? assignment && state.residents.find((candidate) => candidate.id === assignment!.residentId)
+    : findResidentByName(state, readRequiredString(args.resident_name, "resident_name"));
+  if (action !== "delete") {
+    assertMedicalStudentAssignmentKind(state, "case", resident!.id);
+    assertResidentAvailableForAssignment(state, "case", surgeryCase.id, resident!.id);
+  }
+  const change: AssignmentChange = {
+    assignmentId: assignment?.id,
+    kind: "case",
+    targetId: surgeryCase.id,
+    residentId: action === "delete" ? assignment?.residentId : resident!.id,
+    locked: assignment?.locked ?? false
+  };
+  const mode = assistantServiceActionMode(user, serviceLine);
+  const verb = action === "delete" ? `remove ${resident?.name ?? "the resident"} from` : action === "update" ? `change coverage to ${resident!.name} for` : `assign ${resident!.name} to`;
+  const summary = `${capitalize(verb)} ${surgeryCase.procedureLabel} with ${attending.name} on ${block.date}`;
+  if (mode === "request") {
+    const now = new Date().toISOString();
+    const request: CoverageChangeRequest = {
+      id: createId("assignment_req"),
+      requestType: "assignment-change",
+      action,
+      status: "pending",
+      requestedAssignmentChange: change,
+      serviceLine,
+      requesterUsername: user.username,
+      requesterName: user.displayName,
+      message: readOptionalString(args.note) ?? "Submitted through the schedule assistant",
+      createdAt: now,
+      updatedAt: now
+    };
+    return { mode, summary, action: { kind: "assignment-request", request } };
+  }
+  return { mode, summary, action: { kind: "assignment-direct", action, change, serviceLine } };
+}
+
+function prepareAssistantCaseOrder(
+  state: PlannerState,
+  user: SessionUser,
+  args: Record<string, unknown>,
+  operation: string
+): Pick<PendingAssistantScheduleAction, "mode" | "summary" | "action"> {
+  if (operation !== "update") throw new HttpError(400, "Case order changes use the update operation");
+  const surgeryCase = findAssistantCase(state, args);
+  const block = state.attendingBlocks.find((candidate) => candidate.id === surgeryCase.blockId)!;
+  const attending = state.attendings.find((candidate) => candidate.id === block.attendingId)!;
+  const serviceLine = getBlockServiceLine(state, block.id);
+  const requestedOrder = readOptionalPositiveInteger(args.requested_order);
+  if (!requestedOrder) throw new HttpError(400, "A one-based requested case order is required");
+  const caseCount = state.cases.filter((candidate) => candidate.blockId === surgeryCase.blockId).length;
+  if (requestedOrder > caseCount) throw new HttpError(400, `Case order must be between 1 and ${caseCount}`);
+  const change: CaseOrderChange = { caseId: surgeryCase.id, order: requestedOrder };
+  const ownsCase = user.role === "attending" && user.attendingId === block.attendingId;
+  const mode = ownsCase || hasServicePrivilege(user, serviceLine, "edit") ? "direct" : assistantServiceActionMode(user, serviceLine);
+  const summary = `Move ${surgeryCase.procedureLabel} with ${attending.name} on ${block.date} to case #${requestedOrder}`;
+  if (mode === "request") {
+    const now = new Date().toISOString();
+    const request: CoverageChangeRequest = {
+      id: createId("case_order_req"),
+      requestType: "case-order-change",
+      action: "update",
+      status: "pending",
+      requestedCaseOrderChange: change,
+      serviceLine,
+      requesterUsername: user.username,
+      requesterName: user.displayName,
+      message: readOptionalString(args.note) ?? "Submitted through the schedule assistant",
+      createdAt: now,
+      updatedAt: now
+    };
+    return { mode, summary, action: { kind: "case-order-request", request } };
+  }
+  return { mode, summary, action: { kind: "case-order-direct", change, serviceLine } };
+}
+
+function prepareAssistantCalendarEntry(
+  state: PlannerState,
+  user: SessionUser,
+  currentServiceLine: string,
+  args: Record<string, unknown>,
+  operation: string
+): Pick<PendingAssistantScheduleAction, "mode" | "summary" | "action"> {
+  const action = assertCoverageRequestAction(operation);
+  const entryId = readOptionalString(args.entry_id);
+  const existing = action === "create"
+    ? undefined
+    : findUniqueCoverageEntry(state, {
+      entryId,
+      date: readOptionalString(args.date),
+      kind: readOptionalString(args.entry_kind) as CoverageKind | undefined,
+      residentId: readOptionalString(args.resident_name) ? findResidentByName(state, readOptionalString(args.resident_name)!).id : undefined
+    });
+  const kind = (readOptionalString(args.entry_kind) ?? existing?.kind) as CoverageKind | undefined;
+  if (!kind || kind === "attending-call") throw new HttpError(400, "Choose call, rounding, off, or note for this calendar action");
+  const resident = readOptionalString(args.resident_name)
+    ? findResidentByName(state, readOptionalString(args.resident_name)!)
+    : existing?.residentId
+      ? state.residents.find((candidate) => candidate.id === existing.residentId)
+      : undefined;
+  const requestedService = readOptionalString(args.service) ?? existing?.serviceLine ?? currentServiceLine;
+  const requestedEntry = action === "delete" ? undefined : buildCoverageEntry(state, {
+    ...existing,
+    id: existing?.id,
+    date: readOptionalString(args.date) ?? existing?.date,
+    kind,
+    residentId: resident?.id,
+    serviceLine: kind === "call" ? undefined : requestedService,
+    callPosition: kind === "call" ? normalizeCallPosition(args.call_position) ?? existing?.callPosition : undefined,
+    note: readOptionalString(args.note) ?? existing?.note ?? ""
+  }, existing);
+  const serviceLine = getCoverageEntryServiceLine(existing ?? requestedEntry!, requestedService)!;
+  const mode = assistantServiceActionMode(user, serviceLine);
+  const described = existing ?? requestedEntry!;
+  const summary = `${capitalize(action)} ${describeCoverageEntry(state, described)}`;
+  if (mode === "request") {
+    const request = buildCoverageRequest(state, {
+      action,
+      entryId: existing?.id,
+      requestedEntry,
+      message: readOptionalString(args.note) ?? "Submitted through the schedule assistant"
+    }, user, serviceLine);
+    return { mode, summary, action: { kind: "coverage-request", request } };
+  }
+  return {
+    mode,
+    summary,
+    action: { kind: "coverage-direct", action, entry: requestedEntry, entryId: existing?.id, serviceLine }
+  };
+}
+
+function prepareAssistantRequestResolution(
+  state: PlannerState,
+  user: SessionUser,
+  args: Record<string, unknown>,
+  operation: string
+): Pick<PendingAssistantScheduleAction, "mode" | "summary" | "action"> {
+  if (operation !== "approve" && operation !== "deny") throw new HttpError(400, "Request decisions must approve or deny");
+  const requestId = readRequiredString(args.request_id, "request_id");
+  const request = requireCoverageRequest(state, requestId);
+  if (request.status !== "pending") throw new HttpError(400, "This request is already resolved");
+  if (!canResolveCoverageRequest(state, user, request)) throw new HttpError(403, getCoverageRequestResolveError(request));
+  return {
+    mode: "direct",
+    summary: `${capitalize(operation)}: ${describeCoverageRequest(state, request)}`,
+    action: { kind: "request-resolution", requestId, resolution: operation }
+  };
+}
+
+function assistantServiceActionMode(user: SessionUser, serviceLine: string): "direct" | "request" {
+  if (hasServicePrivilege(user, serviceLine, "edit")) return "direct";
+  if (hasServicePrivilege(user, serviceLine, "request")) return "request";
+  throw new HttpError(403, `You do not have change or request permission for ${serviceLine}`);
+}
+
+function findAssistantCase(state: PlannerState, args: Record<string, unknown>): SurgeryCase {
+  const caseId = readOptionalString(args.case_id);
+  if (caseId) {
+    const surgeryCase = state.cases.find((candidate) => candidate.id === caseId);
+    if (!surgeryCase) throw new HttpError(404, "The selected OR case is no longer available");
+    return surgeryCase;
+  }
+  const date = readOptionalString(args.date);
+  const procedure = readOptionalString(args.procedure)?.toLowerCase();
+  const attendingName = readOptionalString(args.attending_name);
+  const attending = attendingName ? findAttendingByName(state, attendingName) : undefined;
+  const matches = state.cases.filter((surgeryCase) => {
+    const block = state.attendingBlocks.find((candidate) => candidate.id === surgeryCase.blockId);
+    return Boolean(
+      block &&
+      (!date || block.date === date) &&
+      (!attending || block.attendingId === attending.id) &&
+      (!procedure || surgeryCase.procedureLabel.toLowerCase().includes(procedure))
+    );
+  });
+  if (matches.length !== 1) {
+    throw new HttpError(400, matches.length ? "More than one OR case matches; include the date, attending, and procedure" : "No matching OR case was found");
+  }
+  return matches[0];
+}
+
+function findResidentByName(state: PlannerState, name: string): Resident {
+  const normalized = normalizeUsername(name);
+  const exact = state.residents.filter((resident) =>
+    [resident.name, resident.username, ...(resident.aliases ?? [])].some((value) => normalizeUsername(value ?? "") === normalized)
+  );
+  const matches = exact.length ? exact : state.residents.filter((resident) => normalizeUsername(resident.name).includes(normalized));
+  if (matches.length !== 1) throw new HttpError(400, matches.length ? `More than one resident matches ${name}` : `Resident not found: ${name}`);
+  return matches[0];
+}
+
+function findAttendingByName(state: PlannerState, name: string) {
+  const normalized = normalizeUsername(name);
+  const exact = state.attendings.filter((attending) =>
+    [attending.name, ...(attending.aliases ?? [])].some((value) => normalizeUsername(value) === normalized)
+  );
+  const matches = exact.length ? exact : state.attendings.filter((attending) => normalizeUsername(attending.name).includes(normalized));
+  if (matches.length !== 1) throw new HttpError(400, matches.length ? `More than one attending matches ${name}` : `Attending not found: ${name}`);
+  return matches[0];
+}
+
+function findUniqueCoverageEntry(
+  state: PlannerState,
+  filter: { entryId?: string; date?: string; kind?: CoverageKind; residentId?: string }
+): CoverageEntry {
+  if (filter.entryId) return requireCoverageEntry(state, filter.entryId);
+  const matches = state.coverageEntries.filter((entry) =>
+    (!filter.date || entry.date === filter.date) &&
+    (!filter.kind || entry.kind === filter.kind) &&
+    (!filter.residentId || entry.residentId === filter.residentId)
+  );
+  if (matches.length !== 1) {
+    throw new HttpError(400, matches.length ? "More than one calendar entry matches; include the specific entry" : "No matching calendar entry was found");
+  }
+  return matches[0];
+}
+
+function pruneAssistantActionMaps(
+  pending: Map<string, PendingAssistantScheduleAction>,
+  completed: Map<string, CompletedAssistantScheduleAction>
+): void {
+  const now = Date.now();
+  for (const [token, action] of pending) if (action.expiresAt <= now) pending.delete(token);
+  for (const [token, action] of completed) if (action.expiresAt <= now) completed.delete(token);
+}
+
+function commitAssistantScheduleAction(
+  state: PlannerState,
+  user: SessionUser,
+  pending: PendingAssistantScheduleAction
+): { state: PlannerState; message: string } {
+  const action = pending.action;
+  if (action.kind === "coverage-request" || action.kind === "assignment-request" || action.kind === "case-order-request") {
+    validateAssistantRequestAuthority(state, user, action.request);
+    const nextState = addActivity({
+      ...state,
+      coverageRequests: [action.request, ...state.coverageRequests]
+    }, {
+      ...userActivityActor(user),
+      activityType: action.kind === "assignment-request" ? "assignment" : "calendar",
+      action: "submitted assistant schedule request",
+      details: describeCoverageRequest(state, action.request),
+      entityType: "coverageRequest",
+      entityId: action.request.id
+    });
+    return { state: nextState, message: `Request submitted: ${pending.summary}` };
+  }
+
+  if (action.kind === "coverage-direct") {
+    if (!hasServicePrivilege(user, action.serviceLine, "edit")) throw new HttpError(403, "Edit permission is no longer available for this service");
+    let nextState: PlannerState;
+    if (action.action === "delete") {
+      if (!action.entryId) throw new HttpError(400, "Calendar entry is missing");
+      requireCoverageEntry(state, action.entryId);
+      nextState = { ...state, coverageEntries: state.coverageEntries.filter((entry) => entry.id !== action.entryId) };
+    } else {
+      if (!action.entry) throw new HttpError(400, "Calendar change is missing");
+      const existing = action.action === "update" ? requireCoverageEntry(state, action.entry.id) : undefined;
+      const entry = buildCoverageEntry(state, action.entry, existing);
+      nextState = upsertCoverageEntry(state, entry);
+    }
+    return {
+      state: addActivity(nextState, {
+        ...userActivityActor(user),
+        activityType: "calendar",
+        action: "completed assistant calendar change",
+        details: pending.summary,
+        entityType: "coverageEntry",
+        entityId: action.entryId ?? action.entry?.id
+      }),
+      message: `Schedule updated: ${pending.summary}`
+    };
+  }
+
+  if (action.kind === "assignment-direct") {
+    if (!hasServicePrivilege(user, action.serviceLine, "edit")) throw new HttpError(403, "Edit permission is no longer available for this service");
+    const nextState = applyAssignmentChange(state, action.action, action.change);
+    return {
+      state: addActivity(nextState, {
+        ...userActivityActor(user),
+        activityType: "assignment",
+        action: "completed assistant case coverage change",
+        details: pending.summary,
+        entityType: "case",
+        entityId: action.change.targetId
+      }),
+      message: `Case coverage updated: ${pending.summary}`
+    };
+  }
+
+  if (action.kind === "case-order-direct") {
+    const surgeryCase = state.cases.find((candidate) => candidate.id === action.change.caseId);
+    if (!surgeryCase) throw new HttpError(404, "The selected OR case is no longer available");
+    const block = state.attendingBlocks.find((candidate) => candidate.id === surgeryCase.blockId);
+    const ownsCase = user.role === "attending" && user.attendingId === block?.attendingId;
+    if (!ownsCase && !hasServicePrivilege(user, action.serviceLine, "edit")) {
+      throw new HttpError(403, "Edit permission is no longer available for this case");
+    }
+    const nextState = applyCaseOrderChange(state, action.change);
+    return {
+      state: addActivity(nextState, {
+        ...userActivityActor(user),
+        activityType: "assignment",
+        action: "completed assistant case order change",
+        details: pending.summary,
+        entityType: "case",
+        entityId: action.change.caseId
+      }),
+      message: `Case order updated: ${pending.summary}`
+    };
+  }
+
+  const request = requireCoverageRequest(state, action.requestId);
+  if (request.status !== "pending") throw new HttpError(400, "This request is already resolved");
+  if (!canResolveCoverageRequest(state, user, request)) throw new HttpError(403, getCoverageRequestResolveError(request));
+  const now = new Date().toISOString();
+  const applied = action.resolution === "approve" ? applyCoverageRequest(state, request) : state;
+  const nextState: PlannerState = {
+    ...applied,
+    coverageRequests: applied.coverageRequests.map((candidate) =>
+      candidate.id === request.id
+        ? { ...candidate, status: action.resolution === "approve" ? "approved" : "denied", updatedAt: now, resolvedAt: now }
+        : candidate
+    )
+  };
+  return {
+    state: addActivity(nextState, {
+      ...userActivityActor(user),
+      activityType: getCoverageRequestActivityType(request),
+      action: action.resolution === "approve" ? getApprovedCoverageRequestActivity(request) : getDeniedCoverageRequestActivity(request),
+      details: describeCoverageRequest(nextState, request),
+      entityType: "coverageRequest",
+      entityId: request.id
+    }),
+    message: `Request ${action.resolution === "approve" ? "approved" : "denied"}: ${pending.summary.replace(/^(Approve|Deny): /, "")}`
+  };
+}
+
+function validateAssistantRequestAuthority(state: PlannerState, user: SessionUser, request: CoverageChangeRequest): void {
+  if (isResidentTradeRequest(request)) {
+    const resident = findResidentForUser(state, user);
+    if (!resident || request.requesterResidentId !== resident.id) throw new HttpError(403, "This call trade no longer belongs to your account");
+    return;
+  }
+  if (!hasServicePrivilege(user, request.serviceLine, "request")) {
+    throw new HttpError(403, "Request permission is no longer available for this service");
+  }
+}
+
+function applyAssignmentChange(
+  state: PlannerState,
+  action: CoverageRequestAction,
+  change: AssignmentChange
+): PlannerState {
+  if (action === "delete") {
+    if (!change.assignmentId) throw new Error("Assignment delete request is missing assignmentId");
+    const existing = state.assignments.find((assignment) => assignment.id === change.assignmentId);
+    if (!existing || existing.kind !== change.kind || existing.targetId !== change.targetId) {
+      throw new Error("Case assignment changed; submit a new request");
+    }
+    return { ...state, assignments: state.assignments.filter((assignment) => assignment.id !== existing.id) };
+  }
+  if (!change.residentId) throw new Error("Assignment request is missing residentId");
+  requireResident(state, change.residentId);
+  assertMedicalStudentAssignmentKind(state, change.kind, change.residentId);
+  assertResidentAvailableForAssignment(state, change.kind, change.targetId, change.residentId);
+  if (action === "create") {
+    if (state.assignments.some((assignment) =>
+      assignment.kind === change.kind && assignment.targetId === change.targetId && assignment.residentId === change.residentId
+    )) throw new Error("Resident is already assigned to this case");
+    return {
+      ...state,
+      assignments: [...state.assignments, makeAssignment(change.kind, change.targetId, change.residentId, "admin", Boolean(change.locked))]
+    };
+  }
+  if (!change.assignmentId) throw new Error("Assignment update request is missing assignmentId");
+  const existing = state.assignments.find((assignment) => assignment.id === change.assignmentId);
+  if (!existing || existing.kind !== change.kind || existing.targetId !== change.targetId) {
+    throw new Error("Case assignment changed; submit a new request");
+  }
+  if (state.assignments.some((assignment) =>
+    assignment.id !== existing.id &&
+    assignment.kind === change.kind &&
+    assignment.targetId === change.targetId &&
+    assignment.residentId === change.residentId
+  )) throw new Error("Resident is already assigned to this case");
+  return {
+    ...state,
+    assignments: state.assignments.map((assignment) => assignment.id === existing.id
+      ? { ...assignment, residentId: change.residentId!, locked: change.locked ?? assignment.locked, updatedAt: new Date().toISOString() }
+      : assignment)
+  };
+}
+
+function applyCaseOrderChange(state: PlannerState, change: CaseOrderChange): PlannerState {
+  const surgeryCase = state.cases.find((candidate) => candidate.id === change.caseId);
+  if (!surgeryCase) throw new Error(`Case not found: ${change.caseId}`);
+  const blockCases = state.cases
+    .filter((candidate) => candidate.blockId === surgeryCase.blockId)
+    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+  const withoutTarget = blockCases.filter((candidate) => candidate.id !== surgeryCase.id);
+  const index = Math.max(0, Math.min(change.order - 1, withoutTarget.length));
+  withoutTarget.splice(index, 0, surgeryCase);
+  const orders = new Map(withoutTarget.map((candidate, order) => [candidate.id, order]));
+  return {
+    ...state,
+    cases: state.cases.map((candidate) => orders.has(candidate.id) ? { ...candidate, order: orders.get(candidate.id)! } : candidate)
+  };
+}
+
 function buildCoverageRequest(
   state: PlannerState,
   input: Partial<CoverageChangeRequest>,
@@ -2692,6 +3301,16 @@ function buildResidentVacationChange(
 }
 
 function applyCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): PlannerState {
+  if (isAssignmentChangeRequest(coverageRequest)) {
+    if (!coverageRequest.requestedAssignmentChange) throw new Error("Assignment request is missing requested change");
+    return applyAssignmentChange(state, coverageRequest.action, coverageRequest.requestedAssignmentChange);
+  }
+
+  if (isCaseOrderChangeRequest(coverageRequest)) {
+    if (!coverageRequest.requestedCaseOrderChange) throw new Error("Case order request is missing requested change");
+    return applyCaseOrderChange(state, coverageRequest.requestedCaseOrderChange);
+  }
+
   if (isResidentProfileRequest(coverageRequest)) {
     return applyResidentProfileRequest(state, coverageRequest);
   }
@@ -3672,6 +4291,19 @@ function getCoverageEntryPositionRank(entry: CoverageEntry): number {
 }
 
 function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageChangeRequest): string {
+  if (isAssignmentChangeRequest(coverageRequest)) {
+    const change = coverageRequest.requestedAssignmentChange;
+    const surgeryCase = change ? state.cases.find((candidate) => candidate.id === change.targetId) : undefined;
+    const resident = change?.residentId ? state.residents.find((candidate) => candidate.id === change.residentId) : undefined;
+    return `${capitalize(coverageRequest.action)} case coverage${resident ? ` for ${resident.name}` : ""}${surgeryCase ? ` on ${surgeryCase.procedureLabel}` : ""}`;
+  }
+
+  if (isCaseOrderChangeRequest(coverageRequest)) {
+    const change = coverageRequest.requestedCaseOrderChange;
+    const surgeryCase = change ? state.cases.find((candidate) => candidate.id === change.caseId) : undefined;
+    return `Move ${surgeryCase?.procedureLabel ?? "OR case"} to case #${change?.order ?? "?"}`;
+  }
+
   if (isResidentProfileRequest(coverageRequest)) {
     return describeResidentProfileRequest(state, coverageRequest);
   }
@@ -3699,6 +4331,8 @@ function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageC
 }
 
 function getApprovedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
+  if (isAssignmentChangeRequest(coverageRequest)) return "approved case coverage request";
+  if (isCaseOrderChangeRequest(coverageRequest)) return "approved case order request";
   if (isResidentProfileRequest(coverageRequest)) return "approved resident profile request";
   if (isResidentVacationRequest(coverageRequest)) return "approved resident vacation request";
   if (isResidentTradeRequest(coverageRequest)) return "accepted resident call trade";
@@ -3706,6 +4340,8 @@ function getApprovedCoverageRequestActivity(coverageRequest: CoverageChangeReque
 }
 
 function getDeniedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
+  if (isAssignmentChangeRequest(coverageRequest)) return "denied case coverage request";
+  if (isCaseOrderChangeRequest(coverageRequest)) return "denied case order request";
   if (isResidentProfileRequest(coverageRequest)) return "denied resident profile request";
   if (isResidentVacationRequest(coverageRequest)) return "denied resident vacation request";
   if (isResidentTradeRequest(coverageRequest)) return "denied resident call trade";
@@ -3713,6 +4349,7 @@ function getDeniedCoverageRequestActivity(coverageRequest: CoverageChangeRequest
 }
 
 function getCoverageRequestActivityType(coverageRequest: CoverageChangeRequest): ActivityInput["activityType"] {
+  if (isAssignmentChangeRequest(coverageRequest) || isCaseOrderChangeRequest(coverageRequest)) return "assignment";
   if (isResidentProfileRequest(coverageRequest)) return "account";
   if (isResidentVacationRequest(coverageRequest)) return "resident";
   return "calendar";
@@ -3845,6 +4482,14 @@ function isResidentTradeRequest(coverageRequest: CoverageChangeRequest): boolean
   return coverageRequest.requestType === "resident-trade";
 }
 
+function isAssignmentChangeRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "assignment-change";
+}
+
+function isCaseOrderChangeRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "case-order-change";
+}
+
 function coverageRequestTargetsUserResident(
   state: PlannerState,
   user: SessionUser | undefined,
@@ -3866,6 +4511,7 @@ function coverageRequestInvolvesUserResident(
       coverageRequest.targetResidentId === resident.id ||
       coverageRequest.requestedResidentProfile?.residentId === resident.id ||
       coverageRequest.requestedResidentVacation?.residentId === resident.id ||
+      coverageRequest.requestedAssignmentChange?.residentId === resident.id ||
       coverageRequest.requestedEntry?.residentId === resident.id ||
       coverageRequest.swapRequestedEntry?.residentId === resident.id)
   );
@@ -3877,6 +4523,7 @@ function coverageRequestReferencesResident(coverageRequest: CoverageChangeReques
     coverageRequest.targetResidentId === residentId ||
     coverageRequest.requestedResidentProfile?.residentId === residentId ||
     coverageRequest.requestedResidentVacation?.residentId === residentId ||
+    coverageRequest.requestedAssignmentChange?.residentId === residentId ||
     coverageRequest.requestedEntry?.residentId === residentId ||
     coverageRequest.swapRequestedEntry?.residentId === residentId
   );
@@ -3888,6 +4535,24 @@ function hasAnyEditPrivilege(user: SessionUser): boolean {
 
 function readServiceLine(req: AuthenticatedRequest): string | undefined {
   return readOptionalString(req.body?.serviceLine) ?? readOptionalString(req.query.service);
+}
+
+function getCoverageEntryServiceLine(entry: CoverageEntry, fallbackServiceLine: string | undefined): string | undefined {
+  return entry.serviceLine ?? fallbackServiceLine;
+}
+
+function getCoverageRequestServiceLines(
+  state: PlannerState,
+  request: CoverageChangeRequest,
+  fallbackServiceLine: string | undefined
+): string[] {
+  const existing = request.entryId ? state.coverageEntries.find((entry) => entry.id === request.entryId) : undefined;
+  const services = [
+    existing ? getCoverageEntryServiceLine(existing, fallbackServiceLine) : undefined,
+    request.requestedEntry ? getCoverageEntryServiceLine(request.requestedEntry, fallbackServiceLine) : undefined,
+    request.serviceLine ?? fallbackServiceLine
+  ].filter((service): service is string => Boolean(service));
+  return [...new Set(services)];
 }
 
 function getAssignmentTargetServiceLine(state: PlannerState, kind: unknown, targetId: unknown): string {

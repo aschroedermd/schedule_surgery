@@ -867,6 +867,9 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
       if (request.requesterResidentId && !residentIds.has(request.requesterResidentId)) return false;
       if (request.targetResidentId && !residentIds.has(request.targetResidentId)) return false;
       if (request.requestedResidentProfile?.residentId && !residentIds.has(request.requestedResidentProfile.residentId)) return false;
+      if (request.requestedAssignmentChange?.residentId && !residentIds.has(request.requestedAssignmentChange.residentId)) return false;
+      if (request.requestedAssignmentChange?.targetId && !caseIds.has(request.requestedAssignmentChange.targetId)) return false;
+      if (request.requestedCaseOrderChange?.caseId && !caseIds.has(request.requestedCaseOrderChange.caseId)) return false;
       if (request.entryId && !state.coverageEntries.some((entry) => entry.id === request.entryId)) return false;
       return true;
     }),
