@@ -866,8 +866,8 @@ function LoginScreen({
   return (
     <main className="login-screen">
       <form className="login-panel" onSubmit={submit} autoComplete="on">
-        <p className="eyebrow">Resident OR Coverage</p>
-        <h1>Coverage Planner</h1>
+        <h1 className="login-title">SURGERY RESIDENT APP</h1>
+        <p className="login-byline">By: Andrew Schroeder, PGY99</p>
         <label>
           Username
           <input
