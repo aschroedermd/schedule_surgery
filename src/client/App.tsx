@@ -866,7 +866,7 @@ function LoginScreen({
   return (
     <main className="login-screen">
       <form className="login-panel" onSubmit={submit} autoComplete="on">
-        <h1 className="login-title">SURGERY RESIDENT APP</h1>
+        <h1 className="login-title">Surgery Resident App</h1>
         <p className="login-byline">By: Andrew Schroeder, PGY99</p>
         <label>
           Username
@@ -896,7 +896,7 @@ function LoginScreen({
         {error && <p className="error-text">{error}</p>}
         <button className="primary-button" type="submit">
           <CalendarDays size={18} />
-          Open Planner
+          Log in
         </button>
       </form>
     </main>
