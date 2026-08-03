@@ -1905,7 +1905,7 @@ describe("planner API", () => {
       .expect(400);
   });
 
-  it("stores dedicated attending service, ACS call, and manual practice coverage", async () => {
+  it("stores ACS plus independent Practice, Vascular, and Pediatrics call coverage", async () => {
     const { app, token } = await loginAs("admin");
 
     const egs = await request(app)
@@ -1932,6 +1932,55 @@ describe("planner API", () => {
       expect.arrayContaining([expect.objectContaining({ line: "Practice", shift: "weekend", source: "api" })])
     );
 
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-06", line: "Practice", shift: "day", role: "primary", attendingId: "att_morris", note: "" })
+      .expect(201);
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-06", line: "Practice", shift: "night", role: "primary", attendingId: "att_chen", note: "" })
+      .expect(201);
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-10", line: "Vascular", shift: "weekend", role: "primary", attendingId: "att_chen", note: "" })
+      .expect(201);
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-10", line: "Pediatrics", shift: "weekend", role: "primary", attendingId: "att_patel", note: "" })
+      .expect(201);
+
+    const listed = await request(app)
+      .get("/api/attending-coverage?startDate=2026-07-10&endDate=2026-07-13")
+      .set("authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(listed.body.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ line: "Practice", shift: "weekend" }),
+      expect.objectContaining({ line: "Vascular", shift: "weekend" }),
+      expect.objectContaining({ line: "Pediatrics", shift: "weekend" })
+    ]));
+    expect(listed.body.effectiveCoverage).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        date: "2026-07-11",
+        line: "Vascular",
+        day: expect.objectContaining({ attendingId: "att_chen", sourceShift: "weekend", weekend: true }),
+        night: expect.objectContaining({ attendingId: "att_chen", sourceShift: "weekend", weekend: true })
+      }),
+      expect.objectContaining({
+        date: "2026-07-12",
+        line: "Pediatrics",
+        night: expect.objectContaining({ attendingId: "att_patel", sourceShift: "weekend", weekend: true })
+      }),
+      expect.objectContaining({
+        date: "2026-07-13",
+        line: "Practice",
+        earlyMorningUntil6am: expect.objectContaining({ attendingId: "att_morris", sourceShift: "weekend", weekend: true })
+      })
+    ]));
+
     const duplicate = await request(app)
       .post("/api/attending-coverage")
       .set("authorization", `Bearer ${token}`)
@@ -1943,6 +1992,12 @@ describe("planner API", () => {
       .post("/api/attending-coverage")
       .set("authorization", `Bearer ${token}`)
       .send({ date: "2026-07-06", line: "EGS", shift: "night", role: "primary", attendingId: "att_chen", note: "" })
+      .expect(400);
+
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("authorization", `Bearer ${token}`)
+      .send({ date: "2026-07-10", line: "ACS", shift: "weekend", role: "primary", attendingId: "att_chen", note: "" })
       .expect(400);
   });
 

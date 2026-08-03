@@ -73,6 +73,11 @@ import {
   isMinimallyInvasiveFellow,
   isPracticeWeekendStart
 } from "../shared/coverage";
+import {
+  INDEPENDENT_CALL_LINES,
+  isIndependentCallLine,
+  resolveIndependentCallCoverage
+} from "../shared/attendingCoverage";
 import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
 import {
@@ -2045,6 +2050,7 @@ function CallShiftsTab({
 }) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
   const [attendingCalendarView, setAttendingCalendarView] = useState<"night" | "weekly" | null>(null);
+  const [expandedCallDate, setExpandedCallDate] = useState<string | null>(null);
   const nightTeamSegments = getNightTeamSegments(state, month);
   const weekendRows = getWeekendCallRows(state, month);
   const today = getTodayDate();
@@ -2146,7 +2152,18 @@ function CallShiftsTab({
                 {row.days.map((day) => (
                   <section
                     key={day.date}
-                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length || day.attendingCallEntry ? "" : " empty"}${day.date === today ? " today" : ""}`}
+                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length || day.attendingCallEntry ? "" : " empty"}${day.date === today ? " today" : ""}${expandedCallDate === day.date ? " expanded" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={expandedCallDate === day.date}
+                    aria-label={`${day.weekday} ${formatShortDate(day.date)} call team`}
+                    title={expandedCallDate === day.date ? "Hide full call team" : "Show full call team"}
+                    onClick={() => setExpandedCallDate((current) => current === day.date ? null : day.date)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      setExpandedCallDate((current) => current === day.date ? null : day.date);
+                    }}
                   >
                     <header className="call-day-header">
                       <span className="call-day-name">{day.weekday}</span>
@@ -2166,6 +2183,7 @@ function CallShiftsTab({
                         </div>
                       ))}
                       <AttendingCallSummary state={state} date={day.date} entry={day.attendingCallEntry} />
+                      {expandedCallDate === day.date && <IndependentCallTeamDetails state={state} date={day.date} />}
                     </div>
                   </section>
                 ))}
@@ -2316,7 +2334,7 @@ function AttendingCoveragePanel({
       ...current,
       date: current.date.startsWith(month)
         ? current.date
-        : current.line === "Practice" ? getPracticeCallFriday(`${month}-01`) : `${month}-01`,
+        : current.shift === "weekend" ? getPracticeCallFriday(`${month}-01`) : `${month}-01`,
       providerKey: isValidAttendingCoverageProviderKey(current.providerKey, current.line, state)
         ? current.providerKey
         : state.attendings[0] ? `attending:${state.attendings[0].id}` : ""
@@ -2351,7 +2369,7 @@ function AttendingCoveragePanel({
       </header>
 
       <p className="attending-coverage-help">
-        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice, vascular, and pediatrics remain on this tab only.
+        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice, vascular, and pediatrics support day/night coverage and Friday 5 PM–Monday 6 AM weekend call; omitted weekday nights inherit the day surgeon.
       </p>
 
       {isAdmin && (
@@ -2374,12 +2392,12 @@ function AttendingCoveragePanel({
             );
           }}
         >
-          <label>{draft.line === "Practice" ? "Start date (Friday)" : "Date"}<input
+          <label>{draft.shift === "weekend" ? "Start date (Friday)" : "Date"}<input
             type="date"
             value={draft.date}
             onChange={(event) => setDraft({
               ...draft,
-              date: draft.line === "Practice" ? getPracticeCallFriday(event.target.value) : event.target.value
+              date: draft.shift === "weekend" ? getPracticeCallFriday(event.target.value) : event.target.value
             })}
           /></label>
           <label>
@@ -2395,8 +2413,10 @@ function AttendingCoveragePanel({
                   ...draft,
                   line,
                   providerKey,
-                  date: line === "Practice" ? getPracticeCallFriday(draft.date) : draft.date,
-                  shift: line === "Practice" ? "weekend" : line === "ACS" && draft.role === "primary" ? "night" : "day"
+                  date: draft.shift === "weekend" && isIndependentCallLine(line) ? getPracticeCallFriday(draft.date) : draft.date,
+                  shift: line === "ACS" && draft.role === "primary"
+                    ? "night"
+                    : draft.shift === "weekend" && !isIndependentCallLine(line) ? "day" : draft.shift
                 });
               }}
             >
@@ -2421,13 +2441,20 @@ function AttendingCoveragePanel({
             Shift
             <select
               value={draft.shift}
-              disabled={draft.line === "Practice" || (draft.line === "ACS" && draft.role === "primary") || draft.providerKey.startsWith("fellow:")}
-              onChange={(event) => setDraft({ ...draft, shift: event.target.value as AttendingCoverageShift })}
+              disabled={(draft.line === "ACS" && draft.role === "primary") || draft.providerKey.startsWith("fellow:")}
+              onChange={(event) => {
+                const shift = event.target.value as AttendingCoverageShift;
+                setDraft({
+                  ...draft,
+                  shift,
+                  date: shift === "weekend" ? getPracticeCallFriday(draft.date) : draft.date
+                });
+              }}
             >
               <option value="day">Day</option>
               <option value="night">Night</option>
               <option value="24h">24 hours</option>
-              {draft.line === "Practice" && <option value="weekend">Weekend (Fri 5 PM–Mon 6 AM)</option>}
+              {isIndependentCallLine(draft.line) && <option value="weekend">Weekend (Fri 5 PM–Mon 6 AM)</option>}
             </select>
           </label>
           <label>
@@ -2555,6 +2582,30 @@ function AttendingCallSummary({ state, date, entry }: { state: PlannerState; dat
     <div className="call-duty-line attending-call-duty">
       <span className="call-duty-label">Dr.</span>
       <strong>{attendingName}</strong>
+    </div>
+  );
+}
+
+function IndependentCallTeamDetails({ state, date }: { state: PlannerState; date: string }) {
+  return (
+    <div className="call-independent-team" aria-label="Practice, vascular, and pediatric attending call">
+      <span className="call-independent-team-heading">Full attending team</span>
+      {INDEPENDENT_CALL_LINES.map((line) => {
+        const resolved = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "night");
+        const clinician = resolved?.assignment.attendingId
+          ? state.attendings.find((candidate) => candidate.id === resolved.assignment.attendingId)
+          : state.residents.find((candidate) => candidate.id === resolved?.assignment.fellowResidentId);
+        const label = line === "Practice" ? "PR" : line === "Vascular" ? "V" : "PEDS";
+        return (
+          <div key={line} className="call-duty-line call-independent-duty">
+            <span className="call-duty-label">{label}</span>
+            <strong className={clinician ? "" : "call-duty-empty"}>
+              {clinician ? getResidentLastName(clinician.name) : "Not listed"}
+            </strong>
+            {resolved?.inheritedFromDay && <span className="call-coverage-inherited">day coverage</span>}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -195,6 +195,93 @@ docker compose --env-file .env.production -f docker-compose.production.yml up -d
 
 If using rsync, upload the project again and run the same compose command.
 
+## Remote Deploys With GitHub Actions
+
+The repository includes `.github/workflows/deploy-production.yml`. After the
+one-time setup below, every push to `main` runs the server's existing
+`/usr/local/bin/rebuild` command from GitHub Actions. You can also run the
+workflow manually in the **Actions** tab or invoke it from the GitHub API. No
+public rebuild HTTP endpoint is added to the application.
+
+### One-time server setup
+
+Create a dedicated deployment user and allow it to run only the rebuild
+command as root:
+
+```bash
+adduser --disabled-password --gecos '' deploy
+install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+printf 'deploy ALL=(root) NOPASSWD: /usr/local/bin/rebuild\n' > /etc/sudoers.d/schedule-surgery-deploy
+chmod 440 /etc/sudoers.d/schedule-surgery-deploy
+visudo -cf /etc/sudoers.d/schedule-surgery-deploy
+```
+
+Ensure the repository and its Git working tree are usable by the command that
+runs `rebuild`. If `/opt/schedule_surgery` is root-owned (the usual setup), the
+restricted `sudo` rule above is sufficient. Keep `/usr/local/bin/rebuild`
+root-owned and non-writable by `deploy`.
+
+On the machine that will provide the private key (your computer is fine), make
+a dedicated key pair:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/schedule-surgery-deploy -C 'schedule-surgery GitHub deploy'
+```
+
+Append the public-key line to `/home/deploy/.ssh/authorized_keys` on the
+Droplet, then set safe permissions:
+
+```bash
+chmod 600 /home/deploy/.ssh/authorized_keys
+chown -R deploy:deploy /home/deploy/.ssh
+```
+
+### GitHub configuration
+
+In the repository's **Settings → Environments**, create an environment named
+`production`. Add these environment variables:
+
+```text
+PRODUCTION_SSH_HOST=159.89.226.139
+PRODUCTION_SSH_USER=deploy
+```
+
+Add these environment secrets:
+
+```text
+PRODUCTION_SSH_PRIVATE_KEY=<entire private key from ~/.ssh/schedule-surgery-deploy>
+PRODUCTION_SSH_KNOWN_HOSTS=<the exact ssh-ed25519 host-key line for 159.89.226.139>
+```
+
+Obtain the host-key line while you are already connected to, or otherwise have
+verified, the Droplet. For example, compare the displayed fingerprint against
+the server before saving the output of:
+
+```bash
+ssh-keyscan -t ed25519 159.89.226.139
+```
+
+Do not replace `PRODUCTION_SSH_KNOWN_HOSTS` with an unchecked `ssh-keyscan`
+inside the workflow; pinning the verified key prevents a man-in-the-middle
+connection.
+
+To trigger a rebuild programmatically, call GitHub's workflow-dispatch API
+with a fine-grained personal access token that has **Actions: write** access to
+this repository:
+
+```bash
+curl --fail-with-body -X POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  https://api.github.com/repos/OWNER/REPO/actions/workflows/deploy-production.yml/dispatches \
+  -d '{"ref":"main"}'
+```
+
+The request returns `204 No Content` when GitHub accepts the deployment. Its
+progress and rebuild output are available in the workflow run in GitHub
+Actions.
+
 ## Backups
 
 Manual backup:

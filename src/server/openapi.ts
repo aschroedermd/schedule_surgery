@@ -456,7 +456,7 @@ export function getOpenApiDocument() {
             shift: {
               type: "string",
               enum: ["day", "night", "24h", "weekend"],
-              description: "Use weekend for Practice call running Friday 5 PM through Monday 6 AM; date must be Friday."
+              description: "Practice, Vascular, and Pediatrics accept day/night coverage and Friday-anchored weekend coverage running Friday 5 PM through Monday 6 AM. A missing weekday night assignment inherits the same line's day surgeon."
             },
             role: { type: "string", enum: ["primary", "backup"] },
             attendingId: { type: "string", description: "Exactly one of attendingId or fellowResidentId is required." },
@@ -1325,10 +1325,23 @@ export function getOpenApiDocument() {
         }
       },
       "/api/attending-coverage": {
+        get: {
+          summary: "List attending coverage assignments",
+          description: "Returns the canonical stored assignments. Optional startDate, endDate, and line query parameters filter the result. When both dates are supplied, effectiveCoverage also expands independent weekend call across Friday-Sunday plus Monday before 6 AM and resolves weekday night fallback.",
+          parameters: [
+            { name: "startDate", in: "query", schema: { type: "string", format: "date" } },
+            { name: "endDate", in: "query", schema: { type: "string", format: "date" } },
+            { name: "line", in: "query", schema: { type: "string", enum: [...ATTENDING_COVERAGE_LINES] } }
+          ],
+          responses: {
+            "200": { description: "Filtered stored assignments, resolved effective coverage for ranged reads, and current state version" },
+            "400": { description: "Invalid date range or coverage line" }
+          }
+        },
         post: {
           summary: "Create an attending coverage assignment",
           description:
-            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice weekend call uses a Friday date and shift=weekend for the Friday 5 PM through Monday 6 AM span. A minimally invasive fellow may be assigned through fellowResidentId only to that Practice slot.",
+            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice, Vascular, and Pediatrics accept separate day and night assignments plus a Friday-anchored weekend assignment for the Friday 5 PM through Monday 6 AM span. Omit a weekday night assignment when it is the same as that line's day surgeon. A minimally invasive fellow may be assigned through fellowResidentId only to the Practice weekend slot.",
           requestBody: {
             required: true,
             content: {

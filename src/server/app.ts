@@ -14,6 +14,13 @@ import { addDays, getCurrentMonday, minutesToTime, timeToMinutes } from "../shar
 import { createId } from "../shared/id";
 import { getResidentTimeOff } from "../shared/availability";
 import {
+  INDEPENDENT_CALL_LINES,
+  isIndependentCallLine,
+  resolveIndependentCallCoverage,
+  resolveIndependentMondayEarlyMorningCoverage,
+  type ResolvedIndependentCallCoverage
+} from "../shared/attendingCoverage";
+import {
   type ActivityActor,
   type ActivityInput,
   addActivity,
@@ -1600,6 +1607,32 @@ export function createApp(
         entityId: id
       });
       res.json(await commitState(req, withActivity));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/attending-coverage", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const startDate = readOptionalString(req.query.startDate);
+      const endDate = readOptionalString(req.query.endDate);
+      const line = readOptionalString(req.query.line);
+      if (startDate) assertDate(startDate);
+      if (endDate) assertDate(endDate);
+      if (startDate && endDate && startDate > endDate) throw new HttpError(400, "startDate must be on or before endDate");
+      if (startDate && endDate && endDate > addDays(startDate, 365)) throw new HttpError(400, "Attending coverage ranges may not exceed 366 days");
+      const coverageLine = line ? assertAttendingCoverageLine(line) : undefined;
+      const assignments = state.attendingCoverageAssignments.filter(
+        (assignment) =>
+          (!startDate || assignment.date >= startDate) &&
+          (!endDate || assignment.date <= endDate) &&
+          (!coverageLine || assignment.line === coverageLine)
+      );
+      const effectiveCoverage = startDate && endDate
+        ? getEffectiveAttendingCoverage(state, startDate, endDate, coverageLine)
+        : undefined;
+      res.json({ assignments, effectiveCoverage, stateVersion: state.version });
     } catch (error) {
       next(error);
     }
@@ -3700,16 +3733,13 @@ function buildAttendingCoverageAssignment(
       throw new HttpError(400, "A minimally invasive fellow may cover only primary Practice weekend call");
     }
   }
-  if (shift === "weekend" && line !== "Practice") {
-    throw new HttpError(400, "Weekend coverage is reserved for Practice call");
-  }
-  if (line === "Practice" && shift !== "weekend") {
-    throw new HttpError(400, "Practice call uses the weekend shift (5 PM Friday through 6 AM Monday)");
+  if (shift === "weekend" && !isIndependentCallLine(line)) {
+    throw new HttpError(400, "Weekend coverage is available only for Practice, Vascular, and Pediatrics call");
   }
   if (shift === "weekend" && !isPracticeWeekendStart(date)) {
-    throw new HttpError(400, "Practice weekend call must start on Friday (5 PM Friday through 6 AM Monday)");
+    throw new HttpError(400, "Weekend call must start on Friday (5 PM Friday through 6 AM Monday)");
   }
-  if (role === "primary" && shift === "night" && line !== "ACS") {
+  if (role === "primary" && shift === "night" && (line === "EGS" || line === "Trauma" || line === "SCC")) {
     throw new HttpError(400, "Night EGS, Trauma, and SCC coverage is one ACS call assignment; use line ACS");
   }
   if (line === "ACS" && role === "primary" && shift !== "night") {
@@ -3742,6 +3772,48 @@ function assertUniqueAttendingCoverageSlot(state: PlannerState, assignment: Atte
       candidate.role === assignment.role
   );
   if (conflict) throw new HttpError(409, "That attending coverage slot is already assigned");
+}
+
+function getEffectiveAttendingCoverage(
+  state: PlannerState,
+  startDate: string,
+  endDate: string,
+  line?: AttendingCoverageLine
+) {
+  const lines = line && isIndependentCallLine(line)
+    ? [line]
+    : line ? [] : [...INDEPENDENT_CALL_LINES];
+  const effective: Array<Record<string, unknown>> = [];
+  let date = startDate;
+  for (let dayCount = 0; date <= endDate && dayCount < 366; dayCount += 1, date = addDays(date, 1)) {
+    for (const coverageLine of lines) {
+      const day = resolveIndependentCallCoverage(state.attendingCoverageAssignments, coverageLine, date, "day");
+      const night = resolveIndependentCallCoverage(state.attendingCoverageAssignments, coverageLine, date, "night");
+      const earlyMorning = resolveIndependentMondayEarlyMorningCoverage(state.attendingCoverageAssignments, coverageLine, date);
+      if (!day && !night && !earlyMorning) continue;
+      effective.push({
+        date,
+        line: coverageLine,
+        day: day ? describeEffectiveAttendingCoverage(day) : undefined,
+        night: night ? describeEffectiveAttendingCoverage(night) : undefined,
+        earlyMorningUntil6am: earlyMorning ? describeEffectiveAttendingCoverage(earlyMorning) : undefined
+      });
+    }
+  }
+  return effective;
+}
+
+function describeEffectiveAttendingCoverage(
+  resolved: ResolvedIndependentCallCoverage
+) {
+  return {
+    assignmentId: resolved.assignment.id,
+    attendingId: resolved.assignment.attendingId,
+    fellowResidentId: resolved.assignment.fellowResidentId,
+    sourceShift: resolved.assignment.shift,
+    inheritedFromDay: resolved.inheritedFromDay,
+    weekend: resolved.weekend
+  };
 }
 
 function assertAttendingCoverageLine(value: unknown): AttendingCoverageLine {

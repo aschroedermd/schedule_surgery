@@ -6,6 +6,11 @@ import {
   sortResidentsBySeniority
 } from "../shared/rotations";
 import { AttendingCoverageAssignment, CoverageEntry, PlannerState, SessionUser } from "../shared/types";
+import {
+  INDEPENDENT_CALL_LINES,
+  resolveIndependentCallCoverage,
+  resolveIndependentMondayEarlyMorningCoverage
+} from "../shared/attendingCoverage";
 import { ChatModelSettings, getDefaultChatModelSettings } from "./chatSettingsStore";
 import { buildFastWikiContext, readWikiArticle, searchWikiArticles } from "./wiki";
 
@@ -1051,7 +1056,7 @@ Residency operating model:
 - Weekend resident call always has a chief/senior, mid-level, and intern once published. Friday is 5 p.m.–6 a.m. Saturday; Saturday is 6 a.m.–6 a.m. Sunday; Sunday is 6 a.m.–5 p.m. Night float covers 5 p.m. Sunday through Friday morning, with membership from NFloat and SCC Night rotations.
 - Friday and Saturday call create protected time after the shift: Friday callers are post-call Saturday and Saturday callers are post-call Sunday. Do not apply this planner post-call rule to Sunday day call or ordinary night-float shifts.
 - A missing future weekend resident role means the call schedule is not yet published, not that the role is an ordinary open coverage opportunity.
-- Resident call is shared across General Surgery services. Attending coverage separately tracks EGS, Trauma, SCC, consolidated ACS night, backup, Practice, Vascular, and Pediatrics. Practice, Vascular, and Pediatrics belong on the Call tab, not the rounding calendar.
+- Resident call is shared across General Surgery services. Attending coverage separately tracks EGS, Trauma, SCC, consolidated ACS night, backup, Practice, Vascular, and Pediatrics. Practice, Vascular, and Pediatrics belong on the Call tab, not the rounding calendar. They are independent call lines with day and night surgeons; when a weekday night assignment is absent, use that line's day surgeon. Their weekend assignments run Friday 5 PM through Monday 6 AM, and they also appear in muted form on the calendar and in the expanded Call-day team.
 - A profile designated minimally-invasive-fellow is on Davies all year and covers OR cases like a resident, but is not in the resident call pool. The fellow may instead cover primary Practice weekend call as attending coverage; that single shift runs Friday 5 p.m. through Monday 6 a.m.
 - "Endo" can mean two different things: Endoscopy is a resident rotation on the block schedule, while attendings have dated endoscopy blocks on their own schedules. If asked who is "on Endo" for a block, answer only from resident Endoscopy rotation assignments for that block. Do not answer with attendings who have endoscopy blocks, the night team, or a weekend call team.
 - The resident assigned to Endoscopy for a rotation block will often cover attending endoscopy blocks during that block. This is not a guarantee for every session: simultaneous endoscopy blocks can exceed one resident's capacity, and some blocks may have no Endoscopy resident. For a specific session, check dated assignments and conflicts; never invent or substitute a call/night resident.
@@ -1218,10 +1223,16 @@ function buildFastCallContext(context: AssistantContext, scope: FastContextScope
         (date) => getResidentNightFloatTeam(context.state, date).length > 0
       )
     : [];
+  const independentCoverageDates = scope.range
+    ? isoDatesInRange(scope.range.start, scope.range.end).filter((date) =>
+        getEffectiveIndependentCallCoverage(context.state, date).some((coverage) => coverage.day || coverage.night)
+      )
+    : [];
   const dates = [...new Set([
     ...callEntries.map((entry) => entry.date),
     ...attendingCoverage.map((entry) => entry.date),
-    ...nightFloatDates
+    ...nightFloatDates,
+    ...independentCoverageDates
   ])].sort();
   const lines = dates.map((date) => {
     const entries = callEntries.filter((entry) => entry.date === date);
@@ -1249,11 +1260,25 @@ function buildFastCallContext(context: AssistantContext, scope: FastContextScope
     const attendingLines = attendingCoverage
       .filter((entry) => entry.date === date)
       .map((entry) => `${fastValue(entry.line)}_${entry.shift}_${entry.role}:${fastValue(attendingCoverageProviderName(context.state, entry))}`);
+    const independentCall = getEffectiveIndependentCallCoverage(context.state, date)
+      .map((coverage) => {
+        const day = coverage.day
+          ? fastValue(attendingCoverageProviderName(context.state, coverage.day.assignment))
+          : "not listed";
+        const night = coverage.night
+          ? `${fastValue(attendingCoverageProviderName(context.state, coverage.night.assignment))}${coverage.night.inheritedFromDay ? " (inherits day)" : ""}`
+          : "not listed";
+        const earlyMorning = coverage.earlyMorning
+          ? `;${coverage.line}_early_morning_until_06:${fastValue(attendingCoverageProviderName(context.state, coverage.earlyMorning.assignment))}`
+          : "";
+        return `${coverage.line}_day:${day};${coverage.line}_night:${night}${earlyMorning}`;
+      });
     const nightFloatTeam = formatResidentNightFloatTeam(getResidentNightFloatTeam(context.state, date));
     return [
       `date=${date}`,
       attending || "attending=not listed",
       `attending_coverage=${attendingLines.length ? attendingLines.join(", ") : "not listed"}`,
+      `independent_call=${independentCall.length ? independentCall.join(", ") : "not listed"}`,
       `weekend_resident_call=${residents.length ? residents.join(", ") : "not listed"}`,
       `night_float_residents=${nightFloatTeam || "not scheduled this night"}`
     ].join("|");
@@ -2235,12 +2260,18 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
       assignment.date <= range.end &&
       (!requestedCoverageLine || assignment.line.toLowerCase() === requestedCoverageLine)
   );
+  const independentCoverageDates = isoDatesInRange(range.start, range.end).filter((date) =>
+    getEffectiveIndependentCallCoverage(context.state, date, requestedCoverageLine).some(
+      (coverage) => coverage.day || coverage.night
+    )
+  );
   const nightFloatDates = isoDatesInRange(range.start, range.end).filter(
     (date) => getResidentNightFloatTeam(context.state, date).length > 0
   );
   const dates = [...new Set([
     ...entries.map((entry) => entry.date),
     ...attendingCoverage.map((entry) => entry.date),
+    ...independentCoverageDates,
     ...nightFloatDates
   ])].sort();
   const shifts = dates
@@ -2284,6 +2315,25 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
           source: assignment.source,
           note: assignment.note || undefined
         }));
+      const independentCall = getEffectiveIndependentCallCoverage(context.state, date, requestedCoverageLine).map((coverage) => ({
+        line: coverage.line,
+        day: coverage.day ? {
+          attending: attendingCoverageProviderName(context.state, coverage.day.assignment),
+          source_shift: coverage.day.assignment.shift,
+          weekend: coverage.day.weekend
+        } : undefined,
+        night: coverage.night ? {
+          attending: attendingCoverageProviderName(context.state, coverage.night.assignment),
+          source_shift: coverage.night.assignment.shift,
+          inherited_from_day: coverage.night.inheritedFromDay,
+          weekend: coverage.night.weekend
+        } : undefined,
+        early_morning_until_06: coverage.earlyMorning ? {
+          attending: attendingCoverageProviderName(context.state, coverage.earlyMorning.assignment),
+          source_shift: coverage.earlyMorning.assignment.shift,
+          weekend: true
+        } : undefined
+      }));
       return {
         date,
         weekday: getWeekday(date),
@@ -2294,13 +2344,19 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
         residents,
         night_float_residents: nightFloatResidents,
         supplemental_coverage: supplementalCoverage,
-        attending_coverage: attendingAssignments
+        attending_coverage: attendingAssignments,
+        independent_call: independentCall
       };
     })
     .filter((shift) => {
       const attendingNames = [
         ...Object.values(shift.attending).filter((name): name is string => Boolean(name)),
-        ...shift.attending_coverage.map((assignment) => assignment.attending)
+        ...shift.attending_coverage.map((assignment) => assignment.attending),
+        ...shift.independent_call.flatMap((coverage) => [
+          coverage.day?.attending,
+          coverage.night?.attending,
+          coverage.early_morning_until_06?.attending
+        ].filter((name): name is string => Boolean(name)))
       ];
       const residentNames = [
         ...shift.residents.senior,
@@ -2324,6 +2380,7 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
       sunday: "Separate three-person resident team Sunday day; night float returns Sunday night"
     },
     attending_coverage_model: "Separate schedule with one surgery attending each night; not a resident-style team",
+    independent_attending_coverage_model: "Practice, Vascular, and Pediatrics each have day and night coverage; a missing weekday night inherits that line's day surgeon. Weekend assignments run Friday 5 PM through Monday 6 AM.",
     attending_coverage_lines: ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics"],
     range,
     attending_filter: requestedAttending,
@@ -2583,6 +2640,22 @@ function attendingCoverageProviderName(state: PlannerState, assignment: Attendin
   if (assignment.attendingId) return attendingName(state, assignment.attendingId);
   if (assignment.fellowResidentId) return residentName(state, assignment.fellowResidentId);
   return "Unlinked clinician";
+}
+
+function getEffectiveIndependentCallCoverage(
+  state: PlannerState,
+  date: string,
+  requestedCoverageLine?: string
+) {
+  return INDEPENDENT_CALL_LINES
+    .filter((line) => !requestedCoverageLine || line.toLowerCase() === requestedCoverageLine)
+    .map((line) => ({
+      line,
+      day: resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "day"),
+      night: resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "night"),
+      earlyMorning: resolveIndependentMondayEarlyMorningCoverage(state.attendingCoverageAssignments, line, date)
+    }))
+    .filter((coverage) => coverage.day || coverage.night || coverage.earlyMorning);
 }
 
 function matchesPersonName(fullName: string, query: string): boolean {

@@ -35,6 +35,7 @@ import {
 } from "../shared/coverage";
 import { addDays, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
+import { INDEPENDENT_CALL_LINES, resolveIndependentCallCoverage } from "../shared/attendingCoverage";
 import {
   CALL_POSITIONS,
   CallPosition,
@@ -441,6 +442,7 @@ function CoverageDay({
       )}
 
       {isCallDate(date) && <CallTeamSummary state={state} entries={dayCallEntries} />}
+      {inMonth && <IndependentAttendingCallSummary state={state} date={date} />}
     </article>
   );
 }
@@ -831,6 +833,39 @@ function CallTeamSummary({ state, entries }: { state: PlannerState; entries: Cov
       {icuEntries.length > 0 && <span>SCC: {formatCallEntryNames(state, icuEntries)}</span>}
     </div>
   );
+}
+
+function IndependentAttendingCallSummary({ state, date }: { state: PlannerState; date: string }) {
+  const items = INDEPENDENT_CALL_LINES.map((line) => {
+    const day = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "day");
+    const night = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "night");
+    const dayName = getCoverageClinicianLastName(state, day?.assignment);
+    const nightName = getCoverageClinicianLastName(state, night?.assignment);
+    return {
+      label: line === "Practice" ? "PR" : line === "Vascular" ? "V" : "PEDS",
+      name: dayName && nightName && dayName !== nightName
+        ? `${dayName}/${nightName}`
+        : nightName ?? dayName ?? "—"
+    };
+  });
+  if (items.every((item) => item.name === "—")) return null;
+
+  return (
+    <div className="coverage-independent-call" aria-label="Practice, vascular, and pediatric surgeons on call">
+      {items.map((item) => <span key={item.label}>{item.label} {item.name}</span>)}
+    </div>
+  );
+}
+
+function getCoverageClinicianLastName(
+  state: PlannerState,
+  assignment: PlannerState["attendingCoverageAssignments"][number] | undefined
+): string | undefined {
+  if (!assignment) return undefined;
+  const clinician = assignment.attendingId
+    ? state.attendings.find((candidate) => candidate.id === assignment.attendingId)
+    : state.residents.find((candidate) => candidate.id === assignment.fellowResidentId);
+  return clinician ? getResidentLastName(clinician.name) : undefined;
 }
 
 function getOrderedSurgeryCallEntries(entries: CoverageEntry[]): CoverageEntry[] {

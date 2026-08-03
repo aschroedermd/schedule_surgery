@@ -209,14 +209,17 @@ Legacy `kind: "attending-call"` entries are migrated into the dedicated attendin
 
 ## Attending Coverage And QGenda
 
-`state.attendingCoverageAssignments` is the canonical attending call roster. Its coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`; roles are `primary` or `backup`; shifts are `day`, `night`, `24h`, or `weekend`. The EGS Night, Trauma Night, and SCC Night tasks are represented once as primary `ACS` night call. Practice, Vascular, and Pediatrics coverage is available on the Call tab and to the schedule assistant, but is intentionally excluded from the rounding calendar. `weekend` is a single Practice call span anchored on Friday and running from Friday 5 PM through Monday 6 AM.
+`state.attendingCoverageAssignments` is the canonical attending call roster. Its coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`; roles are `primary` or `backup`; shifts are `day`, `night`, `24h`, or `weekend`. The EGS Night, Trauma Night, and SCC Night tasks are represented once as primary `ACS` night call. Practice, Vascular, and Pediatrics are independent call lines with separate day and night assignments. If one of those lines has no explicit weekday night assignment, its day surgeon is also treated as the night surgeon. Each supports a `weekend` assignment anchored on Friday and running from Friday 5 PM through Monday 6 AM. These lines are available in the expanded Call-day team, in muted calendar labels, and to the schedule assistant, but are excluded from rounding coverage.
 
 ```text
+GET    /api/attending-coverage?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&line=Practice
 POST   /api/attending-coverage
 PATCH  /api/attending-coverage/:id
 DELETE /api/attending-coverage/:id
 POST   /api/integrations/qgenda/sync
 ```
+
+When both dates are supplied to `GET /api/attending-coverage`, the response includes `effectiveCoverage` in addition to the canonical stored rows. Effective coverage expands each Friday weekend row across Friday–Sunday, includes the Monday `earlyMorningUntil6am` handoff period, and identifies inherited weekday nights, so API readers do not need to reproduce those rules.
 
 Create a practice-call assignment for the minimally invasive fellow with an admin API key:
 
@@ -234,7 +237,7 @@ curl -X POST https://your-domain.example/api/attending-coverage \
   }'
 ```
 
-API-key entries receive `source: "api"`; entries created in the admin UI receive `source: "manual"`. Send exactly one of `attendingId` or `fellowResidentId`. The latter must reference a minimally invasive fellow and is accepted only for primary Practice `weekend` coverage on a Friday. A date/line/shift/role slot may only be assigned once. QGenda-owned entries cannot be patched or deleted locally because the next sync would replace them; make those changes in QGenda and sync again.
+API-key entries receive `source: "api"`; entries created in the admin UI receive `source: "manual"`. Send exactly one of `attendingId` or `fellowResidentId`. The latter must reference a minimally invasive fellow and is accepted only for primary Practice `weekend` coverage on a Friday. A date/line/shift/role slot may only be assigned once. For Practice, Vascular, and Pediatrics, send the weekday `day` assignment and send `night` only when a different surgeon covers that night. Send one Friday `weekend` assignment for each independent line to cover Friday 5 PM through Monday 6 AM. QGenda-owned entries cannot be patched or deleted locally because the next sync would replace them; make those changes in QGenda and sync again.
 
 The server reads the configured published QGenda schedule daily around 03:00 in `QGENDA_SYNC_TIME_ZONE` (default `America/New_York`). The supplied schedule's EGS Day, Trauma Day, SCC Day, EGS/Trauma/SCC Night, Backup Day, and Backup Night tasks are normalized into this collection. Each import is transactional: an invalid or inconsistent ACS-night triplet leaves the prior assignments unchanged and records the failed sync status in `state.qgendaSync`.
 
