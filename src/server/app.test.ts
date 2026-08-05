@@ -1952,6 +1952,21 @@ describe("planner API", () => {
       .set("x-api-key", "test-admin-api-key")
       .send({ date: "2026-07-10", line: "Pediatrics", shift: "weekend", role: "primary", attendingId: "att_patel", note: "" })
       .expect(201);
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-11", line: "Vascular", shift: "day", role: "primary", attendingId: "att_morris", note: "" })
+      .expect(201);
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-11", line: "Vascular", shift: "night", role: "primary", attendingId: "att_patel", note: "" })
+      .expect(201);
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-12", line: "Elective", shift: "day", role: "primary", attendingId: "att_chen", note: "" })
+      .expect(201);
 
     const listed = await request(app)
       .get("/api/attending-coverage?startDate=2026-07-10&endDate=2026-07-13")
@@ -1966,8 +1981,8 @@ describe("planner API", () => {
       expect.objectContaining({
         date: "2026-07-11",
         line: "Vascular",
-        day: expect.objectContaining({ attendingId: "att_chen", sourceShift: "weekend", weekend: true }),
-        night: expect.objectContaining({ attendingId: "att_chen", sourceShift: "weekend", weekend: true })
+        day: expect.objectContaining({ attendingId: "att_morris", sourceShift: "day" }),
+        night: expect.objectContaining({ attendingId: "att_patel", sourceShift: "night" })
       }),
       expect.objectContaining({
         date: "2026-07-12",
@@ -1977,7 +1992,7 @@ describe("planner API", () => {
       expect.objectContaining({
         date: "2026-07-13",
         line: "Practice",
-        earlyMorningUntil6am: expect.objectContaining({ attendingId: "att_morris", sourceShift: "weekend", weekend: true })
+        earlyMorningUntil6am: expect.objectContaining({ attendingId: "att_chen", sourceShift: "day", inheritedFromDay: true })
       })
     ]));
 

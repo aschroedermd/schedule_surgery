@@ -25,7 +25,7 @@ export function getNavigationTabs({
     ["schedule", "Blocks ⏹️"],
     ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests 📤 (${pendingCoverageRequestCount})` : "Requests 📤"]] as const : []),
     ...(isAdmin ? [["roster", "Roster"], ["defaults", "Setup"], ["users", "Users"], ["activity", "Activity 🛒"]] as const : []),
-    ["residents", "Stars ✨"],
+    ["residents", "✨⭐️"],
     ["account", "Account 🛠️"]
   ];
 }

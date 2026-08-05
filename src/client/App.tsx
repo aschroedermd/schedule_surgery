@@ -1810,13 +1810,13 @@ function GoldStarChartTab({
     <section className="gold-star-page">
       <div className="gold-star-header">
         <div>
-          <p className="eyebrow">Gold Star Chart</p>
+          <p className="eyebrow">✨⭐️ Chart</p>
           <h2>Top 5 residents this week</h2>
         </div>
         <span className="gold-star-week">Week of {displayDate(weekStartDate)}</span>
       </div>
 
-      <section className="gold-star-rules" aria-label="Gold Star Chart rules">
+      <section className="gold-star-rules" aria-label="✨⭐️ Chart rules">
         <span>One star from each account every week.</span>
         <span>Refreshes every Monday.</span>
         <span>Give it to a resident.</span>
@@ -2315,9 +2315,9 @@ function AttendingCoveragePanel({
     providerKey: string;
     note: string;
   }>(() => ({
-    date: getPracticeCallFriday(getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`),
+    date: getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`,
     line: "Practice",
-    shift: "weekend",
+    shift: "day",
     role: "primary",
     providerKey: state.attendings[0] ? `attending:${state.attendings[0].id}` : "",
     note: ""
@@ -2369,7 +2369,7 @@ function AttendingCoveragePanel({
       </header>
 
       <p className="attending-coverage-help">
-        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice, vascular, and pediatrics support day/night coverage and Friday 5 PM–Monday 6 AM weekend call; omitted weekday nights inherit the day surgeon.
+        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice/elective, vascular, and pediatrics can be set separately for day and night on every date. Missing nights inherit day coverage, and missing Friday–Sunday entries carry over within that weekend.
       </p>
 
       {isAdmin && (
@@ -2420,7 +2420,7 @@ function AttendingCoveragePanel({
                 });
               }}
             >
-              {ATTENDING_COVERAGE_LINES.map((line) => <option key={line} value={line}>{line === "ACS" ? "ACS call" : line}</option>)}
+              {ATTENDING_COVERAGE_LINES.map((line) => <option key={line} value={line}>{line === "ACS" ? "ACS call" : line === "Practice" ? "Practice / Elective" : line}</option>)}
             </select>
           </label>
           <label>
@@ -2603,6 +2603,7 @@ function IndependentCallTeamDetails({ state, date }: { state: PlannerState; date
               {clinician ? getResidentLastName(clinician.name) : "Not listed"}
             </strong>
             {resolved?.inheritedFromDay && <span className="call-coverage-inherited">day coverage</span>}
+            {!resolved?.inheritedFromDay && resolved?.inheritedFromWeekend && <span className="call-coverage-inherited">weekend carryover</span>}
           </div>
         );
       })}
@@ -5138,7 +5139,7 @@ function getTabTitle(tab: Tab): string {
     case "contacts":
       return "Contacts ☎️";
     case "residents":
-      return "Stars ✨";
+      return "✨⭐️";
     case "calendar":
       return "Calendar 🗓️";
     case "call":

@@ -6,15 +6,17 @@ Live app/API base URL: `http://159.89.226.139`. Set `BASE_URL=http://159.89.226.
 
 Security prerequisite: the numeric live URL currently shown here is plain HTTP. Do not send an admin API key, bearer token, or temporary password over it from an untrusted network. Configure the documented HTTPS domain first (preferred), or use a trusted SSH tunnel, then set `BASE_URL` to that protected endpoint.
 
+Contract sources: use the live `GET /api/openapi.json` response as the authoritative endpoint and request-schema contract. Use [API.md](API.md) for the complete human-readable API reference. This guide adds agent-specific safety, sequencing, fallback, and verification rules; if examples here disagree with the live OpenAPI schema, stop and follow the live schema rather than guessing.
+
 ## Ground Rules
 
 - Store no PHI. Never send patient names, MRNs, DOBs, room numbers tied to patients, or identifiers. Use procedure labels such as `EGD`, `Lap chole`, or `Open ventral hernia`.
 - Use exact ISO dates (`YYYY-MM-DD`) and 24-hour times (`HH:MM`). Validate weekday/date pairs before writing; for example, in 2026, `2026-07-29` is Wednesday, not Monday.
 - Before a planner-state mutation, fetch `GET /api/state` and resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state. Browser-account endpoints are a separate user store and do not use `state.version`.
-- Include `X-State-Version: state.version` on planner-state mutations (`/api/entities`, assignments, coverage entries/requests, claims, Gold Stars, and suggestions). On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate. Do not send this header to login, password, browser-user management, or chat-settings endpoints.
+- Include `X-State-Version: state.version` on planner-state mutations (`/api/entities`, assignments, attending coverage, coverage entries/requests, claims, ✨⭐️ awards, and suggestions). On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate. Do not send this header to login, password, browser-user management, or chat-settings endpoints.
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
 - If API keys are configured, use the admin API key only for intentional writes and the viewer API key for read-only tools. Otherwise use browser-session bearer tokens.
-- After writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings.
+- After OR, clinic, resident-assignment, or rounding writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings. After attending-call writes, verify with a ranged `GET /api/attending-coverage` and inspect `effectiveCoverage`.
 
 ## Authentication
 
@@ -203,8 +205,9 @@ The database stores one JSON planner state. Important collections:
 - `cases`: ordered cases inside an attending block. Later case times are computed from prior estimated durations.
 - `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
 - `assignments`: resident coverage of a whole block, individual case, or clinic.
+- `attendingCoverageAssignments`: canonical attending coverage for EGS, Trauma, SCC, consolidated ACS night call, backup, Practice/Elective, Vascular, and Pediatrics. Do not create new legacy `coverageEntries` with `kind: "attending-call"`.
 - `activityEvents`: audit trail of changes.
-- `goldStarAwards`: weekly Gold Star Chart awards for the resident-facing Residents tab.
+- `goldStarAwards`: weekly ✨⭐️ awards for the resident-facing ✨⭐️ tab.
 
 Browser-user records live in a separate protected user store, not in `PlannerState`. An attending account's `attendingId` is the explicit link to its planner `attendings[]` record; do not infer that link from a display name.
 
@@ -277,6 +280,11 @@ PATCH  /api/users/{username}/password     (admin browser session or admin API ke
 DELETE /api/users/{username}              (admin browser session only)
 PATCH  /api/me/password
 GET    /api/state
+GET    /api/attending-coverage?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&line=Practice
+POST   /api/attending-coverage
+PATCH  /api/attending-coverage/:id
+DELETE /api/attending-coverage/:id
+POST   /api/integrations/qgenda/sync       (admin only)
 GET    /api/weeks/{weekId}/schedule
 GET    /api/weeks/{weekId}/schedule?service=Davies
 GET    /api/weeks/{weekId}/warnings
@@ -331,37 +339,70 @@ For an attending-session write, first call `GET /api/session` and use its `atten
 
 Calendar `call` entries are global across services. For each Friday-Sunday surgery call date, create one `coverageEntries[]` item for each position: `callPosition: "senior"`, `callPosition: "mid-level"`, and `callPosition: "intern"`, with `residentId` resolved from `state.residents`. Do not put role labels, source text, imported PDF labels, or names in `note`; those positions belong in `callPosition`. For the one SCC/ICU call resident, create one additional `kind: "call"` entry and either leave `note` blank when the resident's rotation is already SCC/ICU or set `note` to exactly `SCC` or `ICU`; omit `callPosition` for SCC/ICU. The API rejects duplicate same-day call residents, duplicate surgery call positions, missing `callPosition` on surgery call entries, more than one SCC/ICU call resident, and free-text call notes. The Calendar and CALL tab use `callPosition` for senior/mid-level/intern ordering but display compact last names only.
 
-For attending coverage, create one `kind: "attending-call"` entry for each Friday, Saturday, or Sunday with `dayAttendingId` and `nightAttendingId` resolved from `state.attendings`. Use the same ID in both fields when one attending covers day and night; use different IDs when coverage is split. Only one attending-call entry is allowed per date. The CALL tab keeps this to one Attending line, adding day/night labels only when the names differ.
+### Attending call coverage
 
-Read attending call from `GET /api/state` by filtering `coverageEntries[]` for `kind === "attending-call"`. Create or replace the line with the coverage-entry endpoints:
+Use `state.attendingCoverageAssignments` and `/api/attending-coverage`. Do not create new `coverageEntries` with legacy `kind: "attending-call"`.
+
+Coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`. The API also accepts `Elective` as an input/query alias for `Practice`; stored and returned assignments use canonical `Practice`.
+
+- EGS Night, Trauma Night, and SCC Night are one consolidated primary assignment: send `line: "ACS"`, `shift: "night"` once rather than three records.
+- Practice/Elective, Vascular, and Pediatrics are independent from ACS. Every date, including Friday, Saturday, and Sunday, may have a separate primary `day` and `night` assignment.
+- Send an explicit `night` row only when night differs from effective day coverage. If night is absent, the system uses that date's effective day surgeon.
+- If Friday, Saturday, or Sunday is absent, the system inherits the nearest configured day from the same Friday-Sunday weekend. Exact date/shift rows always win.
+- `shift: "24h"` covers both periods on that exact date.
+- A Friday-anchored `shift: "weekend"` remains supported as shorthand from Friday 5 PM through Monday 6 AM, but independently dated day/night rows override it. Prefer daily rows when the source API supplies daily detail.
+- The Monday ranged-read result can contain `earlyMorningUntil6am` for the surgeon carrying over from Sunday night.
+- A minimally invasive fellow can be supplied through `fellowResidentId` only for primary Practice weekend shorthand. All other records use `attendingId`.
+
+Write exactly one of `attendingId` or `fellowResidentId`. A date/line/shift/role slot is unique. Before creating, inspect existing assignments for that slot; patch a manual/API record instead of creating a duplicate. QGenda-owned records have `source: "qgenda"` and cannot be patched or deleted locally—change them in QGenda and run the integration sync.
+
+For reads over a date range, prefer:
+
+```text
+GET /api/attending-coverage?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+```
+
+The response returns canonical `assignments` plus `effectiveCoverage`, which already applies night-to-day inheritance, weekend-day inheritance, shorthand expansion, and Monday's 6 AM carryover. Use `effectiveCoverage` to answer who is actually on call; do not reimplement these fallback rules in an agent.
+
+For writes, fetch `GET /api/state`, resolve the clinician in `state.attendings` (or the eligible fellow in `state.residents`), send `X-State-Version`, then refetch the ranged attending-coverage endpoint and verify both the stored row and the effective day/night result.
+
+Create daily Practice/Elective, Vascular, or Pediatrics coverage with the canonical endpoint:
 
 ```bash
-# One attending for both day and night
-curl -X POST "$BASE_URL/api/coverage-entries" \
+# Day coverage; omit a night row when this surgeon also covers night
+curl -X POST "$BASE_URL/api/attending-coverage" \
   -H "X-API-Key: $ADMIN_API_KEY" \
   -H "X-State-Version: $STATE_VERSION" \
   -H "content-type: application/json" \
   -d '{
     "date": "2026-08-01",
-    "kind": "attending-call",
-    "dayAttendingId": "att_chen",
-    "nightAttendingId": "att_chen",
-    "serviceLine": "Davies"
+    "line": "Elective",
+    "shift": "day",
+    "role": "primary",
+    "attendingId": "att_chen",
+    "note": ""
   }'
 
-# Split day/night coverage on an existing attending-call entry
-curl -X PATCH "$BASE_URL/api/coverage-entries/cover_example" \
+# Add a distinct night surgeon for the same date
+curl -X POST "$BASE_URL/api/attending-coverage" \
   -H "X-API-Key: $ADMIN_API_KEY" \
-  -H "X-State-Version: $STATE_VERSION" \
+  -H "X-State-Version: $VERSION_RETURNED_BY_PRIOR_WRITE" \
   -H "content-type: application/json" \
   -d '{
-    "dayAttendingId": "att_chen",
-    "nightAttendingId": "att_patel",
-    "serviceLine": "Davies"
+    "date": "2026-08-01",
+    "line": "Practice",
+    "shift": "night",
+    "role": "primary",
+    "attendingId": "att_patel",
+    "note": ""
   }'
+
+# Verify canonical and effective coverage
+curl -H "X-API-Key: $VIEWER_API_KEY" \
+  "$BASE_URL/api/attending-coverage?startDate=2026-08-01&endDate=2026-08-03&line=Practice"
 ```
 
-Always replace the example IDs with IDs from the latest state response. After a successful write, use the returned state version for any subsequent mutation.
+For a fully specified weekend, send daily rows dated Friday, Saturday, and Sunday and use `shift: "day"` or `shift: "night"` on each. Do not collapse daily source data into `shift: "weekend"`. Always replace example IDs with IDs from the latest state response. After a successful write, use the returned state version for any subsequent mutation.
 
 Calendar `rounding` entries are service-specific and also support multiple same-day residents on Saturday-Sunday; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. To add another person, create a new `coverageEntries[]` item; to change an existing person, patch or delete that entry by `id`.
 
@@ -408,9 +449,9 @@ For a true swap, include `swapEntryId`. The swap entry must belong to `targetRes
 
 Accepting a resident trade applies the handoff or swap immediately and marks the request `approved`; browser UI labels this as accepted for resident trades. Denying leaves the calendar unchanged and marks the request `denied`. After acceptance, verify by reading `GET /api/state` and checking both affected `coverageEntries[]`.
 
-## Gold Star Chart
+## ✨⭐️ Chart
 
-Any logged-in browser account can award one weekly star from the Residents tab. The server computes the current Monday-starting week, rejects self-awards for resident-linked accounts, and rejects a second award from the same authenticated username in that week. An account does not need a resident or attending profile link to award a resident.
+Any logged-in browser account can award one weekly star from the ✨⭐️ tab. The server computes the current Monday-starting week, rejects self-awards for resident-linked accounts, and rejects a second award from the same authenticated username in that week. An account does not need a resident or attending profile link to award a resident.
 
 ```json
 {
@@ -571,6 +612,34 @@ Assign Adeleke to that case:
 }
 ```
 
+Create Practice/Elective day coverage (stored as `Practice`):
+
+```json
+{
+  "date": "2026-08-07",
+  "line": "Elective",
+  "shift": "day",
+  "role": "primary",
+  "attendingId": "att_...",
+  "note": ""
+}
+```
+
+Create a distinct Vascular night assignment on any date, including a weekend date:
+
+```json
+{
+  "date": "2026-08-08",
+  "line": "Vascular",
+  "shift": "night",
+  "role": "primary",
+  "attendingId": "att_...",
+  "note": ""
+}
+```
+
+Send these shapes to `POST /api/attending-coverage`. Use `Pediatrics` identically. Omit the night row when effective day coverage should carry through the night.
+
 ## Agent Heuristics
 
 - When a user says “covered by Adeleke,” resolve Adeleke from `residents` by substring/name, then preserve the actual `id`.
@@ -579,6 +648,9 @@ Assign Adeleke to that case:
 - When a user says “Bower clinic,” resolve Bower from `attendings`, set `clinicSessions.attendingId`, and use the attending's service unless the user explicitly chose another service line.
 - When a user says “Bower procedure clinic,” create or patch a `clinicSessions` row with `isProcedure: true`; do not model that as an OR `case`.
 - When creating an attending browser account, resolve the exact `attendingId` from `state.attendings`; never create an account based only on an attending name. Give the user the returned/generated temporary password once, through an approved private channel, and do not store it in planner notes or agent logs.
+- When the user says Practice or Elective call, use canonical coverage line `Practice` (the API accepts `Elective` as an input alias). Keep it separate from ACS, Vascular, and Pediatrics.
+- When asked who covers an independent call line, read ranged `effectiveCoverage`; do not infer missing nights or weekend days yourself from raw assignment rows.
+- When importing daily Practice/Elective, Vascular, or Pediatrics call data, preserve separate dates and day/night exceptions. Use the Friday `weekend` shift only when the source itself supplies one undivided Friday 5 PM-Monday 6 AM assignment.
 - When acting as an attending, keep writes to that account's own blocks and cases. Use the account's `attendingId`, not the selected service line or a name match, as the ownership check.
 - When a user names a date or says "next week", resolve the target Monday, match or create a `weeks` row, and keep that `weekId` through the whole operation.
 - If the user gives a weekday and date that conflict, ask before leaving persistent changes. For temporary smoke tests, create and delete test data in the same run.
@@ -603,3 +675,5 @@ These are useful follow-ups but are not implemented yet:
 ## Smoke Test Pattern
 
 For a write test, create a temporary week/block/case/assignment and, when clinic behavior matters, a temporary clinic with `isProcedure: true`. Verify the entities appear in `/api/weeks/{weekId}/schedule`; for a procedure clinic, confirm the schedule clinic has `isProcedure: true` and a resolved `attending.name`. Then delete the temporary week and confirm the block, case, clinic, and assignment targets are gone from `GET /api/state`. This proves the agent can safely write and clean up without changing the real schedule.
+
+For an attending-call integration smoke test, use a clearly identified future test date approved by the operator. Create a temporary `/api/attending-coverage` day row, verify it in both `assignments` and ranged `effectiveCoverage`, optionally add a different night row and verify the split, then delete the created assignment IDs. Never use a QGenda-owned slot for this test, and confirm the final ranged read matches the pre-test state.

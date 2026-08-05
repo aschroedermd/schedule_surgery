@@ -37,6 +37,35 @@ describe("independent attending call resolution", () => {
     expect(resolveIndependentMondayEarlyMorningCoverage(assignments, "Pediatrics", "2026-08-10")?.assignment.attendingId).toBe("att_weekend");
     expect(resolveIndependentMondayEarlyMorningCoverage(assignments, "Pediatrics", "2026-08-11")).toBeUndefined();
   });
+
+  it("allows every weekend day and night to be overridden independently", () => {
+    const assignments = [
+      coverage("weekend", "2026-08-07", "Practice", "weekend", "att_blanket"),
+      coverage("sat_day", "2026-08-08", "Practice", "day", "att_sat_day"),
+      coverage("sat_night", "2026-08-08", "Practice", "night", "att_sat_night"),
+      coverage("sun_day", "2026-08-09", "Practice", "day", "att_sun_day")
+    ];
+
+    expect(resolveIndependentCallCoverage(assignments, "Practice", "2026-08-08", "day")?.assignment.attendingId).toBe("att_sat_day");
+    expect(resolveIndependentCallCoverage(assignments, "Practice", "2026-08-08", "night")?.assignment.attendingId).toBe("att_sat_night");
+    expect(resolveIndependentCallCoverage(assignments, "Practice", "2026-08-09", "day")?.assignment.attendingId).toBe("att_sun_day");
+    expect(resolveIndependentCallCoverage(assignments, "Practice", "2026-08-09", "night")?.assignment.attendingId).toBe("att_sun_day");
+  });
+
+  it("fills an unset weekend day from the nearest configured day in that weekend", () => {
+    const assignments = [coverage("fri_day", "2026-08-07", "Vascular", "day", "att_friday")];
+
+    const saturdayDay = resolveIndependentCallCoverage(assignments, "Vascular", "2026-08-08", "day");
+    const saturdayNight = resolveIndependentCallCoverage(assignments, "Vascular", "2026-08-08", "night");
+    const sundayNight = resolveIndependentCallCoverage(assignments, "Vascular", "2026-08-09", "night");
+
+    expect(saturdayDay?.assignment.attendingId).toBe("att_friday");
+    expect(saturdayDay?.inheritedFromWeekend).toBe(true);
+    expect(saturdayNight?.assignment.attendingId).toBe("att_friday");
+    expect(saturdayNight?.inheritedFromDay).toBe(true);
+    expect(sundayNight?.assignment.attendingId).toBe("att_friday");
+    expect(resolveIndependentMondayEarlyMorningCoverage(assignments, "Vascular", "2026-08-10")?.assignment.attendingId).toBe("att_friday");
+  });
 });
 
 function coverage(

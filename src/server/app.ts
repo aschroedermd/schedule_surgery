@@ -3812,11 +3812,13 @@ function describeEffectiveAttendingCoverage(
     fellowResidentId: resolved.assignment.fellowResidentId,
     sourceShift: resolved.assignment.shift,
     inheritedFromDay: resolved.inheritedFromDay,
+    inheritedFromWeekend: resolved.inheritedFromWeekend,
     weekend: resolved.weekend
   };
 }
 
 function assertAttendingCoverageLine(value: unknown): AttendingCoverageLine {
+  if (value === "Elective") return "Practice";
   if (typeof value === "string" && ATTENDING_COVERAGE_LINES.includes(value as AttendingCoverageLine)) {
     return value as AttendingCoverageLine;
   }

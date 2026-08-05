@@ -450,13 +450,13 @@ export function getOpenApiDocument() {
             date: { type: "string", format: "date" },
             line: {
               type: "string",
-              enum: [...ATTENDING_COVERAGE_LINES],
-              description: "Use ACS for the shared EGS/Trauma/SCC primary night assignment."
+              enum: [...ATTENDING_COVERAGE_LINES, "Elective"],
+              description: "Use ACS for the shared EGS/Trauma/SCC primary night assignment. Elective is accepted as an alias for Practice."
             },
             shift: {
               type: "string",
               enum: ["day", "night", "24h", "weekend"],
-              description: "Practice, Vascular, and Pediatrics accept day/night coverage and Friday-anchored weekend coverage running Friday 5 PM through Monday 6 AM. A missing weekday night assignment inherits the same line's day surgeon."
+              description: "Practice/Elective, Vascular, and Pediatrics accept separate day/night coverage on every date, including weekends. Missing nights inherit effective day coverage, and missing Friday-Sunday dates inherit within that weekend. The Friday-anchored weekend shift remains available as shorthand through Monday 6 AM."
             },
             role: { type: "string", enum: ["primary", "backup"] },
             attendingId: { type: "string", description: "Exactly one of attendingId or fellowResidentId is required." },
@@ -1259,7 +1259,7 @@ export function getOpenApiDocument() {
       },
       "/api/gold-stars": {
         post: {
-          summary: "Award this week's Gold Star Chart star",
+          summary: "Award this week's ✨⭐️",
           description:
             "Requires a logged-in browser account. Each account can award one star per Monday-starting week; a resident-linked account cannot award its own resident profile. State responses support anonymous weekly chart counts.",
           requestBody: {
@@ -1331,7 +1331,7 @@ export function getOpenApiDocument() {
           parameters: [
             { name: "startDate", in: "query", schema: { type: "string", format: "date" } },
             { name: "endDate", in: "query", schema: { type: "string", format: "date" } },
-            { name: "line", in: "query", schema: { type: "string", enum: [...ATTENDING_COVERAGE_LINES] } }
+            { name: "line", in: "query", schema: { type: "string", enum: [...ATTENDING_COVERAGE_LINES, "Elective"] } }
           ],
           responses: {
             "200": { description: "Filtered stored assignments, resolved effective coverage for ranged reads, and current state version" },
@@ -1341,7 +1341,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create an attending coverage assignment",
           description:
-            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice, Vascular, and Pediatrics accept separate day and night assignments plus a Friday-anchored weekend assignment for the Friday 5 PM through Monday 6 AM span. Omit a weekday night assignment when it is the same as that line's day surgeon. A minimally invasive fellow may be assigned through fellowResidentId only to the Practice weekend slot.",
+            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice (alias Elective), Vascular, and Pediatrics accept separate day and night assignments on every date including weekends. Missing nights inherit effective day coverage and missing Friday-Sunday dates inherit within that weekend. A Friday-anchored weekend assignment remains supported as shorthand through Monday 6 AM. A minimally invasive fellow may be assigned through fellowResidentId only to the Practice weekend slot.",
           requestBody: {
             required: true,
             content: {
