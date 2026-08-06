@@ -134,6 +134,11 @@ export function getOpenApiDocument() {
               items: { type: "string" },
               description: "Optional additional telephone numbers containing 7 to 15 digits each."
             },
+            aliases: {
+              type: "array",
+              items: { type: "string", maxLength: 120 },
+              description: "Optional alternate names included in directory search."
+            },
             category: { type: "string", maxLength: 80 },
             directoryType: {
               type: "string",
@@ -141,6 +146,14 @@ export function getOpenApiDocument() {
               default: "Hospital",
               description: "Top-level Contacts tab filter."
             },
+            facility: {
+              type: "string",
+              enum: ["RMH", "NRV", "FMH", "Giles", "Tazewell", "Rockbridge"],
+              default: "RMH",
+              description: "Hospital subdirectory. Ignored for non-hospital contacts."
+            },
+            building: { type: "string", maxLength: 120 },
+            importance: { type: "string", enum: ["essential", "extended"], default: "extended" },
             organization: { type: "string", maxLength: 120, description: "Optional; defaults from directoryType." }
           }
         },
@@ -854,6 +867,24 @@ export function getOpenApiDocument() {
         }
       },
       "/api/contacts/{id}": {
+        patch: {
+          summary: "Update a directory contact",
+          description: "Admin browser session or admin X-API-Key required. Omitted fields retain their current values.",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+            { $ref: "#/components/parameters/StateVersionHeader" }
+          ],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/DirectoryContactInput" } } }
+          },
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "403": { description: "Admin access required" },
+            "404": { description: "Contact not found" },
+            "409": { description: "Updated contact would duplicate an existing contact" }
+          }
+        },
         delete: {
           summary: "Remove a directory contact",
           description: "Admin browser session or admin X-API-Key required.",

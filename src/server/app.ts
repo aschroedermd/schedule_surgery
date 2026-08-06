@@ -55,6 +55,8 @@ import {
   DirectoryContact,
   CoverageRequestAction,
   GoldStarAward,
+  HOSPITAL_CONTACT_FACILITIES,
+  HospitalContactFacility,
   PlannerState,
   Resident,
   ResidentProfileChange,
@@ -978,6 +980,32 @@ export function createApp(
         action: "rejected directory contact",
         details: `${contactRequest.contact.name} · ${contactRequest.contact.phoneNumber}`,
         entityType: "contactRequest",
+        entityId: id
+      }));
+      res.json(saved);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/contacts/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const existing = state.contacts.find((item) => item.id === id);
+      if (!existing) throw new HttpError(404, "Contact not found");
+      const now = new Date().toISOString();
+      const contact = readDirectoryContactUpdate(req.body, existing, now);
+      assertContactIsUnique(state, contact, undefined, id);
+      const saved = await commitState(req, addActivity({
+        ...state,
+        contacts: state.contacts.map((item) => item.id === id ? contact : item)
+      }, {
+        ...requestActivityActor(req),
+        activityType: "account",
+        action: "updated directory contact",
+        details: `${contact.name} · ${contact.phoneNumber} · ${contact.category}`,
+        entityType: "directoryContact",
         entityId: id
       }));
       res.json(saved);
@@ -4354,6 +4382,16 @@ function readDirectoryContact(input: unknown, createdBy: string | undefined, now
     throw new HttpError(400, "Directory type must be Hospital, Residents, or Faculty & Staff");
   }
   const alternatePhoneNumbers = readOptionalStringArray(value.alternatePhoneNumbers, "Alternate phone numbers");
+  const aliases = readOptionalStringArray(value.aliases, "Aliases");
+  const facilityValue = directoryTypeValue === "Hospital" ? readOptionalString(value.facility) ?? "RMH" : undefined;
+  if (facilityValue && !HOSPITAL_CONTACT_FACILITIES.includes(facilityValue as HospitalContactFacility)) {
+    throw new HttpError(400, `Facility must be one of ${HOSPITAL_CONTACT_FACILITIES.join(", ")}`);
+  }
+  const building = directoryTypeValue === "Hospital" ? readOptionalString(value.building) : undefined;
+  const importanceValue = directoryTypeValue === "Hospital" ? readOptionalString(value.importance) ?? "extended" : undefined;
+  if (importanceValue && importanceValue !== "essential" && importanceValue !== "extended") {
+    throw new HttpError(400, "Importance must be essential or extended");
+  }
   const organization = readOptionalString(value.organization) ?? (
     directoryTypeValue === "Residents"
       ? "Carilion Clinic General Surgery Residency"
@@ -4361,8 +4399,11 @@ function readDirectoryContact(input: unknown, createdBy: string | undefined, now
         ? "Carilion Clinic Department of Surgery"
         : "Hospital Directory"
   );
-  if (name.length > 120 || category.length > 80 || organization.length > 120) {
-    throw new HttpError(400, "Contact name, category, or organization is too long");
+  if (name.length > 120 || category.length > 80 || organization.length > 120 || (building?.length ?? 0) > 120) {
+    throw new HttpError(400, "Contact name, category, organization, or building is too long");
+  }
+  if (aliases.some((alias) => alias.length > 120)) {
+    throw new HttpError(400, "Each contact alias must be 120 characters or fewer");
   }
   const digits = phoneNumber.replace(/\D/g, "");
   if (digits.length < 7 || digits.length > 15) {
@@ -4379,8 +4420,12 @@ function readDirectoryContact(input: unknown, createdBy: string | undefined, now
     name,
     phoneNumber,
     alternatePhoneNumbers: alternatePhoneNumbers.length ? alternatePhoneNumbers : undefined,
+    aliases: aliases.length ? aliases : undefined,
     category,
     directoryType: directoryTypeValue,
+    facility: facilityValue as HospitalContactFacility | undefined,
+    building,
+    importance: importanceValue as "essential" | "extended" | undefined,
     organization,
     createdAt: now,
     updatedAt: now,
@@ -4388,11 +4433,30 @@ function readDirectoryContact(input: unknown, createdBy: string | undefined, now
   };
 }
 
-function assertContactIsUnique(state: PlannerState, contact: DirectoryContact, ignoredRequestId?: string): void {
+function readDirectoryContactUpdate(input: unknown, existing: DirectoryContact, now: string): DirectoryContact {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new HttpError(400, "Contact input must be an object");
+  }
+  const replacement = readDirectoryContact(
+    { ...existing, ...(input as Record<string, unknown>) },
+    existing.createdBy,
+    now
+  );
+  return { ...replacement, id: existing.id, createdAt: existing.createdAt, createdBy: existing.createdBy, updatedAt: now };
+}
+
+function assertContactIsUnique(
+  state: PlannerState,
+  contact: DirectoryContact,
+  ignoredRequestId?: string,
+  ignoredContactId?: string
+): void {
   const phone = contact.phoneNumber.replace(/\D/g, "");
   const sameContact = (candidate: DirectoryContact) =>
     candidate.phoneNumber.replace(/\D/g, "") === phone && candidate.name.trim().toLowerCase() === contact.name.trim().toLowerCase();
-  if (state.contacts.some(sameContact)) throw new HttpError(409, "This contact is already in the directory");
+  if (state.contacts.some((candidate) => candidate.id !== ignoredContactId && sameContact(candidate))) {
+    throw new HttpError(409, "This contact is already in the directory");
+  }
   if (state.contactRequests.some((request) => request.id !== ignoredRequestId && request.status === "pending" && sameContact(request.contact))) {
     throw new HttpError(409, "This contact already has a pending request");
   }

@@ -288,8 +288,12 @@ export interface DirectoryContact {
   name: string;
   phoneNumber: string;
   alternatePhoneNumbers?: string[];
+  aliases?: string[];
   category: string;
   directoryType: DirectoryContactType;
+  facility?: HospitalContactFacility;
+  building?: string;
+  importance?: HospitalContactImportance;
   organization: string;
   createdAt: string;
   updatedAt: string;
@@ -297,6 +301,12 @@ export interface DirectoryContact {
 }
 
 export type DirectoryContactType = "Hospital" | "Residents" | "Faculty & Staff";
+
+export const HOSPITAL_CONTACT_FACILITIES = ["RMH", "NRV", "FMH", "Giles", "Tazewell", "Rockbridge"] as const;
+
+export type HospitalContactFacility = (typeof HOSPITAL_CONTACT_FACILITIES)[number];
+
+export type HospitalContactImportance = "essential" | "extended";
 
 export type ContactRequestStatus = "pending" | "approved" | "rejected";
 

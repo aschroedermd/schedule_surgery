@@ -593,11 +593,34 @@ export async function submitContact(
   token: string,
   contact: Pick<DirectoryContact, "name" | "phoneNumber" | "category" | "directoryType"> & {
     alternatePhoneNumbers?: string[];
+    aliases?: string[];
+    facility?: DirectoryContact["facility"];
+    building?: string;
+    importance?: DirectoryContact["importance"];
     organization?: string;
   }
 ): Promise<PlannerState> {
   return request<PlannerState>("/api/contacts", {
     method: "POST",
+    token,
+    body: JSON.stringify(contact)
+  });
+}
+
+export async function updateContact(
+  token: string,
+  id: string,
+  contact: Pick<DirectoryContact, "name" | "phoneNumber" | "category" | "directoryType"> & {
+    alternatePhoneNumbers?: string[];
+    aliases?: string[];
+    facility?: DirectoryContact["facility"];
+    building?: string;
+    importance?: DirectoryContact["importance"];
+    organization?: string;
+  }
+): Promise<PlannerState> {
+  return request<PlannerState>(`/api/contacts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     token,
     body: JSON.stringify(contact)
   });

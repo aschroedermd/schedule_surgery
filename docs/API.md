@@ -102,6 +102,7 @@ Published contacts are available to signed-in users and API keys. A normal brows
 ```text
 GET    /api/contacts
 POST   /api/contacts
+PATCH  /api/contacts/:id                         # admin
 DELETE /api/contacts/:id                         # admin
 POST   /api/contact-requests/:id/approve         # admin
 POST   /api/contact-requests/:id/reject          # admin
@@ -117,13 +118,17 @@ curl -X POST https://your-domain.example/api/contacts \
     "name":"OR Front Desk",
     "phoneNumber":"(540) 555-0123",
     "alternatePhoneNumbers":["(540) 555-0456"],
+    "aliases":["OR desk","operating room control"],
     "category":"Perioperative",
     "directoryType":"Hospital",
+    "facility":"RMH",
+    "building":"Main hospital",
+    "importance":"essential",
     "organization":"Hospital Directory"
   }'
 ```
 
-The response header `X-Contact-Disposition` is `added` for direct publishing or `requested` when approval is required. Contact records include a stable ID, name, formatted primary and optional alternate phone numbers, top-level `directoryType` (`Hospital`, `Residents`, or `Faculty & Staff`), category, organization, creator, and timestamps. The browser uses those fields to generate a vCard 3.0 `.vcf` containing `FN`, `ORG`, each `TEL`, `CATEGORIES`, and `UID`, suitable for iPhone contact import.
+The response header `X-Contact-Disposition` is `added` for direct publishing or `requested` when approval is required. Hospital contacts default to facility `RMH`; supported facilities are `RMH`, `NRV`, `FMH`, `Giles`, `Tazewell`, and `Rockbridge`. Contacts may also carry a building/location, search aliases, and `importance` (`essential` or `extended`). `PATCH /api/contacts/:id` accepts those same fields and requires admin access. The browser uses contact fields to generate a vCard 3.0 `.vcf` containing `FN`, `ORG`, each `TEL`, `CATEGORIES`, and `UID`, suitable for iPhone contact import.
 
 ## Residency Wiki
 

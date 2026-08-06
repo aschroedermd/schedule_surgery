@@ -13,6 +13,8 @@ import {
   CoverageEntry,
   DirectoryContact,
   GoldStarAward,
+  HOSPITAL_CONTACT_FACILITIES,
+  HospitalContactFacility,
   PlannerState,
   Resident
 } from "../shared/types";
@@ -377,6 +379,20 @@ function normalizeContacts(contacts: DirectoryContact[]): DirectoryContact[] {
       return {
         ...contact,
         directoryType,
+        facility: directoryType === "Hospital"
+          ? HOSPITAL_CONTACT_FACILITIES.includes(contact.facility as HospitalContactFacility)
+            ? contact.facility as HospitalContactFacility
+            : "RMH"
+          : undefined,
+        building: directoryType === "Hospital" ? normalizeOptionalString(contact.building) : undefined,
+        importance: directoryType === "Hospital"
+          ? contact.importance === "essential" ? "essential" : "extended"
+          : undefined,
+        aliases: Array.isArray(contact.aliases)
+          ? [...new Set(contact.aliases
+              .map((alias) => normalizeOptionalString(alias))
+              .filter((alias): alias is string => Boolean(alias)))]
+          : undefined,
         category: directoryType === "Residents"
           ? contact.category.replace(/^Level\s+([1-5])$/i, "PGY-$1")
           : contact.category,

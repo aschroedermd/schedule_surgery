@@ -1,7 +1,14 @@
-import { Check, Phone, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, Pencil, Phone, Plus, Search, Trash2, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ContactRequest, DirectoryContact, DirectoryContactType, PlannerState } from "../shared/types";
-import { approveContactRequest, deleteContact, rejectContactRequest, submitContact } from "./api";
+import {
+  ContactRequest,
+  DirectoryContact,
+  DirectoryContactType,
+  HOSPITAL_CONTACT_FACILITIES,
+  HospitalContactFacility,
+  PlannerState
+} from "../shared/types";
+import { approveContactRequest, deleteContact, rejectContactRequest, submitContact, updateContact } from "./api";
 import { buildVCard, makeTelephoneUrl, vCardFilename } from "./vcard";
 
 export function ContactsTab({
@@ -20,10 +27,13 @@ export function ContactsTab({
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
-  const [directoryFilter, setDirectoryFilter] = useState<"All" | DirectoryContactType>("All");
+  const [directoryFilter, setDirectoryFilter] = useState<"All" | DirectoryContactType>("Hospital");
+  const [facilityFilter, setFacilityFilter] = useState<HospitalContactFacility>("RMH");
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingContact, setEditingContact] = useState<DirectoryContact | null>(null);
   const typeContacts = state.contacts.filter(
-    (contact) => directoryFilter === "All" || contact.directoryType === directoryFilter
+    (contact) => (directoryFilter === "All" || contact.directoryType === directoryFilter) &&
+      (directoryFilter !== "Hospital" || (contact.facility ?? "RMH") === facilityFilter)
   );
   const categories = useMemo(
     () => [...new Set(typeContacts.map((contact) => contact.category))].sort((a, b) => a.localeCompare(b)),
@@ -31,15 +41,26 @@ export function ContactsTab({
   );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredContacts = typeContacts.filter((contact) =>
-    !normalizedQuery || [contact.name, contact.phoneNumber, ...(contact.alternatePhoneNumbers ?? []), contact.category, contact.organization]
-      .some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
+    !normalizedQuery || [
+      contact.name,
+      contact.phoneNumber,
+      ...(contact.alternatePhoneNumbers ?? []),
+      ...(contact.aliases ?? []),
+      contact.category,
+      contact.organization,
+      contact.facility,
+      contact.building
+    ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery))
   );
   const grouped = categories
     .map((category) => ({
       category,
       contacts: filteredContacts
         .filter((contact) => contact.category === category)
-        .sort((a, b) => a.name.localeCompare(b.name))
+        .sort((a, b) => (
+          (a.importance === "essential" ? 0 : 1) - (b.importance === "essential" ? 0 : 1) ||
+          a.name.localeCompare(b.name)
+        ))
     }))
     .filter((group) => group.contacts.length > 0);
   const visibleRequests = isAdmin
@@ -69,7 +90,10 @@ export function ContactsTab({
             </button>
           )}
         </label>
-        <button type="button" className="primary-button contacts-add-button" onClick={() => setShowAddForm((open) => !open)}>
+        <button type="button" className="primary-button contacts-add-button" onClick={() => {
+          setEditingContact(null);
+          setShowAddForm((open) => !open);
+        }}>
           {showAddForm ? <X size={18} /> : <Plus size={18} />}
           <span>{showAddForm ? "Cancel" : "Add contact"}</span>
         </button>
@@ -83,24 +107,58 @@ export function ContactsTab({
             role="tab"
             aria-selected={directoryFilter === directoryType}
             className={directoryFilter === directoryType ? "active" : ""}
-            onClick={() => setDirectoryFilter(directoryType)}
+            onClick={() => {
+              setDirectoryFilter(directoryType);
+              setEditingContact(null);
+            }}
           >
             {directoryType}
           </button>
         ))}
       </div>
 
-      {showAddForm && (
+      {directoryFilter === "Hospital" && (
+        <div className="contact-facility-tabs" role="tablist" aria-label="Hospital facilities">
+          {HOSPITAL_CONTACT_FACILITIES.map((facility) => (
+            <button
+              key={facility}
+              type="button"
+              role="tab"
+              aria-selected={facilityFilter === facility}
+              className={facilityFilter === facility ? "active" : ""}
+              onClick={() => {
+                setFacilityFilter(facility);
+                setEditingContact(null);
+              }}
+            >
+              {facility}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(showAddForm || editingContact) && (
         <ContactAddForm
+          key={editingContact?.id ?? "new-contact"}
           categories={categories}
-          publishesImmediately={isAdmin || canAddContacts}
-          onCancel={() => setShowAddForm(false)}
+          initialContact={editingContact ?? undefined}
+          defaultFacility={facilityFilter}
+          publishesImmediately={Boolean(editingContact) || isAdmin || canAddContacts}
+          onCancel={() => {
+            setShowAddForm(false);
+            setEditingContact(null);
+          }}
           onSubmit={async (contact) => {
             await onMutate(
-              () => submitContact(token, contact),
-              isAdmin || canAddContacts ? "Contact added" : "Contact sent for admin approval"
+              () => editingContact
+                ? updateContact(token, editingContact.id, contact)
+                : submitContact(token, contact),
+              editingContact
+                ? "Contact updated"
+                : isAdmin || canAddContacts ? "Contact added" : "Contact sent for admin approval"
             );
             setShowAddForm(false);
+            setEditingContact(null);
           }}
         />
       )}
@@ -123,6 +181,12 @@ export function ContactsTab({
                   key={contact.id}
                   contact={contact}
                   canDelete={isAdmin}
+                  canEdit={isAdmin}
+                  onEdit={() => {
+                    setShowAddForm(false);
+                    setEditingContact(contact);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
                   onDelete={() => {
                     if (!window.confirm(`Remove ${contact.name} from the directory?`)) return;
                     void onMutate(() => deleteContact(token, contact.id), "Contact removed");
@@ -155,19 +219,39 @@ export function ContactsTab({
 
 function ContactAddForm({
   categories,
+  initialContact,
+  defaultFacility,
   publishesImmediately,
   onSubmit,
   onCancel
 }: {
   categories: string[];
+  initialContact?: DirectoryContact;
+  defaultFacility: HospitalContactFacility;
   publishesImmediately: boolean;
-  onSubmit: (contact: { name: string; phoneNumber: string; category: string; directoryType: DirectoryContactType; organization: string }) => Promise<void>;
+  onSubmit: (contact: {
+    name: string;
+    phoneNumber: string;
+    alternatePhoneNumbers?: string[];
+    aliases?: string[];
+    category: string;
+    directoryType: DirectoryContactType;
+    facility?: HospitalContactFacility;
+    building?: string;
+    importance?: DirectoryContact["importance"];
+    organization: string;
+  }) => Promise<void>;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [category, setCategory] = useState("");
-  const [directoryType, setDirectoryType] = useState<DirectoryContactType>("Hospital");
+  const [name, setName] = useState(initialContact?.name ?? "");
+  const [phoneNumber, setPhoneNumber] = useState(initialContact?.phoneNumber ?? "");
+  const [alternatePhoneNumbers, setAlternatePhoneNumbers] = useState((initialContact?.alternatePhoneNumbers ?? []).join(", "));
+  const [aliases, setAliases] = useState((initialContact?.aliases ?? []).join(", "));
+  const [category, setCategory] = useState(initialContact?.category ?? "");
+  const [directoryType, setDirectoryType] = useState<DirectoryContactType>(initialContact?.directoryType ?? "Hospital");
+  const [facility, setFacility] = useState<HospitalContactFacility>(initialContact?.facility ?? defaultFacility);
+  const [building, setBuilding] = useState(initialContact?.building ?? "");
+  const [importance, setImportance] = useState<NonNullable<DirectoryContact["importance"]>>(initialContact?.importance ?? "extended");
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(event: FormEvent) {
@@ -179,7 +263,18 @@ function ContactAddForm({
         : directoryType === "Residents"
           ? "Carilion Clinic General Surgery Residency"
           : "Carilion Clinic Department of Surgery";
-      await onSubmit({ name: name.trim(), phoneNumber: phoneNumber.trim(), category: category.trim(), directoryType, organization });
+      await onSubmit({
+        name: name.trim(),
+        phoneNumber: phoneNumber.trim(),
+        alternatePhoneNumbers: parseContactList(alternatePhoneNumbers),
+        aliases: parseContactList(aliases),
+        category: category.trim(),
+        directoryType,
+        facility: directoryType === "Hospital" ? facility : undefined,
+        building: directoryType === "Hospital" ? building.trim() || undefined : undefined,
+        importance: directoryType === "Hospital" ? importance : undefined,
+        organization
+      });
     } finally {
       setSubmitting(false);
     }
@@ -189,10 +284,12 @@ function ContactAddForm({
     <form className="contact-add-form" onSubmit={submit}>
       <div className="contact-add-heading">
         <div>
-          <p className="eyebrow">Hospital Directory</p>
-          <h2>New contact</h2>
+          <p className="eyebrow">{initialContact ? "Admin editor" : "Hospital Directory"}</p>
+          <h2>{initialContact ? `Edit ${initialContact.name}` : "New contact"}</h2>
         </div>
-        <p>{publishesImmediately ? "This contact will be added immediately." : "An admin will review this contact before it appears."}</p>
+        <p>{initialContact
+          ? "Changes are published immediately."
+          : publishesImmediately ? "This contact will be added immediately." : "An admin will review this contact before it appears."}</p>
       </div>
       <div className="contact-add-fields">
         <label>
@@ -203,6 +300,14 @@ function ContactAddForm({
             <option value="Faculty & Staff">Faculty &amp; Staff</option>
           </select>
         </label>
+        {directoryType === "Hospital" && (
+          <label>
+            Facility
+            <select value={facility} onChange={(event) => setFacility(event.target.value as HospitalContactFacility)}>
+              {HOSPITAL_CONTACT_FACILITIES.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+        )}
         <label>
           Name
           <input required maxLength={120} value={name} placeholder="e.g. OR Front Desk" onChange={(event) => setName(event.target.value)} />
@@ -212,25 +317,60 @@ function ContactAddForm({
           <input required type="tel" inputMode="tel" value={phoneNumber} placeholder="(540) 555-0123" onChange={(event) => setPhoneNumber(event.target.value)} />
         </label>
         <label>
+          Alternate numbers
+          <input value={alternatePhoneNumbers} placeholder="Comma-separated" onChange={(event) => setAlternatePhoneNumbers(event.target.value)} />
+        </label>
+        <label>
           Category
           <input required maxLength={80} list="contact-category-options" value={category} placeholder="Choose or enter a category" onChange={(event) => setCategory(event.target.value)} />
           <datalist id="contact-category-options">
             {categories.map((item) => <option key={item} value={item} />)}
           </datalist>
         </label>
+        {directoryType === "Hospital" && (
+          <>
+            <label>
+              Building / location
+              <input maxLength={120} value={building} placeholder="e.g. Crystal Spring Tower" onChange={(event) => setBuilding(event.target.value)} />
+            </label>
+            <label>
+              Visibility
+              <select value={importance} onChange={(event) => setImportance(event.target.value as NonNullable<DirectoryContact["importance"]>)}>
+                <option value="essential">Essential</option>
+                <option value="extended">All services</option>
+              </select>
+            </label>
+          </>
+        )}
+        <label>
+          Search aliases
+          <input value={aliases} placeholder="Comma-separated" onChange={(event) => setAliases(event.target.value)} />
+        </label>
       </div>
       <div className="contact-add-actions">
         <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
         <button type="submit" className="primary-button" disabled={submitting}>
           <Plus size={17} />
-          {submitting ? "Submitting…" : publishesImmediately ? "Add contact" : "Request contact"}
+          {submitting ? "Submitting…" : initialContact ? "Save changes" : publishesImmediately ? "Add contact" : "Request contact"}
         </button>
       </div>
     </form>
   );
 }
 
-function ContactRow({ contact, canDelete, onDelete }: { contact: DirectoryContact; canDelete: boolean; onDelete: () => void }) {
+function ContactRow({
+  contact,
+  canDelete,
+  canEdit,
+  onDelete,
+  onEdit
+}: {
+  contact: DirectoryContact;
+  canDelete: boolean;
+  canEdit: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
   const telephoneUrl = makeTelephoneUrl(contact.phoneNumber);
   const display = splitContactNameAndTitle(contact.name);
   return (
@@ -240,6 +380,7 @@ function ContactRow({ contact, canDelete, onDelete }: { contact: DirectoryContac
         <span className="contact-copy">
           <strong>{display.name}</strong>
           {display.title && <span className="contact-title">{display.title}</span>}
+          {contact.building && <span className="contact-title">{contact.building}</span>}
           <small>{contact.phoneNumber}</small>
           {contact.alternatePhoneNumbers?.map((phoneNumber) => (
             <small key={phoneNumber}>Alternate: {phoneNumber}</small>
@@ -262,6 +403,11 @@ function ContactRow({ contact, canDelete, onDelete }: { contact: DirectoryContac
             <Phone size={16} />
           </a>
         ))}
+        {canEdit && (
+          <button type="button" className="contact-action contact-edit" title={`Edit ${contact.name}`} aria-label={`Edit ${contact.name}`} onClick={onEdit}>
+            <Pencil size={16} />
+          </button>
+        )}
         {canDelete && (
           <button type="button" className="contact-action contact-delete" title={`Remove ${contact.name}`} aria-label={`Remove ${contact.name}`} onClick={onDelete}>
             <Trash2 size={17} />
@@ -270,6 +416,11 @@ function ContactRow({ contact, canDelete, onDelete }: { contact: DirectoryContac
       </div>
     </article>
   );
+}
+
+function parseContactList(value: string): string[] | undefined {
+  const items = [...new Set(value.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean))];
+  return items.length ? items : undefined;
 }
 
 export function splitContactNameAndTitle(value: string): { name: string; title?: string } {
