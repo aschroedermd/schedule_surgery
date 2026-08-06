@@ -4,10 +4,17 @@ import {
   AttendingCoverageLine
 } from "./types";
 
-export const INDEPENDENT_CALL_LINES = ["Practice", "Vascular", "Pediatrics"] as const;
+export const INDEPENDENT_CALL_LINES = ["Practice", "Vascular", "Pediatrics", "NRV"] as const;
 
 export type IndependentCallLine = (typeof INDEPENDENT_CALL_LINES)[number];
 export type IndependentCallPeriod = "day" | "night";
+
+export const INDEPENDENT_CALL_LABELS: Record<IndependentCallLine, string> = {
+  Practice: "PR",
+  Vascular: "V",
+  Pediatrics: "PEDS",
+  NRV: "NRV"
+};
 
 export interface ResolvedIndependentCallCoverage {
   assignment: AttendingCoverageAssignment;
@@ -21,10 +28,11 @@ export function isIndependentCallLine(line: AttendingCoverageLine): line is Inde
 }
 
 /**
- * Resolves the effective Practice, Vascular, or Pediatrics primary call assignment.
- * Weekend assignments are anchored on Friday and cover Friday night through Monday
- * at 06:00. On every date, a missing night assignment inherits effective day
- * coverage. Missing Friday-Sunday rows inherit within that weekend.
+ * Resolves effective Practice, Vascular, Pediatrics, or NRV primary call.
+ * Weekend assignments are anchored on Friday and cover through Monday at 06:00;
+ * NRV begins Friday morning while the other independent lines begin Friday night.
+ * On every date, a missing night assignment inherits effective day coverage.
+ * Missing Friday-Sunday rows inherit within that weekend.
  */
 export function resolveIndependentCallCoverage(
   assignments: AttendingCoverageAssignment[],
@@ -73,7 +81,7 @@ export function resolveIndependentCallCoverage(
     (assignment) => assignment.date === weekendStart && assignment.shift === "weekend"
   );
   const weekday = parseLocalDate(date).getDay();
-  if (weekendAssignment && (period === "night" || weekday === 0 || weekday === 6)) {
+  if (weekendAssignment && (line === "NRV" || period === "night" || weekday === 0 || weekday === 6)) {
     return resolved(weekendAssignment, { inheritedFromWeekend: date !== weekendStart });
   }
 

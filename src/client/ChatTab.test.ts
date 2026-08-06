@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { tryStartAudioPlayback } from "./ChatTab";
+import { buildAuthenticatedWikiHref, tryStartAudioPlayback } from "./ChatTab";
 
 describe("spoken response playback", () => {
   it("reports successful playback", async () => {
@@ -14,5 +14,15 @@ describe("spoken response playback", () => {
 
     await expect(tryStartAudioPlayback({ play })).resolves.toBe(false);
     expect(play).toHaveBeenCalledOnce();
+  });
+});
+
+describe("wiki reference links", () => {
+  it("adds the current session only to protected wiki file links", () => {
+    expect(buildAuthenticatedWikiHref("/api/wiki/sources/src-dragon-guide/file", "token value")).toBe(
+      "/api/wiki/sources/src-dragon-guide/file?token=token%20value"
+    );
+    expect(buildAuthenticatedWikiHref("https://example.com/guide.pdf", "secret")).toBe("https://example.com/guide.pdf");
+    expect(buildAuthenticatedWikiHref("javascript:alert(1)", "secret")).toBeUndefined();
   });
 });

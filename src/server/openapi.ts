@@ -369,6 +369,18 @@ export function getOpenApiDocument() {
             capturedAt: { type: "string", format: "date-time" },
             effectiveDate: { type: "string", format: "date" },
             contentHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+            referenceFile: {
+              type: "object",
+              description: "Present when the original source should remain available as a resident-downloadable reference.",
+              required: ["filename", "mediaType", "byteSize"],
+              properties: {
+                filename: { type: "string" },
+                mediaType: { type: "string" },
+                byteSize: { type: "integer", minimum: 1, maximum: 26214400 },
+                available: { type: "boolean", readOnly: true, description: "True only after the server has verified and stored the binary." }
+              }
+            },
+            downloadUrl: { type: "string", readOnly: true },
             notes: { type: "string" },
             createdAt: { type: "string", format: "date-time", readOnly: true },
             updatedAt: { type: "string", format: "date-time", readOnly: true },
@@ -469,7 +481,7 @@ export function getOpenApiDocument() {
             shift: {
               type: "string",
               enum: ["day", "night", "24h", "weekend"],
-              description: "Practice/Elective, Vascular, and Pediatrics accept separate day/night coverage on every date, including weekends. Missing nights inherit effective day coverage, and missing Friday-Sunday dates inherit within that weekend. The Friday-anchored weekend shift remains available as shorthand through Monday 6 AM."
+              description: "Practice/Elective, Vascular, Pediatrics, and NRV accept separate day/night coverage on every date, including weekends. Missing nights inherit effective day coverage, and missing Friday-Sunday dates inherit within that weekend. The Friday-anchored weekend shift remains shorthand through Monday 6 AM; NRV shorthand begins Friday morning, while the other independent lines begin Friday at 5 PM."
             },
             role: { type: "string", enum: ["primary", "backup"] },
             attendingId: { type: "string", description: "Exactly one of attendingId or fellowResidentId is required." },
@@ -661,10 +673,49 @@ export function getOpenApiDocument() {
       "/api/wiki/sources": {
         get: {
           summary: "List wiki provenance records",
-          description: "Admin-only source metadata. Raw source documents remain in the private local workspace.",
+          description: "Admin-only source metadata, including protected download URLs for retained reference files.",
           responses: {
             "200": { description: "Wiki source records and current wiki revision" },
             "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/wiki/sources/{sourceId}/file": {
+        get: {
+          summary: "Download a retained wiki reference file",
+          description: "Authenticated users may download a file only when a published article references its source. Admins may download draft-source files.",
+          parameters: [{ name: "sourceId", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Original reference file", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+            "404": { description: "Reference file not found or not visible" }
+          }
+        },
+        put: {
+          summary: "Upload or replace a retained wiki reference file",
+          description: "Admin API key or admin session required. The binary SHA-256 must match the source contentHash.",
+          parameters: [
+            { name: "sourceId", in: "path", required: true, schema: { type: "string" } },
+            { name: "X-Wiki-Filename", in: "header", required: true, schema: { type: "string" }, description: "URI-encoded download filename" }
+          ],
+          requestBody: {
+            required: true,
+            content: { "application/octet-stream": { schema: { type: "string", format: "binary", maxLength: 26214400 } } }
+          },
+          responses: {
+            "200": { description: "Existing matching reference file refreshed" },
+            "201": { description: "Reference-file metadata created" },
+            "400": { description: "Hash, filename, or file body is invalid" },
+            "403": { description: "Admin access required" }
+          }
+        },
+        delete: {
+          summary: "Remove a retained wiki reference file",
+          description: "Admin-only. Removes the protected binary and clears its reference-file metadata.",
+          parameters: [{ name: "sourceId", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Reference file removed" },
+            "403": { description: "Admin access required" },
+            "404": { description: "Reference file not found" }
           }
         }
       },
@@ -1372,7 +1423,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create an attending coverage assignment",
           description:
-            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice (alias Elective), Vascular, and Pediatrics accept separate day and night assignments on every date including weekends. Missing nights inherit effective day coverage and missing Friday-Sunday dates inherit within that weekend. A Friday-anchored weekend assignment remains supported as shorthand through Monday 6 AM. A minimally invasive fellow may be assigned through fellowResidentId only to the Practice weekend slot.",
+            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice (alias Elective), Vascular, Pediatrics, and NRV accept separate day and night assignments on every date including weekends. Missing nights inherit effective day coverage and missing Friday-Sunday dates inherit within that weekend. A Friday-anchored weekend assignment remains supported as shorthand through Monday 6 AM; NRV begins Friday morning and the other independent lines begin Friday at 5 PM. A minimally invasive fellow may be assigned through fellowResidentId only to the Practice weekend slot.",
           requestBody: {
             required: true,
             content: {

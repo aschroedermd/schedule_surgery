@@ -65,7 +65,7 @@ export interface Attending {
   defaultHospitalId?: string;
 }
 
-export const ATTENDING_COVERAGE_LINES = ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics"] as const;
+export const ATTENDING_COVERAGE_LINES = ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics", "NRV"] as const;
 
 export type AttendingCoverageLine = (typeof ATTENDING_COVERAGE_LINES)[number];
 
@@ -423,6 +423,15 @@ export interface WikiSourceReference {
   supports?: string;
 }
 
+export interface WikiReferenceFile {
+  /** Safe display/download name; storage never relies on this as a filesystem path. */
+  filename: string;
+  mediaType: string;
+  byteSize: number;
+  /** Server-confirmed availability; local authoring metadata omits this until upload succeeds. */
+  available?: boolean;
+}
+
 export interface WikiSource {
   id: string;
   title: string;
@@ -432,6 +441,8 @@ export interface WikiSource {
   capturedAt: string;
   effectiveDate?: string;
   contentHash: string;
+  /** Present when the original source should remain available as a resident-downloadable reference. */
+  referenceFile?: WikiReferenceFile;
   notes?: string;
   createdAt: string;
   updatedAt: string;

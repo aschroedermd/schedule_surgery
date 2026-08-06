@@ -612,6 +612,7 @@ export function normalizeWikiSources(sources: WikiSource[]): WikiSource[] {
       capturedAt: readIsoTimestamp(source.capturedAt) ?? SEED_TIME,
       effectiveDate: cleanOptionalIsoDate(source.effectiveDate),
       contentHash: cleanText(source.contentHash, 128).toLowerCase(),
+      referenceFile: normalizeWikiReferenceFile(source.referenceFile),
       notes: cleanOptionalText(source.notes, 1000),
       createdAt: readIsoTimestamp(source.createdAt) ?? SEED_TIME,
       updatedAt: readIsoTimestamp(source.updatedAt) ?? SEED_TIME,
@@ -715,7 +716,7 @@ export function readWikiArticle(articles: WikiArticle[], slug: string, includeUn
   return { article, linked, backlinks, related, incomingRelationships };
 }
 
-export function buildFastWikiContext(question: string, articles: WikiArticle[]): string {
+export function buildFastWikiContext(question: string, articles: WikiArticle[], sources: WikiSource[] = []): string {
   const matches = searchWikiArticles(articles, question, 4)
     .map((summary) => articles.find((article) => article.slug === summary.slug))
     .filter((article): article is WikiArticle => Boolean(article));
@@ -730,6 +731,12 @@ export function buildFastWikiContext(question: string, articles: WikiArticle[]):
       `Scope: ${formatWikiScope(article.scope)}`,
       body,
       `Sources: ${article.sourceRefs.length ? article.sourceRefs.map((reference) => `${reference.sourceId}${reference.locator ? ` (${reference.locator})` : ""}`).join(", ") : "none listed"}`,
+      `Reference files: ${article.sourceRefs.flatMap((reference) => {
+        const source = sources.find((candidate) => candidate.id === reference.sourceId);
+        return source?.referenceFile?.available
+          ? [`${source.title} | ${source.referenceFile.filename} | /api/wiki/sources/${encodeURIComponent(source.id)}/file`]
+          : [];
+      }).join(", ") || "none"}`,
       `Links: ${article.links.join(", ") || "none"}`,
       `Relationships: ${(article.relationships ?? []).map((relationship) => `${relationship.type}:${relationship.target}`).join(", ") || "none"}`,
       "</WIKI_ARTICLE>"
@@ -764,6 +771,13 @@ export function validateWikiKnowledgeBase(
   const sourceIds = new Set(sources.map((source) => source.id));
   if (articleSlugs.size !== articles.length) errors.push("Wiki article slugs must be unique");
   if (sourceIds.size !== sources.length) errors.push("Wiki source ids must be unique");
+
+  for (const source of sources) {
+    if (!/^[a-f0-9]{64}$/.test(source.contentHash)) errors.push(`${source.id}: contentHash must be a SHA-256 digest`);
+    if (source.referenceFile && (source.referenceFile.byteSize <= 0 || source.referenceFile.byteSize > 25 * 1024 * 1024)) {
+      errors.push(`${source.id}: reference file byteSize must be between 1 byte and 25 MB`);
+    }
+  }
 
   for (const article of articles) {
     if (article.contentHash !== computeWikiArticleHash(article)) {
@@ -902,9 +916,19 @@ export function computeWikiSourceRecordHash(source: WikiSource): string {
     capturedAt: source.capturedAt,
     effectiveDate: source.effectiveDate,
     contentHash: source.contentHash,
+    referenceFile: source.referenceFile,
     notes: source.notes
   };
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function normalizeWikiReferenceFile(referenceFile: WikiSource["referenceFile"]): WikiSource["referenceFile"] {
+  if (!referenceFile || typeof referenceFile !== "object") return undefined;
+  const filename = cleanText(referenceFile.filename, 240).replace(/[\\/]/g, "-");
+  const mediaType = cleanText(referenceFile.mediaType, 160).toLowerCase();
+  const byteSize = Number(referenceFile.byteSize);
+  if (!filename || !mediaType || !Number.isInteger(byteSize) || byteSize <= 0) return undefined;
+  return { filename, mediaType, byteSize, ...(referenceFile.available === true ? { available: true } : {}) };
 }
 
 function normalizeWikiSourceReferences(references: WikiSourceReference[] | undefined): WikiSourceReference[] {

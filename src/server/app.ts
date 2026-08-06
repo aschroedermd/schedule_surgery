@@ -117,11 +117,13 @@ import {
   normalizeWikiArticles,
   normalizeWikiSources,
   normalizeWikiSlug,
+  computeWikiSourceHash,
   readWikiArticle,
   searchWikiArticles,
   summarizeWikiArticle,
   validateWikiKnowledgeBase
 } from "./wiki";
+import { WikiFileStore, createDefaultWikiFileStore } from "./wikiFileStore";
 
 const MAX_SURGERY_CALL_RESIDENTS = 3;
 const MAX_SCC_CALL_RESIDENTS = 1;
@@ -170,11 +172,12 @@ const scheduleEditableCollections = new Set<CollectionName>(["attendingBlocks", 
 
 export function createApp(
   store: StateStore,
-  options: { userStore?: UserStore; chatSettingsStore?: ChatSettingsStore } = {}
+  options: { userStore?: UserStore; chatSettingsStore?: ChatSettingsStore; wikiFileStore?: WikiFileStore } = {}
 ) {
   const app = express();
   const userStore = options.userStore ?? createDefaultUserStore();
   const chatSettingsStore = options.chatSettingsStore ?? createDefaultChatSettingsStore();
+  const wikiFileStore = options.wikiFileStore ?? createDefaultWikiFileStore();
   const requireAuth = authenticate(userStore);
   const loginLimiter = createRateLimiter(8, 15 * 60 * 1000);
   const transcriptionLimiter = createRateLimiter(25, 24 * 60 * 60 * 1000);
@@ -187,6 +190,7 @@ export function createApp(
   app.set("trust proxy", 1);
   app.use(securityHeaders);
   app.use(cors(getCorsOptions()));
+  app.use("/api/wiki/sources/:sourceId/file", express.raw({ type: "*/*", limit: "25mb" }));
   app.use(express.json({ limit: "12mb" }));
 
   function assistantActionPreparer(state: PlannerState, user: SessionUser, serviceLine: string) {
@@ -1094,7 +1098,105 @@ export function createApp(
   app.get("/api/wiki/sources", requireAuth, requirePasswordReady, requireAdmin, async (_req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
-      res.json({ sources: state.wikiSources, wikiRevision: state.wikiRevision });
+      res.json({ sources: state.wikiSources.map(withWikiSourceDownload), wikiRevision: state.wikiRevision });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/wiki/sources/:sourceId/file", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const sourceId = normalizeWikiSourceId(getParam(req.params.sourceId));
+      const source = state.wikiSources.find((candidate) => candidate.id === sourceId);
+      const isPublishedReference = state.wikiArticles.some((article) =>
+        article.status === "published" && article.sourceRefs.some((reference) => reference.sourceId === sourceId)
+      );
+      if (!source?.referenceFile?.available || (req.user?.role !== "admin" && !isPublishedReference)) {
+        throw new HttpError(404, "Wiki reference file not found");
+      }
+      const data = await wikiFileStore.read(sourceId);
+      if (!data || computeWikiSourceHash(data) !== source.contentHash) {
+        throw new HttpError(404, "Wiki reference file not found");
+      }
+      res.setHeader("cache-control", "private, no-store");
+      res.setHeader("content-type", source.referenceFile.mediaType);
+      res.setHeader("content-length", String(data.byteLength));
+      res.setHeader("content-disposition", contentDispositionAttachment(source.referenceFile.filename));
+      res.send(data);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put("/api/wiki/sources/:sourceId/file", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const sourceId = normalizeWikiSourceId(getParam(req.params.sourceId));
+      const source = state.wikiSources.find((candidate) => candidate.id === sourceId);
+      if (!source) throw new HttpError(404, "Wiki source not found");
+      if (!Buffer.isBuffer(req.body) || !req.body.byteLength) throw new HttpError(400, "Reference file body is required");
+      if (computeWikiSourceHash(req.body) !== source.contentHash) {
+        throw new HttpError(400, "Reference file does not match the wiki source contentHash");
+      }
+      const filename = readWikiFilenameHeader(req.header("x-wiki-filename")) || source.referenceFile?.filename || source.origin || source.title;
+      const mediaType = readWikiMediaType(req.header("content-type")) || source.referenceFile?.mediaType || "application/octet-stream";
+      const referenceFile = { filename, mediaType, byteSize: req.body.byteLength, available: true as const };
+      await wikiFileStore.put(sourceId, req.body);
+      const unchanged = JSON.stringify(source.referenceFile) === JSON.stringify(referenceFile);
+      if (unchanged) {
+        res.json({ source: withWikiSourceDownload(source), wikiRevision: state.wikiRevision, uploaded: true });
+        return;
+      }
+      const now = new Date().toISOString();
+      const updatedSource = normalizeWikiSources([{
+        ...source,
+        referenceFile,
+        updatedAt: now,
+        updatedBy: req.user?.displayName || req.user?.username
+      }])[0];
+      const nextState = addActivity(
+        applyWikiMutationMetadata(
+          { ...state, wikiSources: state.wikiSources.map((candidate) => candidate.id === sourceId ? updatedSource : candidate) },
+          [{ entity: "source", operation: "update", key: sourceId, sourceId, contentHash: source.contentHash }],
+          req.user
+        ),
+        {
+          ...requestActivityActor(req),
+          activityType: "wiki",
+          action: "uploaded wiki reference file",
+          details: `Uploaded ${filename}`,
+          entityType: "wikiArticle"
+        }
+      );
+      const saved = await commitState(req, nextState);
+      res.status(201).json({ source: withWikiSourceDownload(updatedSource), wikiRevision: saved.wikiRevision, uploaded: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/wiki/sources/:sourceId/file", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const sourceId = normalizeWikiSourceId(getParam(req.params.sourceId));
+      const source = state.wikiSources.find((candidate) => candidate.id === sourceId);
+      if (!source?.referenceFile) throw new HttpError(404, "Wiki reference file not found");
+      const now = new Date().toISOString();
+      const updatedSource = normalizeWikiSources([{
+        ...source,
+        referenceFile: undefined,
+        updatedAt: now,
+        updatedBy: req.user?.displayName || req.user?.username
+      }])[0];
+      const nextState = applyWikiMutationMetadata(
+        { ...state, wikiSources: state.wikiSources.map((candidate) => candidate.id === sourceId ? updatedSource : candidate) },
+        [{ entity: "source", operation: "update", key: sourceId, sourceId, contentHash: source.contentHash }],
+        req.user
+      );
+      const saved = await commitState(req, nextState);
+      await wikiFileStore.delete(sourceId);
+      res.json({ deleted: sourceId, wikiRevision: saved.wikiRevision });
     } catch (error) {
       next(error);
     }
@@ -1134,6 +1236,11 @@ export function createApp(
         entityType: "wikiArticle"
       });
       const saved = await commitState(req, withActivity);
+      const deletedSourceIds = plan.changes
+        .filter((change) => change.entity === "source" && change.operation === "delete")
+        .map((change) => change.sourceId)
+        .filter((sourceId): sourceId is string => Boolean(sourceId));
+      await Promise.allSettled(deletedSourceIds.map((sourceId) => wikiFileStore.delete(sourceId)));
       res.json({
         applied: true,
         wikiRevision: saved.wikiRevision,
@@ -1151,7 +1258,17 @@ export function createApp(
       const state = await store.load();
       const result = readWikiArticle(state.wikiArticles, getParam(req.params.slug), req.user?.role === "admin");
       if (!result) throw new HttpError(404, "Wiki article not found");
-      res.json({ ...result, stateVersion: state.version, dataUpdatedAt: state.updatedAt });
+      res.json({
+        ...result,
+        sources: result.article.sourceRefs.map((reference) => ({
+          reference,
+          source: state.wikiSources.find((source) => source.id === reference.sourceId)
+            ? withWikiSourceDownload(state.wikiSources.find((source) => source.id === reference.sourceId)!)
+            : undefined
+        })),
+        stateVersion: state.version,
+        dataUpdatedAt: state.updatedAt
+      });
     } catch (error) {
       next(error);
     }
@@ -3762,7 +3879,7 @@ function buildAttendingCoverageAssignment(
     }
   }
   if (shift === "weekend" && !isIndependentCallLine(line)) {
-    throw new HttpError(400, "Weekend coverage is available only for Practice, Vascular, and Pediatrics call");
+    throw new HttpError(400, "Weekend coverage is available only for Practice, Vascular, Pediatrics, and NRV call");
   }
   if (shift === "weekend" && !isPracticeWeekendStart(date)) {
     throw new HttpError(400, "Weekend call must start on Friday (5 PM Friday through 6 AM Monday)");
@@ -4078,6 +4195,13 @@ function buildWikiSource(input: Record<string, unknown>, existing: WikiSource | 
     capturedAt,
     effectiveDate: "effectiveDate" in input ? readOptionalWikiDate(input.effectiveDate) : existing?.effectiveDate,
     contentHash,
+    referenceFile: "referenceFile" in input
+      ? preserveAvailableWikiReferenceFile(
+          readWikiReferenceFile(input.referenceFile),
+          existing?.referenceFile,
+          existing?.contentHash === contentHash
+        )
+      : existing?.referenceFile,
     notes: "notes" in input ? readOptionalString(input.notes) : existing?.notes,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -4097,8 +4221,76 @@ function wikiSourceMetadata(source: WikiSource): string {
     capturedAt: source.capturedAt,
     effectiveDate: source.effectiveDate,
     contentHash: source.contentHash,
+    referenceFile: source.referenceFile,
     notes: source.notes
   });
+}
+
+function readWikiReferenceFile(value: unknown): WikiSource["referenceFile"] {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "referenceFile must be an object");
+  }
+  const input = value as Record<string, unknown>;
+  const filename = readOptionalString(input.filename)?.replace(/[\\/]/g, "-");
+  const mediaType = readWikiMediaType(readOptionalString(input.mediaType));
+  const byteSize = Number(input.byteSize);
+  if (!filename) throw new HttpError(400, "referenceFile.filename is required");
+  if (!mediaType) throw new HttpError(400, "referenceFile.mediaType is required");
+  if (!Number.isInteger(byteSize) || byteSize <= 0 || byteSize > 25 * 1024 * 1024) {
+    throw new HttpError(400, "referenceFile.byteSize must be between 1 byte and 25 MB");
+  }
+  return { filename: filename.slice(0, 240), mediaType, byteSize };
+}
+
+function preserveAvailableWikiReferenceFile(
+  requested: WikiSource["referenceFile"],
+  existing: WikiSource["referenceFile"],
+  sameContent: boolean
+): WikiSource["referenceFile"] {
+  if (!requested) return undefined;
+  const sameFile = sameContent && existing?.available === true &&
+    existing.filename === requested.filename &&
+    existing.mediaType === requested.mediaType &&
+    existing.byteSize === requested.byteSize;
+  return { ...requested, available: sameFile ? true : undefined };
+}
+
+function withWikiSourceDownload(source: WikiSource) {
+  return {
+    ...source,
+    downloadUrl: source.referenceFile?.available ? `/api/wiki/sources/${encodeURIComponent(source.id)}/file` : undefined
+  };
+}
+
+function normalizeWikiSourceId(value: string): string {
+  const sourceId = value.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,119}$/.test(sourceId)) throw new HttpError(400, "Invalid wiki source id");
+  return sourceId;
+}
+
+function readWikiFilenameHeader(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, "x-wiki-filename must be URI encoded");
+  }
+  const filename = path.basename(decoded).replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (!filename) throw new HttpError(400, "x-wiki-filename is invalid");
+  return filename.slice(0, 240);
+}
+
+function readWikiMediaType(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const mediaType = value.split(";", 1)[0].trim().toLowerCase();
+  return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mediaType) ? mediaType : undefined;
+}
+
+function contentDispositionAttachment(filename: string): string {
+  const fallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 function readOptionalObjectArray(value: unknown, field: string): Array<Record<string, unknown>> {

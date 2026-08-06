@@ -12,6 +12,7 @@ import {
 import {
   buildWorkspaceDiff,
   createDraftArticle,
+  describeWikiReferenceFile,
   findExplicitPhi,
   initializeWikiWorkspace,
   readWikiArticleFile,
@@ -42,11 +43,18 @@ describe("private wiki workspace", () => {
     ]));
     const sourceFile = path.join(workspace, "reviewed-preferences.txt");
     await fs.writeFile(sourceFile, "Reviewed preference: use the documented port layout.", "utf8");
+    const sourceByteSize = (await fs.stat(sourceFile)).size;
 
     const staged = await stageWikiSource(workspace, sourceFile, {
       title: "Reviewed attending preference",
       sourceType: "direct-review",
-      author: "Reviewing surgeon"
+      author: "Reviewing surgeon",
+      referenceFile: describeWikiReferenceFile(sourceFile, sourceByteSize)
+    });
+    expect(staged.source.referenceFile).toEqual({
+      filename: "reviewed-preferences.txt",
+      mediaType: "text/plain",
+      byteSize: sourceByteSize
     });
     const article = createDraftArticle({
       slug: "attending-example-procedure",
@@ -129,11 +137,22 @@ describe("private wiki workspace", () => {
       authority: "attending-preference",
       revision: 1,
       contentHash: "",
-      sourceRefs: [],
+      sourceRefs: [{ sourceId: "src-reference-guide", locator: "Quick preference facts" }],
       createdAt: now,
       updatedAt: now
     }])[0];
-    expect(buildFastWikiContext("what size Fogarty balloon?", [article])).toContain("5 Fr Fogarty balloon");
+    const context = buildFastWikiContext("what size Fogarty balloon?", [article], [{
+      id: "src-reference-guide",
+      title: "Common duct reference guide",
+      sourceType: "document",
+      capturedAt: now,
+      contentHash: "a".repeat(64),
+      referenceFile: { filename: "Common Duct Guide.pdf", mediaType: "application/pdf", byteSize: 1200, available: true },
+      createdAt: now,
+      updatedAt: now
+    }]);
+    expect(context).toContain("5 Fr Fogarty balloon");
+    expect(context).toContain("Common Duct Guide.pdf | /api/wiki/sources/src-reference-guide/file");
   });
 
   it("uses typed relationships to retrieve and traverse procedure variants", () => {

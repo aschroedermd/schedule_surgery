@@ -66,6 +66,19 @@ describe("independent attending call resolution", () => {
     expect(sundayNight?.assignment.attendingId).toBe("att_friday");
     expect(resolveIndependentMondayEarlyMorningCoverage(assignments, "Vascular", "2026-08-10")?.assignment.attendingId).toBe("att_friday");
   });
+
+  it("carries NRV Friday morning coverage through the weekend while allowing exact splits", () => {
+    const assignments = [
+      coverage("nrv_friday", "2026-08-07", "NRV", "day", "att_nrv_weekend"),
+      coverage("nrv_saturday_night", "2026-08-08", "NRV", "night", "att_nrv_split")
+    ];
+
+    expect(resolveIndependentCallCoverage(assignments, "NRV", "2026-08-07", "night")?.assignment.attendingId).toBe("att_nrv_weekend");
+    expect(resolveIndependentCallCoverage(assignments, "NRV", "2026-08-08", "day")?.assignment.attendingId).toBe("att_nrv_weekend");
+    expect(resolveIndependentCallCoverage(assignments, "NRV", "2026-08-08", "night")?.assignment.attendingId).toBe("att_nrv_split");
+    expect(resolveIndependentCallCoverage(assignments, "NRV", "2026-08-09", "day")?.assignment.attendingId).toBe("att_nrv_weekend");
+    expect(resolveIndependentMondayEarlyMorningCoverage(assignments, "NRV", "2026-08-10")?.assignment.attendingId).toBe("att_nrv_weekend");
+  });
 });
 
 function coverage(

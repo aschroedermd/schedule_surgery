@@ -303,7 +303,7 @@ export async function extractSourceText(filePath: string): Promise<string> {
 export async function stageWikiSource(
   workspacePath: string,
   filePath: string,
-  metadata: Partial<Pick<WikiSource, "title" | "sourceType" | "author" | "origin" | "effectiveDate" | "notes">> = {}
+  metadata: Partial<Pick<WikiSource, "title" | "sourceType" | "author" | "origin" | "effectiveDate" | "referenceFile" | "notes">> = {}
 ): Promise<{ source: WikiSource; extractedText: string; sourceDirectory: string }> {
   const data = await fs.readFile(filePath);
   const contentHash = computeWikiSourceHash(data);
@@ -319,6 +319,7 @@ export async function stageWikiSource(
     capturedAt: now,
     effectiveDate: metadata.effectiveDate,
     contentHash,
+    referenceFile: metadata.referenceFile,
     notes: metadata.notes,
     createdAt: now,
     updatedAt: now,
@@ -332,6 +333,30 @@ export async function stageWikiSource(
   await fs.writeFile(path.join(sourceDirectory, "extracted.txt"), extractedText, "utf8");
   await writeWikiSourceMetadata(workspacePath, source);
   return { source, extractedText, sourceDirectory };
+}
+
+export function describeWikiReferenceFile(filePath: string, byteSize: number): NonNullable<WikiSource["referenceFile"]> {
+  const extension = path.extname(filePath).toLowerCase();
+  const mediaTypes: Record<string, string> = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg"
+  };
+  return {
+    filename: path.basename(filePath).replace(/[\\/]/g, "-"),
+    mediaType: mediaTypes[extension] || "application/octet-stream",
+    byteSize
+  };
 }
 
 export function findExplicitPhi(text: string): string[] {
@@ -444,6 +469,7 @@ This is the private, Git-versioned authoring workspace for the Schedule Assistan
 - Agent-generated clinical material always starts as \`draft\`.
 - Clinical preferences, policies, and templates require a named owner, reviewer, review date, and source before publication.
 - Do not place PHI in this workspace.
+- Mark resident-useful manuals, forms, handouts, setup guides, and similar originals with \`referenceFile\`; \`wiki push\` uploads those hash-verified files to protected server storage. Leave extraction-only sources without it.
 
 Organize broad navigation in hub articles and put actionable details in narrow leaf articles. Use structured \`scope\` for service, attending, procedure, hospital, phase, and patient population; use typed \`relationships\` to connect variants, shared preferences, workflows, and governing policies. See \`docs/WIKI_INGESTION.md\` in the application repository for the full contract.
 

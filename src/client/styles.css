@@ -2882,11 +2882,26 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.chat-bubble a {
+  color: #1369a8;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-bubble a:hover {
+  color: #0b4f82;
+}
+
 .chat-message.user .chat-bubble {
   border-color: var(--color-primary);
   border-radius: 16px 4px 16px 16px;
   background: var(--color-primary);
   color: #fff;
+}
+
+.chat-message.user .chat-bubble a {
+  color: inherit;
 }
 
 .chat-streaming-cursor {
@@ -4903,7 +4918,8 @@ h2 {
 
 .line-practice,
 .line-vascular,
-.line-pediatrics {
+.line-pediatrics,
+.line-nrv {
   background: var(--bg-muted);
   color: var(--text-muted);
 }

@@ -1001,7 +1001,7 @@ export function ChatTab({
               </div>
               <div className="chat-message-body">
                 <div className="chat-bubble">
-                  <MessageText message={message} />
+                  <MessageText message={message} token={token} />
                   {isLongMessage(message.content) && !message.streaming && (
                     <button
                       className="chat-inline-action"
@@ -1273,12 +1273,12 @@ export function ChatTab({
   }
 }
 
-function MessageText({ message }: { message: ChatUiMessage }) {
+function MessageText({ message, token }: { message: ChatUiMessage; token: string }) {
   const content = message.expanded ? message.content : collapseMessage(message.content);
   return (
     <>
       {content.split("\n").map((line, lineIndex) => (
-        <p key={lineIndex}>{renderInlineMarkdown(line || "\u00a0")}</p>
+        <p key={lineIndex}>{renderInlineMarkdown(line || "\u00a0", token)}</p>
       ))}
       {message.streaming && <span className="chat-streaming-cursor" aria-hidden="true" />}
     </>
@@ -1798,14 +1798,28 @@ function shuffle(messages: readonly string[]): string[] {
   return shuffled;
 }
 
-function renderInlineMarkdown(text: string) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
-    part.startsWith("**") && part.endsWith("**") ? (
-      <strong key={index}>{part.slice(2, -2)}</strong>
-    ) : (
-      <Fragment key={index}>{part}</Fragment>
-    )
-  );
+function renderInlineMarkdown(text: string, token: string) {
+  return text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) return <strong key={index}>{part.slice(2, -2)}</strong>;
+    const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (!link) return <Fragment key={index}>{part}</Fragment>;
+    const href = buildAuthenticatedWikiHref(link[2], token);
+    if (!href) return <Fragment key={index}>{link[1]}</Fragment>;
+    return (
+      <a key={index} href={href} target="_blank" rel="noreferrer">
+        {link[1]}
+      </a>
+    );
+  });
+}
+
+export function buildAuthenticatedWikiHref(url: string, token: string): string | undefined {
+  const trimmed = url.trim();
+  if (/^\/api\/wiki\/sources\/[a-z0-9_-]+\/file$/.test(trimmed)) {
+    return `${trimmed}?token=${encodeURIComponent(token)}`;
+  }
+  if (/^https:\/\//i.test(trimmed)) return trimmed;
+  return undefined;
 }
 
 function getRecorderOptions(): MediaRecorderOptions | undefined {

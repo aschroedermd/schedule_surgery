@@ -205,7 +205,7 @@ The database stores one JSON planner state. Important collections:
 - `cases`: ordered cases inside an attending block. Later case times are computed from prior estimated durations.
 - `clinicSessions`: entered clinic sessions with `weekId`; set `isProcedure: true` for procedure clinic.
 - `assignments`: resident coverage of a whole block, individual case, or clinic.
-- `attendingCoverageAssignments`: canonical attending coverage for EGS, Trauma, SCC, consolidated ACS night call, backup, Practice/Elective, Vascular, and Pediatrics. Do not create new legacy `coverageEntries` with `kind: "attending-call"`.
+- `attendingCoverageAssignments`: canonical attending coverage for EGS, Trauma, SCC, consolidated ACS night call, backup, Practice/Elective, Vascular, Pediatrics, and NRV/New River Valley. Do not create new legacy `coverageEntries` with `kind: "attending-call"`.
 - `activityEvents`: audit trail of changes.
 - `goldStarAwards`: weekly ✨⭐️ awards for the resident-facing ✨⭐️ tab.
 
@@ -343,14 +343,14 @@ Calendar `call` entries are global across services. For each Friday-Sunday surge
 
 Use `state.attendingCoverageAssignments` and `/api/attending-coverage`. Do not create new `coverageEntries` with legacy `kind: "attending-call"`.
 
-Coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`. The API also accepts `Elective` as an input/query alias for `Practice`; stored and returned assignments use canonical `Practice`.
+Coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, `Pediatrics`, and `NRV`. The API also accepts `Elective` as an input/query alias for `Practice`; stored and returned assignments use canonical `Practice`. `NRV` is the independent New River Valley/Christiansburg surgeon call line.
 
 - EGS Night, Trauma Night, and SCC Night are one consolidated primary assignment: send `line: "ACS"`, `shift: "night"` once rather than three records.
-- Practice/Elective, Vascular, and Pediatrics are independent from ACS. Every date, including Friday, Saturday, and Sunday, may have a separate primary `day` and `night` assignment.
+- Practice/Elective, Vascular, Pediatrics, and NRV are independent from ACS. Every date, including Friday, Saturday, and Sunday, may have a separate primary `day` and `night` assignment.
 - Send an explicit `night` row only when night differs from effective day coverage. If night is absent, the system uses that date's effective day surgeon.
 - If Friday, Saturday, or Sunday is absent, the system inherits the nearest configured day from the same Friday-Sunday weekend. Exact date/shift rows always win.
 - `shift: "24h"` covers both periods on that exact date.
-- A Friday-anchored `shift: "weekend"` remains supported as shorthand from Friday 5 PM through Monday 6 AM, but independently dated day/night rows override it. Prefer daily rows when the source API supplies daily detail.
+- A Friday-anchored `shift: "weekend"` remains supported as shorthand through Monday 6 AM. It begins Friday morning for NRV and Friday 5 PM for the other independent lines. Independently dated day/night rows override it; prefer daily rows when the source API supplies daily detail.
 - The Monday ranged-read result can contain `earlyMorningUntil6am` for the surgeon carrying over from Sunday night.
 - A minimally invasive fellow can be supplied through `fellowResidentId` only for primary Practice weekend shorthand. All other records use `attendingId`.
 
@@ -366,7 +366,26 @@ The response returns canonical `assignments` plus `effectiveCoverage`, which alr
 
 For writes, fetch `GET /api/state`, resolve the clinician in `state.attendings` (or the eligible fellow in `state.residents`), send `X-State-Version`, then refetch the ranged attending-coverage endpoint and verify both the stored row and the effective day/night result.
 
-Create daily Practice/Elective, Vascular, or Pediatrics coverage with the canonical endpoint:
+The admin API can add NRV surgeons to the attending roster before call is loaded. This creates a planner attending record, not a browser login:
+
+```bash
+curl -X POST "$BASE_URL/api/entities/attendings" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "X-State-Version: $STATE_VERSION" \
+  -H "content-type: application/json" \
+  -d '{
+    "id": "att_nrv_example",
+    "name": "Dr. Example",
+    "aliases": [],
+    "service": "NRV",
+    "coverageLines": ["NRV"],
+    "priority": 3
+  }'
+```
+
+Choose a unique stable `id`, check names and aliases for duplicates first, and use the returned state version for the next write. If that surgeon also needs a browser account, separately call `POST /api/users` with `accountType: "attending"` and this exact `attendingId`; do not create a login merely to assign call.
+
+Create daily Practice/Elective, Vascular, Pediatrics, or NRV coverage with the canonical endpoint:
 
 ```bash
 # Day coverage; omit a night row when this surgeon also covers night
@@ -402,7 +421,7 @@ curl -H "X-API-Key: $VIEWER_API_KEY" \
   "$BASE_URL/api/attending-coverage?startDate=2026-08-01&endDate=2026-08-03&line=Practice"
 ```
 
-For a fully specified weekend, send daily rows dated Friday, Saturday, and Sunday and use `shift: "day"` or `shift: "night"` on each. Do not collapse daily source data into `shift: "weekend"`. Always replace example IDs with IDs from the latest state response. After a successful write, use the returned state version for any subsequent mutation.
+For a fully specified weekend, send daily rows dated Friday, Saturday, and Sunday and use `shift: "day"` or `shift: "night"` on each. Do not collapse daily source data into `shift: "weekend"`. For NRV, setting Friday day and omitting the remaining weekend rows intentionally carries that surgeon through Monday morning; add an exact daily or night row for any one-off split. Always replace example IDs with IDs from the latest state response. After a successful write, use the returned state version for any subsequent mutation.
 
 Calendar `rounding` entries are service-specific and also support multiple same-day residents on Saturday-Sunday; set `coverageEntries[].serviceLine` when the rounder should count for a service other than the resident's dated rotation. To add another person, create a new `coverageEntries[]` item; to change an existing person, patch or delete that entry by `id`.
 
@@ -638,7 +657,25 @@ Create a distinct Vascular night assignment on any date, including a weekend dat
 }
 ```
 
-Send these shapes to `POST /api/attending-coverage`. Use `Pediatrics` identically. Omit the night row when effective day coverage should carry through the night.
+Send these shapes to `POST /api/attending-coverage`. Use `Pediatrics` and `NRV` identically. Omit the night row when effective day coverage should carry through the night.
+
+## Wiki Reference Files
+
+Use retained wiki files when a source is useful both as searchable knowledge and as an exact document residents may open or download. Examples include Dragon Dictation/mobile setup guides, official manuals, forms, handouts, checklists, and printable instructions. Do not upload PHI.
+
+The source record must exist before uploading its binary. Set its `contentHash` to the SHA-256 of the exact file and include optional `referenceFile` metadata through the normal wiki sync API. Then upload the bytes:
+
+```bash
+curl -X PUT "$BASE_URL/api/wiki/sources/$SOURCE_ID/file" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "Content-Type: application/pdf" \
+  -H "X-Wiki-Filename: Dragon%20Dictation%20Mobile%20Guide.pdf" \
+  --data-binary @./Dragon-Dictation-Mobile.pdf
+```
+
+The server rejects a binary whose SHA-256 does not match the source record. `GET /api/wiki/{slug}` resolves source records and includes `downloadUrl` for retained files. Follow that URL with the same `X-API-Key` or bearer authorization. Do not invent download URLs or expose a draft-only file to ordinary users; non-admin downloads are available only when a published article cites the source.
+
+When answering a user, summarize the article normally. If they request the guide/form/original, also return a concise Markdown link using the exact `downloadUrl` and `referenceFile.filename` supplied by the API.
 
 ## Agent Heuristics
 
@@ -648,9 +685,10 @@ Send these shapes to `POST /api/attending-coverage`. Use `Pediatrics` identicall
 - When a user says “Bower clinic,” resolve Bower from `attendings`, set `clinicSessions.attendingId`, and use the attending's service unless the user explicitly chose another service line.
 - When a user says “Bower procedure clinic,” create or patch a `clinicSessions` row with `isProcedure: true`; do not model that as an OR `case`.
 - When creating an attending browser account, resolve the exact `attendingId` from `state.attendings`; never create an account based only on an attending name. Give the user the returned/generated temporary password once, through an approved private channel, and do not store it in planner notes or agent logs.
-- When the user says Practice or Elective call, use canonical coverage line `Practice` (the API accepts `Elective` as an input alias). Keep it separate from ACS, Vascular, and Pediatrics.
+- When the user says Practice or Elective call, use canonical coverage line `Practice` (the API accepts `Elective` as an input alias). Keep it separate from ACS, Vascular, Pediatrics, and NRV.
+- When the user says NRV, New River Valley, or Christiansburg call, use coverage line `NRV` and resolve surgeons from `state.attendings`; do not merge them into ACS or the Roanoke practice call line.
 - When asked who covers an independent call line, read ranged `effectiveCoverage`; do not infer missing nights or weekend days yourself from raw assignment rows.
-- When importing daily Practice/Elective, Vascular, or Pediatrics call data, preserve separate dates and day/night exceptions. Use the Friday `weekend` shift only when the source itself supplies one undivided Friday 5 PM-Monday 6 AM assignment.
+- When importing daily Practice/Elective, Vascular, Pediatrics, or NRV call data, preserve separate dates and day/night exceptions. Use `weekend` only when the source itself supplies one undivided span; NRV shorthand starts Friday morning, while the other lines start Friday 5 PM.
 - When acting as an attending, keep writes to that account's own blocks and cases. Use the account's `attendingId`, not the selected service line or a name match, as the ownership check.
 - When a user names a date or says "next week", resolve the target Monday, match or create a `weeks` row, and keep that `weekId` through the whole operation.
 - If the user gives a weekday and date that conflict, ask before leaving persistent changes. For temporary smoke tests, create and delete test data in the same run.

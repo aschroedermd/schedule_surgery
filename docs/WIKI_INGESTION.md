@@ -133,7 +133,62 @@ The command:
 2. Creates a versioned source metadata record with a content hash.
 3. Performs a targeted PHI check before any model call.
 4. Uses the OpenAI Responses API with strict structured output when `OPENAI_API_KEY` is present.
-5. Creates linked `draft` articles with source references; it never publishes or overwrites an existing article.
+5. Decides whether the original should remain available as a downloadable resident reference.
+6. Creates linked `draft` articles with source references; it never publishes or overwrites an existing article.
+
+### Knowledge-only versus retained reference files
+
+Every source has an extracted-knowledge role. Some sources also have an artifact role:
+
+- **Knowledge-only:** the durable value is captured by concise, sourced wiki articles. The original remains in the ignored local authoring workspace but is not copied to the application server.
+- **Retained reference file:** residents may need the exact original—examples include Dragon/mobile setup instructions, official manuals, forms, handouts, checklists, printable patient-education material, or policies whose layout and verbatim text are operationally useful. The wiki still extracts and compresses the document's knowledge, and the protected original is also uploaded to the server.
+
+Agentic ingestion makes this decision and records `referenceFile` metadata when retention is useful. An editor can override the decision:
+
+```bash
+# Always keep a downloadable original.
+npm run wiki -- ingest ./incoming/dragon-dictation-mobile.pdf --reference-file
+
+# Extract knowledge only; do not create a server-downloadable copy.
+npm run wiki -- ingest ./incoming/internal-preference-notes.docx --knowledge-only
+```
+
+`--reference-file` and `--knowledge-only` are mutually exclusive. With `--no-ai`, use `--reference-file` explicitly when the original should be retained.
+
+A retained source has metadata like:
+
+```json
+{
+  "referenceFile": {
+    "filename": "Dragon Dictation Mobile Guide.pdf",
+    "mediaType": "application/pdf",
+    "byteSize": 482193
+  }
+}
+```
+
+During `push`/`sync`, the CLI first synchronizes article and source metadata, then uploads each retained original to `PUT /api/wiki/sources/{sourceId}/file`. The server verifies that the binary SHA-256 exactly matches the source `contentHash`; mismatched or missing files fail the push. Production stores these files under `/data/wiki-files` by default, inside the existing persistent application volume. Set `WIKI_FILE_STORE_PATH` to use a different protected directory.
+
+The assistant receives a `downloadUrl` when it reads an article backed by a retained file. If a user asks for the guide, form, handout, or original document, it may answer from the compressed article and also provide a Markdown download link. The web chat attaches the current session credential when the link is clicked. External agents should send their API key or bearer token when following the URL.
+
+Access remains private:
+
+- admins and the admin API key can upload, replace, delete, and download retained files;
+- ordinary authenticated users can download a file only when at least one **published** article references its source;
+- draft-only source files return `404` to ordinary users;
+- files are served as attachments with private/no-store caching; and
+- the same no-PHI rule applies to retained binaries. Never retain patient-specific notes, screenshots, exports, or other files containing identifiers.
+
+Low-level API upload example after the source metadata exists:
+
+```bash
+SOURCE_ID=src-dragon-dictation-mobile-0123456789
+curl -X PUT "$BASE_URL/api/wiki/sources/$SOURCE_ID/file" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "Content-Type: application/pdf" \
+  -H "X-Wiki-Filename: Dragon%20Dictation%20Mobile%20Guide.pdf" \
+  --data-binary @./incoming/dragon-dictation-mobile.pdf
+```
 
 Use `--no-ai` to stage a source and create an ingestion job for later processing. Set `WIKI_INGEST_MODEL` to override the balanced ingestion model.
 
@@ -176,7 +231,7 @@ npm run wiki -- push       # preview, validate, transactionally apply, then pull
 npm run wiki -- sync       # pull, validate, push, and pull the applied revision
 ```
 
-Synchronization uses a separate wiki revision and SHA-256 semantic hashes. If both the server and local copy changed from the same base, the pull stops and writes a conflict bundle in `.wiki-workspace/conflicts/`. No automatic last-writer-wins merge is performed.
+Synchronization uses a separate wiki revision and SHA-256 semantic hashes. Retained binary uploads are hash-verified against their source records and follow the transactional metadata sync. If both the server and local copy changed from the same base, the pull stops and writes a conflict bundle in `.wiki-workspace/conflicts/`. No automatic last-writer-wins merge is performed.
 
 For continuous backup, schedule `npm run wiki -- sync` from a secured machine, then commit and push the workspace's nested Git repository to a private remote. Keep the API key outside the Git history. A human should still review and publish clinical drafts; unattended ingestion should not auto-publish.
 
@@ -187,7 +242,7 @@ For continuous backup, schedule `npm run wiki -- sync` from a secured machine, t
   articles/                 Versioned Markdown knowledge
   sources/<source-id>/
     metadata.json           Versioned provenance record
-    original.*              Ignored raw source
+    original.*              Ignored raw source; uploaded only when referenceFile is set
     extracted.txt           Ignored extracted source text
   proposals/                Agent jobs and non-overwriting proposals
   conflicts/                Pull conflicts requiring manual resolution

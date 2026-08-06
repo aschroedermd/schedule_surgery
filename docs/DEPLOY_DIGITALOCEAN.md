@@ -104,6 +104,7 @@ APP_SECRET=<long random secret>
 ADMIN_PASSWORD=<initial admin login password>
 SEED_USER_PASSWORD=<optional temporary seeded-resident password>
 USER_STORE_PATH=/data/users.json
+WIKI_FILE_STORE_PATH=/data/wiki-files
 
 # Optional: only needed for scripts, MCP servers, or external tools.
 ADMIN_API_KEY=<long random admin API key>
@@ -129,7 +130,7 @@ ELEVENLABS_VOICE_IDS=kSvMZug5ZFM9sKGpLAei,dWAnId3mzfl4fTszwtOG,0rEo3eAjssGDUCXHY
 CHAT_QUOTA_TIME_ZONE=America/New_York
 ```
 
-`ADMIN_PASSWORD` is only used when the persistent browser-user store is first created. `SEED_USER_PASSWORD` is only used when resident-linked seeded users are created for the first time; users see the password-change screen on every login with that temporary password until they change it. The production compose file stores browser users and password hashes in the `planner-users` Docker volume at `/data/users.json`, so rebuilds do not reset changed passwords or privileges.
+`ADMIN_PASSWORD` is only used when the persistent browser-user store is first created. `SEED_USER_PASSWORD` is only used when resident-linked seeded users are created for the first time; users see the password-change screen on every login with that temporary password until they change it. The production compose file stores browser users and password hashes at `/data/users.json` and retained wiki reference files under `/data/wiki-files` in the persistent `planner-users` Docker volume, so rebuilds do not reset accounts, privileges, or downloadable wiki documents.
 
 If you do not have a domain yet, change the `Caddyfile` first line from `{$APP_DOMAIN}` to `:80`, set:
 

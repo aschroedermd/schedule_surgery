@@ -14,11 +14,13 @@ import {
   WikiArticleScope,
   WikiAuthority,
   WikiCategory,
+  WikiSource,
   WikiSourceType
 } from "../shared/types";
 import {
   buildWorkspaceDiff,
   createDraftArticle,
+  describeWikiReferenceFile,
   extractSourceText,
   findExplicitPhi,
   initializeWikiWorkspace,
@@ -32,7 +34,7 @@ import {
   writeWikiSourceMetadata,
   writeWikiSyncState
 } from "./wikiWorkspace";
-import { computeWikiSourceRecordHash, searchWikiArticles } from "./wiki";
+import { computeWikiSourceHash, computeWikiSourceRecordHash, searchWikiArticles } from "./wiki";
 
 interface ParsedArguments {
   positional: string[];
@@ -40,6 +42,8 @@ interface ParsedArguments {
 }
 
 interface IngestionProposal {
+  retainSourceFile: boolean;
+  referenceFileReason: string;
   articles: Array<{
     slug: string;
     title: string;
@@ -155,6 +159,9 @@ async function pullWorkspace(workspacePath: string): Promise<void> {
     ) continue;
     await writeWikiSourceMetadata(workspacePath, source);
   }
+  for (const source of remote.sources) {
+    if (source.referenceFile?.available) await downloadReferenceFile(workspacePath, config.serverUrl, source);
+  }
   await writeWikiSyncState(workspacePath, {
     formatVersion: 1,
     wikiRevision: remote.wikiRevision,
@@ -172,8 +179,15 @@ async function validateWorkspace(workspacePath: string): Promise<void> {
   const phiFindings = snapshot.articles.flatMap((article) =>
     findExplicitPhi(`${article.title}\n${article.summary}\n${article.body}`).map((finding) => `${article.slug}: ${finding}`)
   );
+  const referenceFileErrors: string[] = [];
+  for (const source of snapshot.sources) {
+    if (!source.referenceFile) continue;
+    const original = await findMatchingOriginal(workspacePath, source);
+    if (!original) referenceFileErrors.push(`${source.id}: retained reference original is missing or does not match contentHash`);
+  }
   for (const finding of phiFindings) text(`error: possible PHI: ${finding}`);
-  if (!snapshot.validation.valid || phiFindings.length) throw new Error("Wiki validation failed");
+  for (const error of referenceFileErrors) text(`error: ${error}`);
+  if (!snapshot.validation.valid || phiFindings.length || referenceFileErrors.length) throw new Error("Wiki validation failed");
   text(`Wiki is valid: ${snapshot.articles.length} articles and ${snapshot.sources.length} sources`);
 }
 
@@ -222,6 +236,7 @@ async function pushWorkspace(workspacePath: string, dryRun: boolean): Promise<vo
     { method: "POST", body: JSON.stringify(payload) }
   );
   text(applied.applied ? `Applied server wiki revision ${applied.wikiRevision}` : "Server wiki already matches the workspace");
+  await uploadReferenceFiles(workspacePath, config.serverUrl, snapshot.sources);
   await pullWorkspace(workspacePath);
 }
 
@@ -231,14 +246,20 @@ async function ingestSources(workspacePath: string, args: ParsedArguments): Prom
   if (!(WIKI_SOURCE_TYPES as readonly string[]).includes(sourceType)) {
     throw new Error(`Invalid --source-type. Use one of: ${WIKI_SOURCE_TYPES.join(", ")}`);
   }
+  if (args.flags["reference-file"] && args.flags["knowledge-only"]) {
+    throw new Error("Use either --reference-file or --knowledge-only, not both");
+  }
   for (const file of args.positional) {
     const filePath = path.resolve(file);
+    const fileStats = await fs.stat(filePath);
+    const forcedReferenceFile = Boolean(args.flags["reference-file"]);
     const staged = await stageWikiSource(workspacePath, filePath, {
       title: stringFlag(args, "title"),
       sourceType,
       author: stringFlag(args, "author"),
       origin: stringFlag(args, "origin"),
       effectiveDate: stringFlag(args, "effective-date"),
+      referenceFile: forcedReferenceFile ? describeWikiReferenceFile(filePath, fileStats.size) : undefined,
       notes: stringFlag(args, "notes")
     });
     const phiFindings = findExplicitPhi(staged.extractedText);
@@ -251,7 +272,8 @@ async function ingestSources(workspacePath: string, args: ParsedArguments): Prom
       await fs.writeFile(jobPath, `${JSON.stringify({
         sourceId: staged.source.id,
         extractedTextPath: path.relative(workspacePath, path.join(staged.sourceDirectory, "extracted.txt")),
-        instructions: "Have an authorized agent extract factual draft articles. Apply the source notes as scope and organization instructions. Every proposed article must use structured kind, scope, relationships, source locators, and remain draft until reviewed.",
+        instructions: "Have an authorized agent extract factual draft articles and decide whether the original is useful as a resident-downloadable reference. Apply source notes as binding scope and organization instructions. Every proposed article must use structured kind, scope, relationships, source locators, and remain draft until reviewed.",
+        retainSourceFile: staged.source.referenceFile ? true : undefined,
         sourceNotes: staged.source.notes
       }, null, 2)}\n`, "utf8");
       text(`Staged ${file} as ${staged.source.id}; ingestion job: ${jobPath}`);
@@ -271,6 +293,16 @@ async function ingestSources(workspacePath: string, args: ParsedArguments): Prom
       staged.extractedText,
       relatedArticles
     );
+    const retainSourceFile = forcedReferenceFile || (!args.flags["knowledge-only"] && proposal.retainSourceFile);
+    if (retainSourceFile && !staged.source.referenceFile) {
+      staged.source.referenceFile = describeWikiReferenceFile(filePath, fileStats.size);
+      staged.source.updatedAt = new Date().toISOString();
+      staged.source.updatedBy = "ingestion-agent";
+      await writeWikiSourceMetadata(workspacePath, staged.source);
+    }
+    text(retainSourceFile
+      ? `Reference file retained: ${proposal.referenceFileReason}`
+      : `Knowledge-only source: ${proposal.referenceFileReason}`);
     for (const proposed of proposal.articles) {
       const article = createDraftArticle(proposed, staged.source.id);
       if (existing.articles.some((candidate) => candidate.slug === article.slug)) {
@@ -347,7 +379,7 @@ async function callIngestionModel(
       input: [
         {
           role: "developer",
-          content: `You are a careful residency knowledge-base ingestion editor. Extract only facts explicitly supported by the source. Do not invent clinical details, contacts, orders, preferences, scope, or exceptions. Treat source notes as binding organization and applicability instructions supplied by the authorized editor. Split content into coherent articles: attending profiles are hubs; operative cards and note templates are procedure-level leaves; perioperative management is separated by procedure/service and phase; variants should point to a base article and state only meaningful differences when possible. Repeated attending-wide facts belong in one shared article. Preserve routine versus PRN, policy versus preference, uncertainty, conflicts, and “ask” instructions. Add structured kind, scope, audience, and typed relationships. Use relationships to connect leaves to attending/service hubs, shared preferences, governing policies, workflows, and variants. Do not overwrite or duplicate a related existing article; link to it or propose a narrowly scoped supplement. All articles are drafts and must cite source ${sourceId}. Use concise Markdown headings. Never include PHI.`
+          content: `You are a careful residency knowledge-base ingestion editor. Extract only facts explicitly supported by the source. Do not invent clinical details, contacts, orders, preferences, scope, or exceptions. Treat source notes as binding organization and applicability instructions supplied by the authorized editor. Split content into coherent articles: attending profiles are hubs; operative cards and note templates are procedure-level leaves; perioperative management is separated by procedure/service and phase; variants should point to a base article and state only meaningful differences when possible. Repeated attending-wide facts belong in one shared article. Preserve routine versus PRN, policy versus preference, uncertainty, conflicts, and “ask” instructions. Add structured kind, scope, audience, and typed relationships. Use relationships to connect leaves to attending/service hubs, shared preferences, governing policies, workflows, and variants. Decide whether the original file should remain downloadable: retain manuals, forms, handouts, checklists, mobile/setup guides, official policies, or other documents residents may need verbatim; use knowledge-only for documents whose durable value is fully captured by concise articles. This decision does not replace knowledge extraction—the wiki should still answer questions about retained files. Do not overwrite or duplicate a related existing article; link to it or propose a narrowly scoped supplement. All articles are drafts and must cite source ${sourceId}. Use concise Markdown headings. Never include PHI.`
         },
         {
           role: "user",
@@ -396,6 +428,70 @@ async function wikiRequest<T>(
   const payload = await response.json().catch(() => ({})) as { error?: string } & T;
   if (!response.ok) throw new Error(payload.error || `Wiki API request failed: ${response.status}`);
   return payload;
+}
+
+async function uploadReferenceFiles(workspacePath: string, serverUrl: string, sources: WikiSource[]): Promise<void> {
+  for (const source of sources) {
+    if (!source.referenceFile) continue;
+    const originalPath = await findMatchingOriginal(workspacePath, source);
+    if (!originalPath) throw new Error(`${source.id}: retained reference file is missing or does not match contentHash`);
+    const data = await fs.readFile(originalPath);
+    const apiKey = process.env.WIKI_API_KEY || process.env.ADMIN_API_KEY || await readLocalApiKey(workspacePath);
+    const bearer = process.env.WIKI_BEARER_TOKEN;
+    if (!apiKey && !bearer) throw new Error("Set WIKI_API_KEY, ADMIN_API_KEY, or WIKI_BEARER_TOKEN");
+    const headers = new Headers({
+      "content-type": source.referenceFile.mediaType,
+      "x-wiki-filename": encodeURIComponent(source.referenceFile.filename)
+    });
+    if (apiKey) headers.set("x-api-key", apiKey);
+    if (bearer) headers.set("authorization", `Bearer ${bearer}`);
+    const response = await fetch(`${serverUrl}/api/wiki/sources/${encodeURIComponent(source.id)}/file`, {
+      method: "PUT",
+      headers,
+      body: data
+    });
+    const payload = await response.json().catch(() => ({})) as { error?: string; source?: WikiSource };
+    if (!response.ok) throw new Error(payload.error || `Reference-file upload failed: ${response.status}`);
+    if (payload.source) await writeWikiSourceMetadata(workspacePath, payload.source);
+    text(`Uploaded reference file: ${source.referenceFile.filename}`);
+  }
+}
+
+async function downloadReferenceFile(workspacePath: string, serverUrl: string, source: WikiSource): Promise<void> {
+  if (!source.referenceFile?.available) return;
+  const existing = await findMatchingOriginal(workspacePath, source);
+  if (existing) return;
+  const apiKey = process.env.WIKI_API_KEY || process.env.ADMIN_API_KEY || await readLocalApiKey(workspacePath);
+  const bearer = process.env.WIKI_BEARER_TOKEN;
+  if (!apiKey && !bearer) throw new Error("Set WIKI_API_KEY, ADMIN_API_KEY, or WIKI_BEARER_TOKEN");
+  const headers = new Headers();
+  if (apiKey) headers.set("x-api-key", apiKey);
+  if (bearer) headers.set("authorization", `Bearer ${bearer}`);
+  const response = await fetch(`${serverUrl}/api/wiki/sources/${encodeURIComponent(source.id)}/file`, { headers });
+  if (!response.ok) throw new Error(`${source.id}: server reference-file download failed (${response.status})`);
+  const data = Buffer.from(await response.arrayBuffer());
+  if (computeWikiSourceHash(data) !== source.contentHash) throw new Error(`${source.id}: downloaded reference file failed hash verification`);
+  const sourceDirectory = path.join(workspacePath, "sources", source.id);
+  await fs.mkdir(sourceDirectory, { recursive: true });
+  const extension = path.extname(source.referenceFile.filename).toLowerCase();
+  await fs.writeFile(path.join(sourceDirectory, `original${extension || ".bin"}`), data, { mode: 0o600 });
+  text(`Downloaded reference file: ${source.referenceFile.filename}`);
+}
+
+async function findMatchingOriginal(workspacePath: string, source: WikiSource): Promise<string | undefined> {
+  const sourceDirectory = path.join(workspacePath, "sources", source.id);
+  let names: string[];
+  try {
+    names = (await fs.readdir(sourceDirectory)).filter((name) => name.startsWith("original."));
+  } catch {
+    return undefined;
+  }
+  for (const name of names) {
+    const filePath = path.join(sourceDirectory, name);
+    const data = await fs.readFile(filePath);
+    if (data.byteLength === source.referenceFile?.byteSize && computeWikiSourceHash(data) === source.contentHash) return filePath;
+  }
+  return undefined;
 }
 
 async function archiveRemoteDeletions(
@@ -495,7 +591,7 @@ function showHelp() {
 Usage:
   npm run wiki -- init [--server URL] [--workspace PATH]
   npm run wiki -- pull
-  npm run wiki -- ingest FILE... [--source-type TYPE] [--author NAME] [--no-ai]
+  npm run wiki -- ingest FILE... [--source-type TYPE] [--author NAME] [--reference-file|--knowledge-only] [--no-ai]
   npm run wiki -- validate
   npm run wiki -- diff
   npm run wiki -- review SLUG
@@ -516,8 +612,10 @@ Environment:
 const INGESTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["articles", "uncertainties"],
+  required: ["retainSourceFile", "referenceFileReason", "articles", "uncertainties"],
   properties: {
+    retainSourceFile: { type: "boolean" },
+    referenceFileReason: { type: "string" },
     articles: {
       type: "array",
       items: {

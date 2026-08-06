@@ -35,7 +35,11 @@ import {
 } from "../shared/coverage";
 import { addDays, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
-import { INDEPENDENT_CALL_LINES, resolveIndependentCallCoverage } from "../shared/attendingCoverage";
+import {
+  INDEPENDENT_CALL_LABELS,
+  INDEPENDENT_CALL_LINES,
+  resolveIndependentCallCoverage
+} from "../shared/attendingCoverage";
 import {
   CALL_POSITIONS,
   CallPosition,
@@ -842,7 +846,7 @@ function IndependentAttendingCallSummary({ state, date }: { state: PlannerState;
     const dayName = getCoverageClinicianLastName(state, day?.assignment);
     const nightName = getCoverageClinicianLastName(state, night?.assignment);
     return {
-      label: line === "Practice" ? "PR" : line === "Vascular" ? "V" : "PEDS",
+      label: INDEPENDENT_CALL_LABELS[line],
       name: dayName && nightName && dayName !== nightName
         ? `${dayName}/${nightName}`
         : nightName ?? dayName ?? "—"

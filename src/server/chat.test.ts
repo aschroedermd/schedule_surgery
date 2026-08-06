@@ -25,7 +25,9 @@ const openAISettings = {
   elevenLabsVoiceIds: ["kSvMZug5ZFM9sKGpLAei", "dWAnId3mzfl4fTszwtOG", "0rEo3eAjssGDUCXHYENf"] as [string, string, string]
 };
 
-async function captureSystemPrompt(question: string, state = createInitialState()): Promise<string> {
+const FAST_CONTEXT_NOW = new Date("2026-07-31T16:00:00Z");
+
+async function captureSystemPrompt(question: string, state = createInitialState(FAST_CONTEXT_NOW)): Promise<string> {
   let systemPrompt = "";
   const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as {
@@ -39,7 +41,7 @@ async function captureSystemPrompt(question: string, state = createInitialState(
   }) as typeof fetch;
   await answerScheduleQuestion(
     [{ role: "user", content: question }],
-    { state, user, serviceLine: "Davies", now: new Date("2026-07-31T16:00:00Z") },
+    { state, user, serviceLine: "Davies", now: FAST_CONTEXT_NOW },
     fetcher
   );
   return systemPrompt;
@@ -180,7 +182,7 @@ describe("schedule assistant", () => {
       });
     }) as typeof fetch;
 
-    const state = createInitialState();
+    const state = createInitialState(FAST_CONTEXT_NOW);
     state.attendings.push({
       id: "att_harnois",
       name: "Dr. Harnois",
@@ -419,7 +421,7 @@ describe("schedule assistant", () => {
   });
 
   it("injects vacations, off entries, and unavailable dates for absence questions", async () => {
-    const state = createInitialState();
+    const state = createInitialState(FAST_CONTEXT_NOW);
     state.residents[0].vacation = [
       { id: "vac_fast_context", startDate: "2026-08-10", endDate: "2026-08-14" }
     ];
@@ -451,7 +453,7 @@ describe("schedule assistant", () => {
   });
 
   it("injects linked-user, named-person, availability, and rotation summaries", async () => {
-    const state = createInitialState();
+    const state = createInitialState(FAST_CONTEXT_NOW);
     state.residents[0].username = user.username;
     state.assignments.push({
       id: "assignment_fast_person",
@@ -640,7 +642,7 @@ describe("schedule assistant", () => {
   });
 
   it("narrows fast context by month and hospital and includes pending trade requests", async () => {
-    const state = createInitialState();
+    const state = createInitialState(FAST_CONTEXT_NOW);
     state.coverageRequests.push({
       id: "request_fast_trade",
       requestType: "resident-trade",
@@ -741,6 +743,8 @@ describe("schedule assistant", () => {
     expect(prompt).toContain("progressively navigate it");
     expect(prompt).toContain("variant-of, shared-preference, governed-by");
     expect(prompt).toContain("Institutional policy constrains preferences");
+    expect(prompt).toContain("When the user asks for a guide, form, handout, original document, or downloadable file");
+    expect(prompt).toContain("include one concise Markdown link using the supplied URL and filename");
     expect(prompt).toContain('<WIKI_ARTICLE slug="hospital-fmh"');
     expect(prompt).toContain('<WIKI_ARTICLE slug="or-coverage"');
   });

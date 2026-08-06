@@ -146,13 +146,18 @@ DELETE /api/wiki/:slug
 GET    /api/wiki/export                        # admin only
 GET    /api/wiki/changes?after=<wikiRevision>  # admin only
 GET    /api/wiki/sources                       # admin only
+GET    /api/wiki/sources/:sourceId/file        # authenticated; published references only for non-admins
+PUT    /api/wiki/sources/:sourceId/file        # admin only; binary hash must match source
+DELETE /api/wiki/sources/:sourceId/file        # admin only
 POST   /api/wiki/sync/preview                  # admin only, no write
 POST   /api/wiki/sync/apply                    # admin only, transactional
 ```
 
 Articles have a stable `slug`, title, concise summary, body, category, aliases, tags, and outbound `links` containing other article slugs. They also carry `status`, `authority`, an article `revision`, a semantic `contentHash`, and `sourceRefs`. A single-article read returns resolved outbound links and backlinks so tools can traverse the knowledge graph without loading the entire wiki. Renaming a slug updates inbound links; deleting an article removes them.
 
-Use one of these authorities: `program-reference`, `institutional-policy`, `attending-preference`, `workflow`, or `educational-template`. Published clinical knowledge requires `owner`, `reviewedBy`, `reviewedAt`, and at least one source reference; `reviewDueAt` is recommended. Source records retain source type, author/origin, effective date, capture time, and a SHA-256 hash. Raw source documents stay in the private local workspace and are not returned by the server.
+Use one of these authorities: `program-reference`, `institutional-policy`, `attending-preference`, `workflow`, or `educational-template`. Published clinical knowledge requires `owner`, `reviewedBy`, `reviewedAt`, and at least one source reference; `reviewDueAt` is recommended. Source records retain source type, author/origin, effective date, capture time, and a SHA-256 hash. Sources selected as resident-useful reference artifacts also carry `referenceFile` metadata and a protected `downloadUrl`; other raw sources stay only in the private local workspace.
+
+Upload a retained file as the raw request body with `Content-Type` and a URI-encoded `X-Wiki-Filename`. Its SHA-256 must equal the source `contentHash`, and the body is limited to 25 MB. Admin API keys may manage files. Ordinary authenticated users may download one only if a published article references that source. Files referenced only by draft/review articles remain admin-only.
 
 Ordinary single-article writes use the planner's optional `X-State-Version` optimistic-concurrency header. Bulk sync uses the independent `wikiRevision`: export or pull the current revision, send it as `baseRevision` to preview/apply, and pull again if the server returns `409`. The apply endpoint validates the entire knowledge graph and commits all article/source changes as one state update.
 
@@ -214,9 +219,11 @@ Legacy `kind: "attending-call"` entries are migrated into the dedicated attendin
 
 ## Attending Coverage And QGenda
 
-`state.attendingCoverageAssignments` is the canonical attending call roster. Its coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, and `Pediatrics`; `Elective` is accepted by the API as an alias and is stored canonically as `Practice`. Roles are `primary` or `backup`; shifts are `day`, `night`, `24h`, or `weekend`. The EGS Night, Trauma Night, and SCC Night tasks are represented once as primary `ACS` night call.
+`state.attendingCoverageAssignments` is the canonical attending call roster. Its coverage lines are `EGS`, `Trauma`, `SCC`, `ACS`, `Practice`, `Vascular`, `Pediatrics`, and `NRV`; `Elective` is accepted by the API as an alias and is stored canonically as `Practice`. `NRV` represents the separate New River Valley/Christiansburg surgeon call line. Roles are `primary` or `backup`; shifts are `day`, `night`, `24h`, or `weekend`. The EGS Night, Trauma Night, and SCC Night tasks are represented once as primary `ACS` night call.
 
-Practice/Elective, Vascular, and Pediatrics are independent call lines. Every date—including Friday, Saturday, and Sunday—can have its own `day` and `night` assignment. Resolution follows these rules: an exact date/shift wins; an unassigned night inherits that date's effective day surgeon; and an unassigned Friday, Saturday, or Sunday inherits the nearest configured day in that same weekend. A Friday `weekend` assignment remains supported as a backward-compatible shorthand and runs Friday 5 PM through Monday 6 AM, but daily assignments override it. These lines are available in the expanded Call-day team, in muted calendar labels, and to the schedule assistant, but are excluded from rounding coverage.
+Practice/Elective, Vascular, Pediatrics, and NRV are independent call lines. Every date—including Friday, Saturday, and Sunday—can have its own `day` and `night` assignment. Resolution follows these rules: an exact date/shift wins; an unassigned night inherits that date's effective day surgeon; and an unassigned Friday, Saturday, or Sunday inherits the nearest configured day in that same weekend. A Friday `weekend` assignment remains supported as backward-compatible shorthand through Monday 6 AM; it begins Friday morning for NRV and Friday 5 PM for Practice, Vascular, and Pediatrics. Daily assignments override shorthand. These lines are available in the expanded Call-day team, in muted calendar labels, and to the schedule assistant, but are excluded from rounding coverage.
+
+An admin browser session or admin API key can add the Christiansburg surgeons through `POST /api/entities/attendings`. Supply a unique `id`, `name`, `service: "NRV"`, `coverageLines: ["NRV"]`, and `priority`. This roster record is sufficient for call assignment; create a separate attending browser account only when that surgeon needs to sign in.
 
 ```text
 GET    /api/attending-coverage?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&line=Practice
@@ -244,7 +251,7 @@ curl -X POST https://your-domain.example/api/attending-coverage \
   }'
 ```
 
-API-key entries receive `source: "api"`; entries created in the admin UI receive `source: "manual"`. Send exactly one of `attendingId` or `fellowResidentId`. The latter must reference a minimally invasive fellow and is accepted only for primary Practice `weekend` coverage on a Friday. A date/line/shift/role slot may only be assigned once. For Practice/Elective, Vascular, and Pediatrics, send a `day` and optional distinct `night` row for any date, including each weekend date. Omit `night` when it is the same as the effective day surgeon. The Friday `weekend` row is optional shorthand rather than a requirement. QGenda-owned entries cannot be patched or deleted locally because the next sync would replace them; make those changes in QGenda and sync again.
+API-key entries receive `source: "api"`; entries created in the admin UI receive `source: "manual"`. Send exactly one of `attendingId` or `fellowResidentId`. The latter must reference a minimally invasive fellow and is accepted only for primary Practice `weekend` coverage on a Friday. A date/line/shift/role slot may only be assigned once. For Practice/Elective, Vascular, Pediatrics, and NRV, send a `day` and optional distinct `night` row for any date, including each weekend date. Omit `night` when it is the same as the effective day surgeon. For NRV, a Friday day row naturally carries across missing weekend rows and through Monday morning; one-off daily or night rows override only the specified periods. The Friday `weekend` row is optional shorthand rather than a requirement. QGenda-owned entries cannot be patched or deleted locally because the next sync would replace them; make those changes in QGenda and sync again.
 
 The server reads the configured published QGenda schedule daily around 03:00 in `QGENDA_SYNC_TIME_ZONE` (default `America/New_York`). The supplied schedule's EGS Day, Trauma Day, SCC Day, EGS/Trauma/SCC Night, Backup Day, and Backup Night tasks are normalized into this collection. Each import is transactional: an invalid or inconsistent ACS-night triplet leaves the prior assignments unchanged and records the failed sync status in `state.qgendaSync`.
 

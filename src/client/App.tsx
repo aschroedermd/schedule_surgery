@@ -75,6 +75,7 @@ import {
 } from "../shared/coverage";
 import {
   INDEPENDENT_CALL_LINES,
+  INDEPENDENT_CALL_LABELS,
   isIndependentCallLine,
   resolveIndependentCallCoverage
 } from "../shared/attendingCoverage";
@@ -2369,7 +2370,7 @@ function AttendingCoveragePanel({
       </header>
 
       <p className="attending-coverage-help">
-        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice/elective, vascular, and pediatrics can be set separately for day and night on every date. Missing nights inherit day coverage, and missing Friday–Sunday entries carry over within that weekend.
+        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice/elective, vascular, pediatrics, and NRV can be set separately for day and night on every date. Missing nights inherit day coverage, and missing Friday–Sunday entries carry over within that weekend.
       </p>
 
       {isAdmin && (
@@ -2454,7 +2455,11 @@ function AttendingCoveragePanel({
               <option value="day">Day</option>
               <option value="night">Night</option>
               <option value="24h">24 hours</option>
-              {isIndependentCallLine(draft.line) && <option value="weekend">Weekend (Fri 5 PM–Mon 6 AM)</option>}
+              {isIndependentCallLine(draft.line) && (
+                <option value="weekend">
+                  Weekend ({draft.line === "NRV" ? "Fri morning–Mon 6 AM" : "Fri 5 PM–Mon 6 AM"})
+                </option>
+              )}
             </select>
           </label>
           <label>
@@ -2505,7 +2510,7 @@ function AttendingCoveragePanel({
                       </span>
                       <strong>{clinician ? getResidentLastName(clinician.name) : "Unknown"}</strong>
                       {assignment.fellowResidentId && <span className="qgenda-badge">MI fellow</span>}
-                      <span>{assignment.role === "backup" ? "backup · " : ""}{formatCoverageShift(assignment.shift)}</span>
+                      <span>{assignment.role === "backup" ? "backup · " : ""}{formatCoverageShift(assignment.shift, assignment.line)}</span>
                       {assignment.source === "qgenda" && <span className="qgenda-badge">QGenda</span>}
                       {assignment.note && <span className="coverage-note">{assignment.note}</span>}
                       {isAdmin && assignment.source !== "qgenda" && (
@@ -2548,9 +2553,9 @@ function compareAttendingCoverageForDisplay(a: AttendingCoverageAssignment, b: A
   );
 }
 
-function formatCoverageShift(shift: AttendingCoverageShift): string {
+function formatCoverageShift(shift: AttendingCoverageShift, line?: AttendingCoverageLine): string {
   if (shift === "24h") return "24 hours";
-  if (shift === "weekend") return "Fri 5 PM–Mon 6 AM";
+  if (shift === "weekend") return line === "NRV" ? "Fri morning–Mon 6 AM" : "Fri 5 PM–Mon 6 AM";
   return shift;
 }
 
@@ -2595,7 +2600,7 @@ function IndependentCallTeamDetails({ state, date }: { state: PlannerState; date
         const clinician = resolved?.assignment.attendingId
           ? state.attendings.find((candidate) => candidate.id === resolved.assignment.attendingId)
           : state.residents.find((candidate) => candidate.id === resolved?.assignment.fellowResidentId);
-        const label = line === "Practice" ? "PR" : line === "Vascular" ? "V" : "PEDS";
+        const label = INDEPENDENT_CALL_LABELS[line];
         return (
           <div key={line} className="call-duty-line call-independent-duty">
             <span className="call-duty-label">{label}</span>

@@ -10,6 +10,7 @@ import { MemoryStateStore, normalizePlannerState } from "./store";
 import { addDays, getCurrentMonday } from "../shared/date";
 import { ServicePrivilege } from "../shared/types";
 import { MemoryChatSettingsStore } from "./chatSettingsStore";
+import { MemoryWikiFileStore } from "./wikiFileStore";
 
 const TEST_SEED_USER_PASSWORD = "resident-dev-password";
 
@@ -413,7 +414,8 @@ describe("planner API", () => {
   });
 
   it("previews and transactionally syncs sourced clinical wiki knowledge", async () => {
-    const app = createApp(new MemoryStateStore(createInitialState()));
+    const wikiFileStore = new MemoryWikiFileStore();
+    const app = createApp(new MemoryStateStore(createInitialState()), { wikiFileStore });
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
     const viewerToken = await loginOnApp(app, "cblue");
     const exported = await request(app)
@@ -423,6 +425,7 @@ describe("planner API", () => {
     expect(exported.body).toEqual(expect.objectContaining({ formatVersion: 1, wikiRevision: 1 }));
     expect(exported.body.articles[0]).toEqual(expect.objectContaining({ status: "published", revision: 1 }));
 
+    const referenceFile = Buffer.from("%PDF-1.7\nDragon Dictation Mobile Guide\n%%EOF", "utf8");
     const source = {
       id: "src-nussbaum-review",
       title: "Dr. Nussbaum preference review",
@@ -430,7 +433,7 @@ describe("planner API", () => {
       author: "Dr. Nussbaum",
       capturedAt: "2026-08-01T12:00:00.000Z",
       effectiveDate: "2026-08-01",
-      contentHash: "a".repeat(64)
+      contentHash: crypto.createHash("sha256").update(referenceFile).digest("hex")
     };
     const article = {
       slug: "attending-nussbaum-laparoscopic-cholecystectomy",
@@ -486,6 +489,87 @@ describe("planner API", () => {
       .set("authorization", `Bearer ${viewerToken}`)
       .expect(200)
       .expect((response) => expect(response.body.article.sourceRefs[0].sourceId).toBe(source.id));
+
+    await request(app)
+      .put(`/api/wiki/sources/${source.id}/file`)
+      .set("authorization", `Bearer ${viewerToken}`)
+      .set("content-type", "application/pdf")
+      .set("x-wiki-filename", encodeURIComponent("Dragon Dictation Mobile Guide.pdf"))
+      .send(referenceFile)
+      .expect(403);
+    await request(app)
+      .put(`/api/wiki/sources/${source.id}/file`)
+      .set("x-api-key", "test-admin-api-key")
+      .set("content-type", "application/pdf")
+      .set("x-wiki-filename", encodeURIComponent("Dragon Dictation Mobile Guide.pdf"))
+      .send(Buffer.from("wrong file"))
+      .expect(400);
+    await request(app)
+      .put(`/api/wiki/sources/${source.id}/file`)
+      .set("x-api-key", "test-admin-api-key")
+      .set("content-type", "application/pdf")
+      .set("x-wiki-filename", encodeURIComponent("Dragon Dictation Mobile Guide.pdf"))
+      .send(referenceFile)
+      .expect(201)
+      .expect((response) => expect(response.body.source).toEqual(expect.objectContaining({
+        referenceFile: expect.objectContaining({ filename: "Dragon Dictation Mobile Guide.pdf", mediaType: "application/pdf" }),
+        downloadUrl: `/api/wiki/sources/${source.id}/file`
+      })));
+
+    await request(app)
+      .get(`/api/wiki/${article.slug}`)
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(200)
+      .expect((response) => expect(response.body.sources[0].source.downloadUrl).toBe(`/api/wiki/sources/${source.id}/file`));
+    const downloaded = await request(app)
+      .get(`/api/wiki/sources/${source.id}/file?token=${encodeURIComponent(viewerToken)}`)
+      .expect(200);
+    expect(downloaded.headers["content-type"]).toContain("application/pdf");
+    expect(downloaded.headers["content-disposition"]).toContain("Dragon Dictation Mobile Guide.pdf");
+    expect(Buffer.compare(downloaded.body as Buffer, referenceFile)).toBe(0);
+  });
+
+  it("keeps retained files private while their only article is a draft", async () => {
+    const data = Buffer.from("draft-only reference", "utf8");
+    const sourceId = "src-draft-only-reference";
+    const base = createInitialState();
+    const state = normalizePlannerState({
+      ...base,
+      wikiSources: [{
+        id: sourceId,
+        title: "Draft-only guide",
+        sourceType: "document",
+        capturedAt: "2026-08-04T12:00:00.000Z",
+        contentHash: crypto.createHash("sha256").update(data).digest("hex"),
+        referenceFile: { filename: "Draft Guide.txt", mediaType: "text/plain", byteSize: data.byteLength, available: true },
+        createdAt: "2026-08-04T12:00:00.000Z",
+        updatedAt: "2026-08-04T12:00:00.000Z"
+      }],
+      wikiArticles: [{
+        ...base.wikiArticles[0],
+        id: "wiki_draft_only_guide",
+        slug: "draft-only-guide",
+        title: "Draft-only Guide",
+        status: "draft",
+        sourceRefs: [{ sourceId }],
+        contentHash: ""
+      }]
+    });
+    const wikiFileStore = new MemoryWikiFileStore();
+    await wikiFileStore.put(sourceId, data);
+    const app = createApp(new MemoryStateStore(state), { wikiFileStore });
+    const viewerToken = await loginOnApp(app, "cblue");
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+
+    await request(app)
+      .get(`/api/wiki/sources/${sourceId}/file`)
+      .set("authorization", `Bearer ${viewerToken}`)
+      .expect(404);
+    await request(app)
+      .get(`/api/wiki/sources/${sourceId}/file`)
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200)
+      .expect(data.toString("utf8"));
   });
 
   it("lets the admin API key reset passwords and manage chat models", async () => {
@@ -1434,6 +1518,8 @@ describe("planner API", () => {
     expect(response.body.paths["/api/wiki/export"].get).toBeDefined();
     expect(response.body.paths["/api/wiki/sync/preview"].post).toBeDefined();
     expect(response.body.paths["/api/wiki/sync/apply"].post).toBeDefined();
+    expect(response.body.paths["/api/wiki/sources/{sourceId}/file"].get).toBeDefined();
+    expect(response.body.paths["/api/wiki/sources/{sourceId}/file"].put).toBeDefined();
   });
 
   it("routes request-privileged calendar edits through editor-approved requests", async () => {
@@ -1905,7 +1991,7 @@ describe("planner API", () => {
       .expect(400);
   });
 
-  it("stores ACS plus independent Practice, Vascular, and Pediatrics call coverage", async () => {
+  it("stores ACS plus independent Practice, Vascular, Pediatrics, and NRV call coverage", async () => {
     const { app, token } = await loginAs("admin");
 
     const egs = await request(app)
@@ -1968,6 +2054,32 @@ describe("planner API", () => {
       .send({ date: "2026-07-12", line: "Elective", shift: "day", role: "primary", attendingId: "att_chen", note: "" })
       .expect(201);
 
+    const nrvAttending = await request(app)
+      .post("/api/entities/attendings")
+      .set("x-api-key", "test-admin-api-key")
+      .send({
+        id: "att_nrv_example",
+        name: "Dr. NRV Example",
+        aliases: ["NRV Example"],
+        service: "NRV",
+        coverageLines: ["NRV"],
+        priority: 3
+      })
+      .expect(201);
+    expect(nrvAttending.body.attendings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "att_nrv_example", service: "NRV", coverageLines: ["NRV"] })
+    ]));
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-10", line: "NRV", shift: "day", role: "primary", attendingId: "att_nrv_example", note: "" })
+      .expect(201);
+    await request(app)
+      .post("/api/attending-coverage")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ date: "2026-07-11", line: "NRV", shift: "night", role: "primary", attendingId: "att_patel", note: "" })
+      .expect(201);
+
     const listed = await request(app)
       .get("/api/attending-coverage?startDate=2026-07-10&endDate=2026-07-13")
       .set("authorization", `Bearer ${token}`)
@@ -1975,7 +2087,8 @@ describe("planner API", () => {
     expect(listed.body.assignments).toEqual(expect.arrayContaining([
       expect.objectContaining({ line: "Practice", shift: "weekend" }),
       expect.objectContaining({ line: "Vascular", shift: "weekend" }),
-      expect.objectContaining({ line: "Pediatrics", shift: "weekend" })
+      expect.objectContaining({ line: "Pediatrics", shift: "weekend" }),
+      expect.objectContaining({ line: "NRV", date: "2026-07-10", shift: "day", attendingId: "att_nrv_example" })
     ]));
     expect(listed.body.effectiveCoverage).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1993,6 +2106,17 @@ describe("planner API", () => {
         date: "2026-07-13",
         line: "Practice",
         earlyMorningUntil6am: expect.objectContaining({ attendingId: "att_chen", sourceShift: "day", inheritedFromDay: true })
+      }),
+      expect.objectContaining({
+        date: "2026-07-11",
+        line: "NRV",
+        day: expect.objectContaining({ attendingId: "att_nrv_example", inheritedFromWeekend: true }),
+        night: expect.objectContaining({ attendingId: "att_patel", sourceShift: "night" })
+      }),
+      expect.objectContaining({
+        date: "2026-07-13",
+        line: "NRV",
+        earlyMorningUntil6am: expect.objectContaining({ attendingId: "att_nrv_example" })
       })
     ]));
 

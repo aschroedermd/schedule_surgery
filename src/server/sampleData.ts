@@ -1,12 +1,12 @@
-import { addDays, getCurrentMonday } from "../shared/date";
+import { addDays, formatDate, getMondayForDate } from "../shared/date";
 import { CoverageEntry, DirectoryContact, PlannerState } from "../shared/types";
 import { createRotationResidents } from "./residentRotationSeed";
 import { createSeedWikiArticles } from "./wiki";
 
 const seedCreatedAt = "2026-06-27T14:36:21.000Z";
 
-export function createInitialState(): PlannerState {
-  const monday = getCurrentMonday();
+export function createInitialState(today = new Date()): PlannerState {
+  const monday = getMondayForDate(formatDate(today));
 
   return {
     version: 1,

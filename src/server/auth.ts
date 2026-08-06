@@ -113,7 +113,7 @@ export function authenticate(userStore: UserStore) {
       const header = req.header("authorization");
       const headerToken = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
       const queryToken =
-        (req.path === "/api/events" || req.path.endsWith("/calendar.ics")) && typeof req.query.token === "string"
+        (req.path === "/api/events" || req.path.endsWith("/calendar.ics") || /^\/api\/wiki\/sources\/[a-z0-9_-]+\/file$/.test(req.path)) && typeof req.query.token === "string"
           ? req.query.token
           : undefined;
       const token = headerToken ?? queryToken;
