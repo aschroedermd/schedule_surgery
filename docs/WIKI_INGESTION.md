@@ -1,6 +1,6 @@
 # Private Wiki Ingestion and Synchronization
 
-The recommended design is a local, private Git authoring workspace synchronized with the web app through the admin API. The server remains the runtime source for the chatbot; the local workspace is the safer place to ingest files, review agent-generated drafts, keep provenance, and maintain an independent history.
+The recommended design is a standalone private Git/Obsidian vault that is the canonical knowledge source. The server keeps a synchronized runtime copy for the chatbot and web app; it is not the durable authoring authority. The vault is the safe place to ingest files, review agent-generated drafts, preserve provenance, and resolve changes from every editor or integration.
 
 Raw documents never need to be uploaded to the web app. The server receives reviewed Markdown, source metadata, and SHA-256 hashes. Raw and extracted source files remain in ignored local directories.
 
@@ -101,9 +101,20 @@ Source `--notes` are binding organization and applicability instructions for age
 
 ## First-time setup
 
+Create an empty private Git repository for the knowledge vault, separate from the scheduling application repository. Then initialize a vault anywhere on an authorized computer:
+
 ```bash
-npm run wiki -- init --server https://your-domain.example
+npm run wiki -- init \
+  --workspace ../residency-knowledge \
+  --server https://your-domain.example \
+  --remote git@github.com:your-private-org/residency-knowledge.git
+cd ../residency-knowledge
+git add .
+git commit -m "Initialize residency knowledge vault"
+git push -u origin main
 ```
+
+Open `../residency-knowledge` directly as an Obsidian vault. Shared Obsidian settings use standard Markdown links, route new notes to `inbox/`, and use `templates/` as the template directory. Per-user Obsidian workspace layouts are ignored by Git.
 
 Set credentials in the shell or put only the admin API key in the ignored `.wiki-workspace/.wiki-api-key` file:
 
@@ -113,7 +124,13 @@ export OPENAI_API_KEY="your-openai-api-key"
 npm run wiki -- pull
 ```
 
-The workspace defaults to `.wiki-workspace`. Set `WIKI_WORKSPACE_PATH` to keep it elsewhere. It is its own Git repository, so it can be backed up to a private remote with access restricted to authorized program personnel.
+The workspace defaults to `.wiki-workspace`, but a separate sibling directory such as `../residency-knowledge` is recommended. Set `WIKI_WORKSPACE_PATH` or pass `--workspace` on each command. Restrict the private remote to authorized program personnel.
+
+Existing workspaces remain readable. Run this once to rewrite JSON-style frontmatter as readable Obsidian-compatible YAML:
+
+```bash
+npm run wiki -- format --workspace ../residency-knowledge
+```
 
 ## Ingest a source
 
@@ -222,7 +239,18 @@ npm run wiki -- push
 
 Published clinical preferences, policies, and educational templates require a source, owner, reviewer, and review date. A future review date is strongly recommended. Draft and review articles are hidden from ordinary users and from the chatbot.
 
-## Synchronization and backup
+## Canonical deployment and synchronization
+
+Once the standalone Git vault has been reviewed and merged, deploy its complete contents to the web application:
+
+```bash
+npm run wiki -- deploy --workspace ../residency-knowledge --dry-run
+npm run wiki -- deploy --workspace ../residency-knowledge --confirm-authoritative
+```
+
+`deploy` is intentionally one-way: the checked-out vault is authoritative. It validates the complete knowledge base, previews the exact create/update/delete set against the current server revision, rejects stale revisions, applies the change transactionally, and uploads retained reference files. Use `--dry-run` first; live deployment requires the explicit `--confirm-authoritative` guard.
+
+The earlier two-way commands remain available during migration:
 
 ```bash
 npm run wiki -- pull       # merge server changes into the local workspace
@@ -233,12 +261,14 @@ npm run wiki -- sync       # pull, validate, push, and pull the applied revision
 
 Synchronization uses a separate wiki revision and SHA-256 semantic hashes. Retained binary uploads are hash-verified against their source records and follow the transactional metadata sync. If both the server and local copy changed from the same base, the pull stops and writes a conflict bundle in `.wiki-workspace/conflicts/`. No automatic last-writer-wins merge is performed.
 
-For continuous backup, schedule `npm run wiki -- sync` from a secured machine, then commit and push the workspace's nested Git repository to a private remote. Keep the API key outside the Git history. A human should still review and publish clinical drafts; unattended ingestion should not auto-publish.
+For the canonical workflow, make changes in a branch, run validation, and merge through a reviewed pull request. Protect `main` and require the validation check before merge. A secured deployment runner can run `wiki deploy` after each merge; until that runner is added, run it manually from an authorized checkout. Keep the API key outside Git history. A human must still review and publish clinical drafts; unattended ingestion must not auto-publish.
 
 ## Workspace layout
 
 ```text
-.wiki-workspace/
+residency-knowledge/
+  Home.md                  Obsidian and portable Markdown entry point
+  .obsidian/               Safe shared vault settings; personal layouts ignored
   articles/                 Versioned Markdown knowledge
   sources/<source-id>/
     metadata.json           Versioned provenance record

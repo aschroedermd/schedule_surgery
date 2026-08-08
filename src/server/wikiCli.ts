@@ -19,10 +19,13 @@ import {
 } from "../shared/types";
 import {
   buildWorkspaceDiff,
+  buildCanonicalWikiSyncPayload,
+  configureWikiGitRemote,
   createDraftArticle,
   describeWikiReferenceFile,
   extractSourceText,
   findExplicitPhi,
+  formatWikiWorkspace,
   initializeWikiWorkspace,
   readWikiSyncState,
   readWikiWorkspace,
@@ -74,15 +77,26 @@ async function main() {
   }
   if (command === "init") {
     await initializeWikiWorkspace(workspacePath, stringFlag(args, "server") || "http://localhost:3001");
+    const remote = stringFlag(args, "remote");
+    if (remote) await configureWikiGitRemote(workspacePath, remote);
     text(`Initialized private wiki workspace at ${workspacePath}`);
+    if (remote) text(`Configured private wiki Git origin: ${remote}`);
     return;
   }
 
   await initializeWikiWorkspace(workspacePath);
   if (command === "pull") return pullWorkspace(workspacePath);
   if (command === "validate") return validateWorkspace(workspacePath);
+  if (command === "format") return formatWorkspace(workspacePath);
   if (command === "diff" || command === "status") return showDiff(workspacePath);
   if (command === "push") return pushWorkspace(workspacePath, Boolean(args.flags["dry-run"]));
+  if (command === "deploy") {
+    return deployCanonicalWorkspace(
+      workspacePath,
+      Boolean(args.flags["dry-run"]),
+      Boolean(args.flags["confirm-authoritative"])
+    );
+  }
   if (command === "sync") {
     await pullWorkspace(workspacePath);
     await validateWorkspace(workspacePath);
@@ -200,6 +214,11 @@ async function showDiff(workspacePath: string): Promise<void> {
   printDiffGroup("Sources", diff.sources.create.map((item) => item.id), diff.sources.update.map((item) => item.id), diff.sources.delete);
 }
 
+async function formatWorkspace(workspacePath: string): Promise<void> {
+  const count = await formatWikiWorkspace(workspacePath);
+  text(`Formatted ${count} wiki articles as Obsidian-compatible YAML Markdown`);
+}
+
 async function pushWorkspace(workspacePath: string, dryRun: boolean): Promise<void> {
   await assertNoConflictFiles(workspacePath);
   const config = await readWikiWorkspaceConfig(workspacePath);
@@ -238,6 +257,50 @@ async function pushWorkspace(workspacePath: string, dryRun: boolean): Promise<vo
   text(applied.applied ? `Applied server wiki revision ${applied.wikiRevision}` : "Server wiki already matches the workspace");
   await uploadReferenceFiles(workspacePath, config.serverUrl, snapshot.sources);
   await pullWorkspace(workspacePath);
+}
+
+async function deployCanonicalWorkspace(
+  workspacePath: string,
+  dryRun: boolean,
+  confirmAuthoritative: boolean
+): Promise<void> {
+  await assertNoConflictFiles(workspacePath);
+  await validateWorkspace(workspacePath);
+  const config = await readWikiWorkspaceConfig(workspacePath);
+  const snapshot = await readWikiWorkspace(workspacePath);
+  const remote = await wikiRequest<WikiExportBundle>(workspacePath, config.serverUrl, "/api/wiki/export");
+  const payload = buildCanonicalWikiSyncPayload(snapshot, remote);
+  const preview = await wikiRequest<{
+    validation: { valid: boolean; errors: string[]; warnings: string[] };
+    summary: { created: number; updated: number; deleted: number };
+  }>(workspacePath, config.serverUrl, "/api/wiki/sync/preview", { method: "POST", body: JSON.stringify(payload) });
+  for (const warning of preview.validation.warnings) text(`warning: ${warning}`);
+  if (!preview.validation.valid) throw new Error(preview.validation.errors.join("; "));
+  text(`Canonical preview: ${preview.summary.created} create, ${preview.summary.updated} update, ${preview.summary.deleted} delete`);
+  if (dryRun) {
+    text("Dry run only; the canonical vault was not deployed");
+    return;
+  }
+  if (!confirmAuthoritative) {
+    throw new Error("Canonical deployment requires --confirm-authoritative after reviewing a dry run");
+  }
+  const applied = await wikiRequest<{ applied: boolean; wikiRevision: number }>(
+    workspacePath,
+    config.serverUrl,
+    "/api/wiki/sync/apply",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+  await uploadReferenceFiles(workspacePath, config.serverUrl, snapshot.sources, false);
+  await writeWikiSyncState(workspacePath, {
+    formatVersion: 1,
+    wikiRevision: applied.wikiRevision,
+    pulledAt: new Date().toISOString(),
+    articleHashes: Object.fromEntries(snapshot.articles.map((article) => [article.slug, article.contentHash])),
+    sourceHashes: Object.fromEntries(snapshot.sources.map((source) => [source.id, computeWikiSourceRecordHash(source)]))
+  });
+  text(applied.applied
+    ? `Deployed canonical vault as server wiki revision ${applied.wikiRevision}`
+    : `Server already matches canonical vault at wiki revision ${applied.wikiRevision}`);
 }
 
 async function ingestSources(workspacePath: string, args: ParsedArguments): Promise<void> {
@@ -430,7 +493,12 @@ async function wikiRequest<T>(
   return payload;
 }
 
-async function uploadReferenceFiles(workspacePath: string, serverUrl: string, sources: WikiSource[]): Promise<void> {
+async function uploadReferenceFiles(
+  workspacePath: string,
+  serverUrl: string,
+  sources: WikiSource[],
+  persistServerMetadata = true
+): Promise<void> {
   for (const source of sources) {
     if (!source.referenceFile) continue;
     const originalPath = await findMatchingOriginal(workspacePath, source);
@@ -452,7 +520,7 @@ async function uploadReferenceFiles(workspacePath: string, serverUrl: string, so
     });
     const payload = await response.json().catch(() => ({})) as { error?: string; source?: WikiSource };
     if (!response.ok) throw new Error(payload.error || `Reference-file upload failed: ${response.status}`);
-    if (payload.source) await writeWikiSourceMetadata(workspacePath, payload.source);
+    if (persistServerMetadata && payload.source) await writeWikiSourceMetadata(workspacePath, payload.source);
     text(`Uploaded reference file: ${source.referenceFile.filename}`);
   }
 }
@@ -589,14 +657,16 @@ function showHelp() {
   text(`Private residency wiki workflow
 
 Usage:
-  npm run wiki -- init [--server URL] [--workspace PATH]
+  npm run wiki -- init [--server URL] [--workspace PATH] [--remote GIT_URL]
   npm run wiki -- pull
   npm run wiki -- ingest FILE... [--source-type TYPE] [--author NAME] [--reference-file|--knowledge-only] [--no-ai]
   npm run wiki -- validate
+  npm run wiki -- format
   npm run wiki -- diff
   npm run wiki -- review SLUG
   npm run wiki -- publish SLUG --reviewer NAME --owner NAME [--review-due YYYY-MM-DD]
   npm run wiki -- push [--dry-run]
+  npm run wiki -- deploy [--dry-run|--confirm-authoritative]
   npm run wiki -- sync [--dry-run]
 
 Environment:
@@ -606,6 +676,11 @@ Environment:
   WIKI_BEARER_TOKEN     Optional admin browser token instead of an API key
   OPENAI_API_KEY        Enables agentic ingestion
   WIKI_INGEST_MODEL     Optional ingestion model override
+
+Commands:
+  format                 Rewrite legacy JSON frontmatter as readable YAML
+  push                   Two-way authoring sync using the last pulled revision
+  deploy                 Make this vault authoritative; live deployment requires --confirm-authoritative
 `);
 }
 

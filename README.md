@@ -71,14 +71,15 @@ The app is designed for no-PHI scheduling metadata only. Do not enter patient na
 ## Wiki Authoring
 
 ```bash
-npm run wiki -- init --server https://your-domain.example
-npm run wiki -- pull
-npm run wiki -- ingest ./path/to/reviewed-source.docx --source-type direct-review --author "Reviewer name"
-npm run wiki -- validate
-npm run wiki -- diff
+npm run wiki -- init --workspace ../residency-knowledge --server https://your-domain.example --remote YOUR_PRIVATE_GIT_URL
+npm run wiki -- pull --workspace ../residency-knowledge
+npm run wiki -- ingest ./path/to/reviewed-source.docx --workspace ../residency-knowledge --source-type direct-review --author "Reviewer name"
+npm run wiki -- validate --workspace ../residency-knowledge
+npm run wiki -- diff --workspace ../residency-knowledge
+npm run wiki -- deploy --workspace ../residency-knowledge --dry-run
 ```
 
-Agent-generated material remains draft until explicitly reviewed and published. See [docs/WIKI_INGESTION.md](docs/WIKI_INGESTION.md) for the complete ingestion, provenance, review, synchronization, and private-backup workflow.
+The separate private Git workspace opens directly as an Obsidian vault and is the canonical knowledge source. `wiki deploy` publishes its validated state to the web app; the server retains a searchable runtime copy for the assistant. Agent-generated material remains draft until explicitly reviewed and published. See [docs/WIKI_INGESTION.md](docs/WIKI_INGESTION.md) for the complete ingestion, provenance, review, deployment, and private-backup workflow.
 
 ## Deployment And API
 

@@ -11,9 +11,12 @@ import {
 } from "./wiki";
 import {
   buildWorkspaceDiff,
+  buildCanonicalWikiSyncPayload,
+  configureWikiGitRemote,
   createDraftArticle,
   describeWikiReferenceFile,
   findExplicitPhi,
+  formatWikiWorkspace,
   initializeWikiWorkspace,
   readWikiArticleFile,
   readWikiWorkspace,
@@ -41,6 +44,10 @@ describe("private wiki workspace", () => {
       "service-guide.md",
       "workflow.md"
     ]));
+    expect(JSON.parse(await fs.readFile(path.join(workspace, ".obsidian/app.json"), "utf8"))).toEqual(
+      expect.objectContaining({ useMarkdownLinks: true, newFileFolderPath: "inbox" })
+    );
+    expect(await fs.readFile(path.join(workspace, "Home.md"), "utf8")).toContain("portable home page");
     const sourceFile = path.join(workspace, "reviewed-preferences.txt");
     await fs.writeFile(sourceFile, "Reviewed preference: use the documented port layout.", "utf8");
     const sourceByteSize = (await fs.stat(sourceFile)).size;
@@ -79,6 +86,10 @@ describe("private wiki workspace", () => {
       tags: ["operative-preference"]
     }, staged.source.id);
     const articlePath = await writeWikiArticleFile(workspace, article);
+    const writtenArticle = await fs.readFile(articlePath, "utf8");
+    expect(writtenArticle).toMatch(/^---\nid: wiki_attending_example_procedure\nslug: attending-example-procedure\n/);
+    expect(writtenArticle).toContain("relationships:\n  - type: belongs-to");
+    expect(writtenArticle).not.toContain('\n{\n  "id"');
     const roundTripped = await readWikiArticleFile(articlePath);
     expect(roundTripped).toEqual(expect.objectContaining({
       slug: article.slug,
@@ -113,12 +124,113 @@ describe("private wiki workspace", () => {
     expect(diff.sources.update.map((item) => item.id)).toEqual([staged.source.id]);
   });
 
+  it("reads legacy JSON frontmatter and formats it as readable YAML", async () => {
+    const workspace = await makeWorkspace(temporaryDirectories);
+    const legacyPath = path.join(workspace, "articles", "program", "legacy-page.md");
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+    await fs.writeFile(legacyPath, `---
+{
+  "slug": "legacy-page",
+  "title": "Legacy Page",
+  "summary": "A legacy JSON-frontmatter article.",
+  "category": "program",
+  "status": "draft",
+  "authority": "program-reference",
+  "aliases": [],
+  "tags": ["legacy"],
+  "links": [],
+  "sourceRefs": []
+}
+---
+
+Legacy body.
+`, "utf8");
+
+    expect((await readWikiArticleFile(legacyPath)).title).toBe("Legacy Page");
+    expect(await formatWikiWorkspace(workspace)).toBe(1);
+    const formatted = await fs.readFile(legacyPath, "utf8");
+    expect(formatted).toMatch(/^---\nid: wiki_legacy_page\nslug: legacy-page\n/);
+    expect(formatted).toContain("tags:\n  - legacy");
+    expect(formatted).toContain("\n---\n\nLegacy body.\n");
+    const formattedTemplate = await fs.readFile(path.join(workspace, "templates/attending-profile.md"), "utf8");
+    expect(formattedTemplate).toMatch(/^---\nslug: attending-example\n/);
+    expect(formattedTemplate).not.toContain('\n{\n  "slug"');
+  });
+
+  it("configures a private Git origin without silently replacing another remote", async () => {
+    const workspace = await makeWorkspace(temporaryDirectories);
+    await configureWikiGitRemote(workspace, "git@example.test:residency/knowledge.git");
+    expect(await fs.readFile(path.join(workspace, ".git/config"), "utf8")).toContain(
+      "url = git@example.test:residency/knowledge.git"
+    );
+    await configureWikiGitRemote(workspace, "git@example.test:residency/knowledge.git");
+    await expect(configureWikiGitRemote(workspace, "git@example.test:other/repository.git")).rejects.toThrow(
+      "already has a different origin"
+    );
+  });
+
   it("flags explicit labeled patient identifiers before model ingestion", () => {
     expect(findExplicitPhi("Patient name: Test Person\nMRN: 1234567\nDOB: 01/02/2003")).toEqual([
       "labeled patient name",
       "labeled medical record number",
       "labeled date of birth"
     ]);
+  });
+
+  it("builds a one-way canonical deployment and ignores server-only file availability", () => {
+    const now = "2026-08-01T12:00:00.000Z";
+    const localArticle = normalizeWikiArticles([{
+      id: "wiki_local_page",
+      slug: "local-page",
+      title: "Local Page",
+      summary: "Canonical content",
+      body: "Canonical body",
+      category: "program",
+      aliases: [],
+      tags: [],
+      links: [],
+      status: "published",
+      authority: "program-reference",
+      revision: 1,
+      contentHash: "",
+      sourceRefs: [],
+      createdAt: now,
+      updatedAt: now
+    }])[0];
+    const staleRemoteArticle = normalizeWikiArticles([{ ...localArticle, summary: "Stale server content" }])[0];
+    const serverOnlyArticle = normalizeWikiArticles([{
+      ...localArticle,
+      id: "wiki_server_only",
+      slug: "server-only",
+      title: "Server Only"
+    }])[0];
+    const localSource = {
+      id: "src-shared",
+      title: "Shared source",
+      sourceType: "document" as const,
+      capturedAt: now,
+      contentHash: "a".repeat(64),
+      referenceFile: { filename: "guide.pdf", mediaType: "application/pdf", byteSize: 100 },
+      createdAt: now,
+      updatedAt: now
+    };
+    const payload = buildCanonicalWikiSyncPayload(
+      { articles: [localArticle], sources: [localSource] },
+      {
+        wikiRevision: 12,
+        articles: [staleRemoteArticle, serverOnlyArticle],
+        sources: [
+          { ...localSource, referenceFile: { ...localSource.referenceFile, available: true } },
+          { ...localSource, id: "src-server-only", title: "Server-only source" }
+        ]
+      }
+    );
+
+    expect(payload.baseRevision).toBe(12);
+    expect(payload.articles.map((article) => article.slug)).toEqual(["local-page"]);
+    expect(payload.sources).toEqual([]);
+    expect(payload.deleteArticles).toEqual(["server-only"]);
+    expect(payload.deleteSources).toEqual(["src-server-only"]);
   });
 
   it("keeps concise facts from long published articles in fast context", () => {

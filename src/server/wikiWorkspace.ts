@@ -2,6 +2,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   WikiArticle,
   WikiArticleKind,
@@ -55,12 +56,21 @@ export interface WikiWorkspaceSnapshot {
   validation: ReturnType<typeof validateWikiKnowledgeBase>;
 }
 
+export interface WikiCanonicalSyncPayload {
+  baseRevision: number;
+  articles: WikiArticle[];
+  sources: WikiSource[];
+  deleteArticles: string[];
+  deleteSources: string[];
+}
+
 export function resolveWikiWorkspace(input?: string): string {
   return path.resolve(input || process.env.WIKI_WORKSPACE_PATH || ".wiki-workspace");
 }
 
 export async function initializeWikiWorkspace(workspacePath: string, serverUrl = "http://localhost:3001"): Promise<void> {
   const directories = [
+    ".obsidian",
     "articles",
     "sources",
     "inbox",
@@ -72,6 +82,10 @@ export async function initializeWikiWorkspace(workspacePath: string, serverUrl =
   await Promise.all(directories.map((directory) => fs.mkdir(path.join(workspacePath, directory), { recursive: true })));
   await writeIfMissing(path.join(workspacePath, ".gitignore"), [
     ".DS_Store",
+    ".obsidian/cache/",
+    ".obsidian/workspace.json",
+    ".obsidian/workspaces.json",
+    ".obsidian/workspace-mobile.json",
     "inbox/*",
     "!inbox/.gitkeep",
     "sources/**/original.*",
@@ -83,6 +97,14 @@ export async function initializeWikiWorkspace(workspacePath: string, serverUrl =
   ].join("\n"));
   await writeIfMissing(path.join(workspacePath, "inbox/.gitkeep"), "");
   await writeIfMissing(path.join(workspacePath, "conflicts/.gitkeep"), "");
+  await writeIfMissing(path.join(workspacePath, ".obsidian/app.json"), `${JSON.stringify({
+    useMarkdownLinks: true,
+    newFileLocation: "folder",
+    newFileFolderPath: "inbox"
+  }, null, 2)}\n`);
+  await writeIfMissing(path.join(workspacePath, ".obsidian/templates.json"), `${JSON.stringify({
+    folder: "templates"
+  }, null, 2)}\n`);
   await writeIfMissing(path.join(workspacePath, "wiki.config.json"), `${JSON.stringify({
     formatVersion: WORKSPACE_FORMAT_VERSION,
     serverUrl,
@@ -90,6 +112,7 @@ export async function initializeWikiWorkspace(workspacePath: string, serverUrl =
     sourceDirectory: "sources"
   } satisfies WikiWorkspaceConfig, null, 2)}\n`);
   await writeIfMissing(path.join(workspacePath, "README.md"), WORKSPACE_README);
+  await writeIfMissing(path.join(workspacePath, "Home.md"), WORKSPACE_HOME);
   await writeIfMissing(path.join(workspacePath, "templates/attending-procedure.md"), ATTENDING_PROCEDURE_TEMPLATE);
   await writeIfMissing(path.join(workspacePath, "templates/attending-profile.md"), ATTENDING_PROFILE_TEMPLATE);
   await writeIfMissing(path.join(workspacePath, "templates/perioperative-protocol.md"), PERIOPERATIVE_PROTOCOL_TEMPLATE);
@@ -101,6 +124,20 @@ export async function initializeWikiWorkspace(workspacePath: string, serverUrl =
     await fs.access(path.join(workspacePath, ".git"));
   } catch {
     await execFile("git", ["init"], { cwd: workspacePath });
+  }
+}
+
+export async function configureWikiGitRemote(workspacePath: string, remoteUrl: string): Promise<void> {
+  const requested = remoteUrl.trim();
+  if (!requested || /[\r\n\0]/.test(requested)) throw new Error("Wiki Git remote URL is invalid");
+  try {
+    const { stdout } = await execFile("git", ["remote", "get-url", "origin"], { cwd: workspacePath });
+    const existing = stdout.trim();
+    if (existing === requested) return;
+    throw new Error(`Wiki workspace already has a different origin: ${existing}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Wiki workspace already")) throw error;
+    await execFile("git", ["remote", "add", "origin", requested], { cwd: workspacePath });
   }
 }
 
@@ -134,12 +171,16 @@ export async function readWikiWorkspace(workspacePath: string): Promise<WikiWork
 export async function readWikiArticleFile(filePath: string): Promise<WikiArticle> {
   const raw = await fs.readFile(filePath, "utf8");
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) throw new Error(`${filePath}: expected JSON frontmatter between --- markers`);
+  if (!match) throw new Error(`${filePath}: expected YAML frontmatter between --- markers`);
   let metadata: Record<string, unknown>;
   try {
-    metadata = JSON.parse(match[1]) as Record<string, unknown>;
+    const parsed = parseYaml(match[1]) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("frontmatter must be an object");
+    }
+    metadata = parsed as Record<string, unknown>;
   } catch (error) {
-    throw new Error(`${filePath}: invalid JSON frontmatter: ${error instanceof Error ? error.message : "parse error"}`);
+    throw new Error(`${filePath}: invalid YAML frontmatter: ${error instanceof Error ? error.message : "parse error"}`);
   }
   const now = new Date().toISOString();
   const slug = normalizeWikiSlug(String(metadata.slug || path.basename(filePath, ".md")));
@@ -221,10 +262,66 @@ export async function writeWikiArticleFile(workspacePath: string, article: WikiA
   };
   await fs.writeFile(
     filePath,
-    `${FRONTMATTER_BOUNDARY}\n${JSON.stringify(removeUndefined(metadata), null, 2)}\n${FRONTMATTER_BOUNDARY}\n\n${normalized.body.trim()}\n`,
+    `${FRONTMATTER_BOUNDARY}\n${stringifyYaml(removeUndefined(metadata), { lineWidth: 0 }).trim()}\n${FRONTMATTER_BOUNDARY}\n\n${normalized.body.trim()}\n`,
     "utf8"
   );
   return filePath;
+}
+
+export async function formatWikiWorkspace(workspacePath: string): Promise<number> {
+  const snapshot = await readWikiWorkspace(workspacePath);
+  for (const article of snapshot.articles) await writeWikiArticleFile(workspacePath, article);
+  const templateFiles = await findFiles(path.join(workspacePath, "templates"), (file) => file.endsWith(".md"));
+  for (const templateFile of templateFiles) await formatMarkdownFrontmatter(templateFile);
+  return snapshot.articles.length;
+}
+
+async function formatMarkdownFrontmatter(filePath: string): Promise<void> {
+  const raw = await fs.readFile(filePath, "utf8");
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return;
+  const parsed = parseYaml(match[1]) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${filePath}: frontmatter must be an object`);
+  }
+  await fs.writeFile(
+    filePath,
+    `${FRONTMATTER_BOUNDARY}\n${stringifyYaml(parsed, { lineWidth: 0 }).trim()}\n${FRONTMATTER_BOUNDARY}\n\n${match[2].trim()}\n`,
+    "utf8"
+  );
+}
+
+export function buildCanonicalWikiSyncPayload(
+  snapshot: Pick<WikiWorkspaceSnapshot, "articles" | "sources">,
+  remote: Pick<WikiExportBundle, "wikiRevision" | "articles" | "sources">
+): WikiCanonicalSyncPayload {
+  const localArticleSlugs = new Set(snapshot.articles.map((article) => article.slug));
+  const localSourceIds = new Set(snapshot.sources.map((source) => source.id));
+  const remoteArticles = new Map(remote.articles.map((article) => [article.slug, article]));
+  const remoteSources = new Map(remote.sources.map((source) => [source.id, source]));
+  return {
+    baseRevision: remote.wikiRevision,
+    articles: snapshot.articles.filter((article) => remoteArticles.get(article.slug)?.contentHash !== article.contentHash),
+    sources: snapshot.sources.filter((source) => {
+      const remoteSource = remoteSources.get(source.id);
+      return !remoteSource || canonicalSourceRecordHash(remoteSource) !== canonicalSourceRecordHash(source);
+    }),
+    deleteArticles: remote.articles.filter((article) => !localArticleSlugs.has(article.slug)).map((article) => article.slug),
+    deleteSources: remote.sources.filter((source) => !localSourceIds.has(source.id)).map((source) => source.id)
+  };
+}
+
+function canonicalSourceRecordHash(source: WikiSource): string {
+  return computeWikiSourceRecordHash({
+    ...source,
+    referenceFile: source.referenceFile
+      ? {
+          filename: source.referenceFile.filename,
+          mediaType: source.referenceFile.mediaType,
+          byteSize: source.referenceFile.byteSize
+        }
+      : undefined
+  });
 }
 
 export async function writeWikiSourceMetadata(workspacePath: string, source: WikiSource): Promise<string> {
@@ -462,7 +559,7 @@ function decodeXmlText(xml: string): string {
 
 const WORKSPACE_README = `# Private Surgery Residency Knowledge Base
 
-This is the private, Git-versioned authoring workspace for the Schedule Assistant wiki.
+This folder is both the private Git-versioned authoring workspace for the Schedule Assistant wiki and an Obsidian vault. Open this folder directly in Obsidian; shared settings use standard Markdown links and the templates in \`templates/\`.
 
 - Raw files in \`inbox/\` and \`sources/**/original.*\` are ignored by Git.
 - Published Markdown and source metadata are versioned.
@@ -476,23 +573,49 @@ Organize broad navigation in hub articles and put actionable details in narrow l
 Use the application repository command \`npm run wiki -- <command>\` to pull, ingest, validate, diff, publish, and push.
 `;
 
+const WORKSPACE_HOME = `# Surgery Residency Knowledge Base
+
+This is the portable home page for the shared residency knowledge vault.
+
+- [Residency wiki](articles/index/residency-wiki.md)
+- [Services](articles/index/services.md)
+- [Hospitals](articles/index/hospitals.md)
+- [Attendings](articles/index/attendings.md)
+- [Workflows](articles/index/workflows.md)
+- [Clinical references](articles/index/clinical-references.md)
+
+Some links appear after the corresponding article has been pulled or created. Drafts remain visible to authorized vault editors but are not shown to ordinary web-app users or the schedule assistant.
+`;
+
 const ATTENDING_PROCEDURE_TEMPLATE = `---
-{
-  "slug": "attending-example-procedure",
-  "title": "Dr. Example — Procedure",
-  "summary": "Draft attending preference for a specific procedure.",
-  "category": "attending",
-  "kind": "operative-preference",
-  "status": "draft",
-  "authority": "attending-preference",
-  "scope": {"services": [], "attendings": ["Dr. Example"], "procedures": ["Procedure"], "hospitals": [], "phases": ["preoperative", "intraoperative"], "patientPopulations": []},
-  "relationships": [{"type": "belongs-to", "target": "attending-example"}],
-  "audience": ["residents"],
-  "aliases": [],
-  "tags": ["operative-preference"],
-  "links": [],
-  "sourceRefs": []
-}
+slug: attending-example-procedure
+title: Dr. Example — Procedure
+summary: Draft attending preference for a specific procedure.
+category: attending
+kind: operative-preference
+status: draft
+authority: attending-preference
+scope:
+  services: []
+  attendings:
+    - Dr. Example
+  procedures:
+    - Procedure
+  hospitals: []
+  phases:
+    - preoperative
+    - intraoperative
+  patientPopulations: []
+relationships:
+  - type: belongs-to
+    target: attending-example
+audience:
+  - residents
+aliases: []
+tags:
+  - operative-preference
+links: []
+sourceRefs: []
 ---
 
 ## Applicability
@@ -515,22 +638,29 @@ const ATTENDING_PROCEDURE_TEMPLATE = `---
 `;
 
 const ATTENDING_PROFILE_TEMPLATE = `---
-{
-  "slug": "attending-example",
-  "title": "Dr. Example",
-  "summary": "Hub for verified practice scope, preferences, procedures, and perioperative guidance.",
-  "category": "attending",
-  "kind": "attending-profile",
-  "status": "draft",
-  "authority": "program-reference",
-  "scope": {"services": [], "attendings": ["Dr. Example"], "procedures": [], "hospitals": [], "phases": [], "patientPopulations": []},
-  "relationships": [],
-  "audience": ["residents"],
-  "aliases": [],
-  "tags": ["attending"],
-  "links": [],
-  "sourceRefs": []
-}
+slug: attending-example
+title: Dr. Example
+summary: Hub for verified practice scope, preferences, procedures, and perioperative guidance.
+category: attending
+kind: attending-profile
+status: draft
+authority: program-reference
+scope:
+  services: []
+  attendings:
+    - Dr. Example
+  procedures: []
+  hospitals: []
+  phases: []
+  patientPopulations: []
+relationships: []
+audience:
+  - residents
+aliases: []
+tags:
+  - attending
+links: []
+sourceRefs: []
 ---
 
 ## Practice and service scope
@@ -547,22 +677,33 @@ const ATTENDING_PROFILE_TEMPLATE = `---
 `;
 
 const PERIOPERATIVE_PROTOCOL_TEMPLATE = `---
-{
-  "slug": "example-procedure-perioperative-protocol",
-  "title": "Example Procedure — Perioperative Protocol",
-  "summary": "Draft scoped perioperative preparation and management guidance.",
-  "category": "clinical-reference",
-  "kind": "perioperative-protocol",
-  "status": "draft",
-  "authority": "attending-preference",
-  "scope": {"services": [], "attendings": [], "procedures": ["Example Procedure"], "hospitals": [], "phases": ["preoperative", "inpatient", "discharge", "follow-up"], "patientPopulations": []},
-  "relationships": [],
-  "audience": ["residents"],
-  "aliases": [],
-  "tags": ["perioperative"],
-  "links": [],
-  "sourceRefs": []
-}
+slug: example-procedure-perioperative-protocol
+title: Example Procedure — Perioperative Protocol
+summary: Draft scoped perioperative preparation and management guidance.
+category: clinical-reference
+kind: perioperative-protocol
+status: draft
+authority: attending-preference
+scope:
+  services: []
+  attendings: []
+  procedures:
+    - Example Procedure
+  hospitals: []
+  phases:
+    - preoperative
+    - inpatient
+    - discharge
+    - follow-up
+  patientPopulations: []
+relationships: []
+audience:
+  - residents
+aliases: []
+tags:
+  - perioperative
+links: []
+sourceRefs: []
 ---
 
 ## Applicability and authority
@@ -585,22 +726,31 @@ const PERIOPERATIVE_PROTOCOL_TEMPLATE = `---
 `;
 
 const NOTE_TEMPLATE = `---
-{
-  "slug": "example-procedure-note-template",
-  "title": "Example Procedure — Note Template",
-  "summary": "No-PHI documentation scaffold derived from a verified source.",
-  "category": "clinical-reference",
-  "kind": "note-template",
-  "status": "draft",
-  "authority": "educational-template",
-  "scope": {"services": [], "attendings": [], "procedures": ["Example Procedure"], "hospitals": [], "phases": ["intraoperative"], "patientPopulations": []},
-  "relationships": [],
-  "audience": ["residents"],
-  "aliases": [],
-  "tags": ["note-template", "no-PHI"],
-  "links": [],
-  "sourceRefs": []
-}
+slug: example-procedure-note-template
+title: Example Procedure — Note Template
+summary: No-PHI documentation scaffold derived from a verified source.
+category: clinical-reference
+kind: note-template
+status: draft
+authority: educational-template
+scope:
+  services: []
+  attendings: []
+  procedures:
+    - Example Procedure
+  hospitals: []
+  phases:
+    - intraoperative
+  patientPopulations: []
+relationships: []
+audience:
+  - residents
+aliases: []
+tags:
+  - note-template
+  - no-PHI
+links: []
+sourceRefs: []
 ---
 
 ## Purpose and applicability
@@ -617,22 +767,29 @@ Use placeholders only. Never ingest or reproduce patient identifiers.
 `;
 
 const SERVICE_GUIDE_TEMPLATE = `---
-{
-  "slug": "service-example",
-  "title": "Example Service",
-  "summary": "Hub for service scope, expectations, attendings, workflows, and protocols.",
-  "category": "service",
-  "kind": "service-guide",
-  "status": "draft",
-  "authority": "program-reference",
-  "scope": {"services": ["Example"], "attendings": [], "procedures": [], "hospitals": [], "phases": [], "patientPopulations": []},
-  "relationships": [],
-  "audience": ["residents"],
-  "aliases": [],
-  "tags": ["service"],
-  "links": [],
-  "sourceRefs": []
-}
+slug: service-example
+title: Example Service
+summary: Hub for service scope, expectations, attendings, workflows, and protocols.
+category: service
+kind: service-guide
+status: draft
+authority: program-reference
+scope:
+  services:
+    - Example
+  attendings: []
+  procedures: []
+  hospitals: []
+  phases: []
+  patientPopulations: []
+relationships: []
+audience:
+  - residents
+aliases: []
+tags:
+  - service
+links: []
+sourceRefs: []
 ---
 
 ## Scope, sites, and patient population
@@ -651,22 +808,28 @@ const SERVICE_GUIDE_TEMPLATE = `---
 `;
 
 const INSTITUTIONAL_POLICY_TEMPLATE = `---
-{
-  "slug": "example-institutional-policy",
-  "title": "Example Institutional Policy",
-  "summary": "Draft local policy with explicit scope and governance.",
-  "category": "program",
-  "kind": "institutional-policy",
-  "status": "draft",
-  "authority": "institutional-policy",
-  "scope": {"services": [], "attendings": [], "procedures": [], "hospitals": [], "phases": [], "patientPopulations": []},
-  "relationships": [],
-  "audience": ["residents"],
-  "aliases": [],
-  "tags": ["policy"],
-  "links": [],
-  "sourceRefs": []
-}
+slug: example-institutional-policy
+title: Example Institutional Policy
+summary: Draft local policy with explicit scope and governance.
+category: program
+kind: institutional-policy
+status: draft
+authority: institutional-policy
+scope:
+  services: []
+  attendings: []
+  procedures: []
+  hospitals: []
+  phases: []
+  patientPopulations: []
+relationships: []
+audience:
+  - residents
+aliases: []
+tags:
+  - policy
+links: []
+sourceRefs: []
 ---
 
 ## Policy scope and owner
@@ -681,22 +844,29 @@ const INSTITUTIONAL_POLICY_TEMPLATE = `---
 `;
 
 const WORKFLOW_TEMPLATE = `---
-{
-  "slug": "workflow-example",
-  "title": "Example Workflow",
-  "summary": "Draft locally maintained workflow.",
-  "category": "workflow",
-  "kind": "workflow",
-  "status": "draft",
-  "authority": "workflow",
-  "scope": {"services": [], "attendings": [], "procedures": [], "hospitals": [], "phases": ["administrative"], "patientPopulations": []},
-  "relationships": [],
-  "audience": ["residents"],
-  "aliases": [],
-  "tags": ["workflow"],
-  "links": [],
-  "sourceRefs": []
-}
+slug: workflow-example
+title: Example Workflow
+summary: Draft locally maintained workflow.
+category: workflow
+kind: workflow
+status: draft
+authority: workflow
+scope:
+  services: []
+  attendings: []
+  procedures: []
+  hospitals: []
+  phases:
+    - administrative
+  patientPopulations: []
+relationships: []
+audience:
+  - residents
+aliases: []
+tags:
+  - workflow
+links: []
+sourceRefs: []
 ---
 
 ## Purpose
