@@ -28,6 +28,8 @@ The server's wiki revision prevents a deployment based on stale server state. Gi
 - `proposals/`: non-overwriting ingestion output requiring review.
 - `archive/remote-deleted/`: recoverable history from the earlier two-way synchronization workflow.
 
+The server synchronization cursor and resolved conflict bundles are machine-local and ignored by Git. They can contain environment-specific revisions or redundant server snapshots and are not part of canonical knowledge.
+
 Retained reference binaries remain in authenticated application storage. The Git repository contains their hash, safe filename, media type, byte size, and provenance but not the binary itself.
 
 ## Publication rules

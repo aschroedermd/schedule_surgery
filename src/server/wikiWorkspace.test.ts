@@ -48,6 +48,9 @@ describe("private wiki workspace", () => {
       expect.objectContaining({ useMarkdownLinks: true, newFileFolderPath: "inbox" })
     );
     expect(await fs.readFile(path.join(workspace, "Home.md"), "utf8")).toContain("portable home page");
+    const gitignore = await fs.readFile(path.join(workspace, ".gitignore"), "utf8");
+    expect(gitignore).toContain(".wiki-sync.json");
+    expect(gitignore).toContain("archive/conflicts-resolved/");
     const sourceFile = path.join(workspace, "reviewed-preferences.txt");
     await fs.writeFile(sourceFile, "Reviewed preference: use the documented port layout.", "utf8");
     const sourceByteSize = (await fs.stat(sourceFile)).size;

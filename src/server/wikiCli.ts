@@ -85,7 +85,7 @@ async function main() {
   }
 
   await initializeWikiWorkspace(workspacePath);
-  if (command === "pull") return pullWorkspace(workspacePath);
+  if (command === "pull") return pullWorkspace(workspacePath, Boolean(args.flags["prefer-local"]));
   if (command === "validate") return validateWorkspace(workspacePath);
   if (command === "format") return formatWorkspace(workspacePath);
   if (command === "diff" || command === "status") return showDiff(workspacePath);
@@ -108,7 +108,7 @@ async function main() {
   throw new Error(`Unknown wiki command: ${command}`);
 }
 
-async function pullWorkspace(workspacePath: string): Promise<void> {
+async function pullWorkspace(workspacePath: string, preferLocal = false): Promise<void> {
   const config = await readWikiWorkspaceConfig(workspacePath);
   const remote = await wikiRequest<WikiExportBundle>(workspacePath, config.serverUrl, "/api/wiki/export");
   const local = await readWikiWorkspace(workspacePath);
@@ -144,7 +144,7 @@ async function pullWorkspace(workspacePath: string): Promise<void> {
     const remoteHash = remoteSourceHashes[sourceId];
     if (remoteHash && remoteHash !== baseHash) conflicts.push(`source:${sourceId} (local deletion and remote update)`);
   }
-  if (conflicts.length) {
+  if (conflicts.length && !preferLocal) {
     await fs.writeFile(
       path.join(workspacePath, "conflicts", `pull-${Date.now()}.json`),
       `${JSON.stringify({ remoteRevision: remote.wikiRevision, conflicts, remote }, null, 2)}\n`,
@@ -153,8 +153,28 @@ async function pullWorkspace(workspacePath: string): Promise<void> {
     throw new Error(`Pull stopped because local and server content both changed:\n- ${conflicts.join("\n- ")}`);
   }
 
-  await archiveRemoteDeletions(workspacePath, local, syncState, remoteArticleHashes, remoteSourceHashes);
+  const preferredLocalArticleSlugs = new Set(
+    preferLocal
+      ? conflicts.flatMap((conflict) => conflict.startsWith("article:") ? [conflict.slice("article:".length).split(" ")[0]] : [])
+      : []
+  );
+  const preferredLocalSourceIds = new Set(
+    preferLocal
+      ? conflicts.flatMap((conflict) => conflict.startsWith("source:") ? [conflict.slice("source:".length).split(" ")[0]] : [])
+      : []
+  );
+
+  await archiveRemoteDeletions(
+    workspacePath,
+    local,
+    syncState,
+    remoteArticleHashes,
+    remoteSourceHashes,
+    preferredLocalArticleSlugs,
+    preferredLocalSourceIds
+  );
   for (const article of remote.articles) {
+    if (preferredLocalArticleSlugs.has(article.slug)) continue;
     const localArticle = local.articles.find((candidate) => candidate.slug === article.slug);
     const baseHash = syncState.articleHashes[article.slug];
     if (!localArticle && baseHash && article.contentHash === baseHash) continue;
@@ -162,6 +182,7 @@ async function pullWorkspace(workspacePath: string): Promise<void> {
     await writeWikiArticleFile(workspacePath, article);
   }
   for (const source of remote.sources) {
+    if (preferredLocalSourceIds.has(source.id)) continue;
     const localSource = local.sources.find((candidate) => candidate.id === source.id);
     const baseHash = syncState.sourceHashes[source.id];
     if (!localSource && baseHash && computeWikiSourceRecordHash(source) === baseHash) continue;
@@ -183,6 +204,10 @@ async function pullWorkspace(workspacePath: string): Promise<void> {
     articleHashes: remoteArticleHashes,
     sourceHashes: remoteSourceHashes
   });
+  if (preferLocal && conflicts.length) {
+    await archiveResolvedConflictFiles(workspacePath, remote.wikiRevision, conflicts);
+    text(`Preserved the local version of ${conflicts.length} conflicts; remote-only content was still pulled`);
+  }
   text(`Pulled wiki revision ${remote.wikiRevision}: ${remote.articles.length} articles and ${remote.sources.length} sources`);
 }
 
@@ -567,20 +592,45 @@ async function archiveRemoteDeletions(
   local: Awaited<ReturnType<typeof readWikiWorkspace>>,
   syncState: Awaited<ReturnType<typeof readWikiSyncState>>,
   remoteArticleHashes: Record<string, string>,
-  remoteSourceHashes: Record<string, string>
+  remoteSourceHashes: Record<string, string>,
+  preserveArticleSlugs = new Set<string>(),
+  preserveSourceIds = new Set<string>()
 ) {
   const archiveDirectory = path.join(workspacePath, "archive", "remote-deleted", new Date().toISOString().slice(0, 10));
   await fs.mkdir(archiveDirectory, { recursive: true });
   for (const article of local.articles) {
+    if (preserveArticleSlugs.has(article.slug)) continue;
     if (!syncState.articleHashes[article.slug] || remoteArticleHashes[article.slug]) continue;
     const sourcePath = path.join(workspacePath, "articles", article.category, `${article.slug}.md`);
     await moveIfPresent(sourcePath, path.join(archiveDirectory, `${article.slug}.md`));
   }
   for (const source of local.sources) {
+    if (preserveSourceIds.has(source.id)) continue;
     if (!syncState.sourceHashes[source.id] || remoteSourceHashes[source.id]) continue;
     const sourcePath = path.join(workspacePath, "sources", source.id, "metadata.json");
     await moveIfPresent(sourcePath, path.join(archiveDirectory, `${source.id}.metadata.json`));
   }
+}
+
+async function archiveResolvedConflictFiles(
+  workspacePath: string,
+  remoteRevision: number,
+  conflicts: string[]
+): Promise<void> {
+  const conflictDirectory = path.join(workspacePath, "conflicts");
+  const archiveDirectory = path.join(workspacePath, "archive", "conflicts-resolved", new Date().toISOString().replace(/[:.]/g, "-"));
+  await fs.mkdir(archiveDirectory, { recursive: true });
+  const entries = await fs.readdir(conflictDirectory);
+  for (const entry of entries) {
+    if (entry === ".gitkeep") continue;
+    await fs.rename(path.join(conflictDirectory, entry), path.join(archiveDirectory, entry));
+  }
+  await fs.writeFile(path.join(archiveDirectory, "resolution.json"), `${JSON.stringify({
+    strategy: "prefer-local",
+    remoteRevision,
+    conflicts,
+    resolvedAt: new Date().toISOString()
+  }, null, 2)}\n`, "utf8");
 }
 
 async function moveIfPresent(source: string, destination: string): Promise<void> {
@@ -658,7 +708,7 @@ function showHelp() {
 
 Usage:
   npm run wiki -- init [--server URL] [--workspace PATH] [--remote GIT_URL]
-  npm run wiki -- pull
+  npm run wiki -- pull [--prefer-local]
   npm run wiki -- ingest FILE... [--source-type TYPE] [--author NAME] [--reference-file|--knowledge-only] [--no-ai]
   npm run wiki -- validate
   npm run wiki -- format
@@ -681,6 +731,7 @@ Commands:
   format                 Rewrite legacy JSON frontmatter as readable YAML
   push                   Two-way authoring sync using the last pulled revision
   deploy                 Make this vault authoritative; live deployment requires --confirm-authoritative
+  pull --prefer-local     Preserve local versions of conflicts while importing remote-only content
 `);
 }
 

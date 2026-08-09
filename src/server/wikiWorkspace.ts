@@ -82,6 +82,7 @@ export async function initializeWikiWorkspace(workspacePath: string, serverUrl =
   await Promise.all(directories.map((directory) => fs.mkdir(path.join(workspacePath, directory), { recursive: true })));
   await writeIfMissing(path.join(workspacePath, ".gitignore"), [
     ".DS_Store",
+    ".wiki-sync.json",
     ".obsidian/cache/",
     ".obsidian/workspace.json",
     ".obsidian/workspaces.json",
@@ -92,6 +93,7 @@ export async function initializeWikiWorkspace(workspacePath: string, serverUrl =
     "sources/**/extracted.txt",
     "conflicts/*",
     "!conflicts/.gitkeep",
+    "archive/conflicts-resolved/",
     ".wiki-api-key",
     ""
   ].join("\n"));

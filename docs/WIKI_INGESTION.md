@@ -259,6 +259,8 @@ npm run wiki -- push       # preview, validate, transactionally apply, then pull
 npm run wiki -- sync       # pull, validate, push, and pull the applied revision
 ```
 
+When a migration pull reports conflicts and an editor has reviewed the comparison and intentionally selected the vault versions, rerun with `pull --prefer-local`. This preserves each conflicting local article, still imports remote-only articles and sources, advances the synchronization baseline, and archives the conflict bundle plus a resolution receipt. Do not use this flag as a substitute for reviewing substantive two-sided edits.
+
 Synchronization uses a separate wiki revision and SHA-256 semantic hashes. Retained binary uploads are hash-verified against their source records and follow the transactional metadata sync. If both the server and local copy changed from the same base, the pull stops and writes a conflict bundle in `.wiki-workspace/conflicts/`. No automatic last-writer-wins merge is performed.
 
 For the canonical workflow, make changes in a branch, run validation, and merge through a reviewed pull request. Protect `main` and require the validation check before merge. A secured deployment runner can run `wiki deploy` after each merge; until that runner is added, run it manually from an authorized checkout. Keep the API key outside Git history. A human must still review and publish clinical drafts; unattended ingestion must not auto-publish.
