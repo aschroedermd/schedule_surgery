@@ -8,6 +8,7 @@ import {
   HospitalContactFacility,
   PlannerState
 } from "../shared/types";
+import { comparePersonNames } from "../shared/names";
 import { approveContactRequest, deleteContact, rejectContactRequest, submitContact, updateContact } from "./api";
 import { buildVCard, makeTelephoneUrl, vCardFilename } from "./vcard";
 
@@ -59,7 +60,7 @@ export function ContactsTab({
         .filter((contact) => contact.category === category)
         .sort((a, b) => (
           (a.importance === "essential" ? 0 : 1) - (b.importance === "essential" ? 0 : 1) ||
-          a.name.localeCompare(b.name)
+          comparePersonNames(a.name, b.name)
         ))
     }))
     .filter((group) => group.contacts.length > 0);

@@ -834,6 +834,12 @@ describe("planner API", () => {
     await request(app)
       .post("/api/assignments")
       .set("x-api-key", "test-admin-api-key")
+      .send({ kind: "clinic", targetId: "clinic_hpb_tue", residentId: medicalStudent.id })
+      .expect(201);
+
+    await request(app)
+      .post("/api/assignments")
+      .set("x-api-key", "test-admin-api-key")
       .send({ kind: "block", targetId: "block_chen_mon", residentId: medicalStudent.id })
       .expect(400);
 
@@ -842,6 +848,35 @@ describe("planner API", () => {
       .send({ username: "medstudent1", password: "TempStudent-2026" })
       .expect(200);
     expect(login.body).toEqual(expect.objectContaining({ role: "medical-student" }));
+  });
+
+  it("creates or reuses a manually entered medical student for case and clinic assignments", async () => {
+    const { app, token } = await loginAs("admin");
+
+    const caseResponse = await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", manualMedicalStudentName: "Jordan Learner" })
+      .expect(201);
+
+    const student = caseResponse.body.residents.find(
+      (resident: { name: string; trainingLevel: string }) => resident.name === "Jordan Learner" && resident.trainingLevel === "Medical Student"
+    );
+    expect(student).toEqual(expect.objectContaining({ accountEligible: false, rosterKind: "off-service" }));
+    expect(caseResponse.body.assignments).toContainEqual(
+      expect.objectContaining({ kind: "case", targetId: "case_chen_whipple", residentId: student.id })
+    );
+
+    const clinicResponse = await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "clinic", targetId: "clinic_hpb_tue", manualMedicalStudentName: "  Jordan   Learner  " })
+      .expect(201);
+
+    expect(clinicResponse.body.residents.filter((resident: { name: string }) => resident.name === "Jordan Learner")).toHaveLength(1);
+    expect(clinicResponse.body.assignments).toContainEqual(
+      expect.objectContaining({ kind: "clinic", targetId: "clinic_hpb_tue", residentId: student.id })
+    );
   });
 
   it("lets linked residents award one weekly gold star without exposing other givers to viewers", async () => {

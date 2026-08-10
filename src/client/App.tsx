@@ -82,6 +82,7 @@ import {
 } from "../shared/attendingCoverage";
 import { addDays, displayDate, getDefaultPlannerMonday, getMondayForDate, getWeekDates, parseLocalDate } from "../shared/date";
 import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "../shared/id";
+import { comparePersonNames } from "../shared/names";
 import {
   Assignment,
   ATTENDING_COVERAGE_LINES,
@@ -623,6 +624,7 @@ export function App() {
     return (
       <Shell
         role={session.role}
+        identityLabel={getAccountRoleLabel(session.role)}
         onLogout={handleLogout}
         error={error}
         pendingAction="Loading planner…"
@@ -636,6 +638,7 @@ export function App() {
   return (
     <Shell
       role={session.role}
+      identityLabel={getAccountRoleLabel(session.role, linkedResident)}
       onLogout={handleLogout}
       chatMode={activeTab === "chat"}
       error={error}
@@ -744,6 +747,7 @@ export function App() {
           token={session.token}
           selectedService={selectedService}
           canEdit={canEditSelectedService}
+          currentResidentId={linkedResident?.id}
           editableAttendingId={isAttending ? session.attendingId : undefined}
           showScheduleEditor={isScheduleEditorOpen}
           onMutate={runMutation}
@@ -912,6 +916,7 @@ function LoginScreen({
 
 function Shell({
   role,
+  identityLabel,
   children,
   onLogout,
   error,
@@ -925,6 +930,7 @@ function Shell({
   chatMode = false
 }: {
   role: Role;
+  identityLabel?: string;
   children: React.ReactNode;
   onLogout: () => void;
   error?: string;
@@ -953,7 +959,7 @@ function Shell({
         </div>
       )}
       <div className="top-strip">
-        <span>{roleLabel(role)}</span>
+        <span>{identityLabel ?? getAccountRoleLabel(role)}</span>
         <button title="Log out" aria-label="Log out" className="icon-button" onClick={onLogout}>
           <LogOut size={18} />
         </button>
@@ -1266,6 +1272,7 @@ function BoardTab({
   token,
   selectedService,
   canEdit,
+  currentResidentId,
   editableAttendingId,
   showScheduleEditor,
   onMutate,
@@ -1276,6 +1283,7 @@ function BoardTab({
   token: string;
   selectedService: string;
   canEdit: boolean;
+  currentResidentId?: string;
   editableAttendingId?: string;
   showScheduleEditor: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
@@ -1370,6 +1378,7 @@ function BoardTab({
                 state={state}
                 block={block}
                 canEdit={canEdit}
+                currentResidentId={currentResidentId}
                 token={token}
                 selectedService={selectedService}
                 onMutate={onMutate}
@@ -1382,6 +1391,7 @@ function BoardTab({
                 state={state}
                 clinic={clinic}
                 canEdit={canEdit}
+                currentResidentId={currentResidentId}
                 token={token}
                 selectedService={selectedService}
                 onMutate={onMutate}
@@ -2475,7 +2485,9 @@ function AttendingCoveragePanel({
               }}
             >
               <optgroup label="Attendings">
-                {state.attendings.map((attending) => <option key={attending.id} value={`attending:${attending.id}`}>{attending.name}</option>)}
+                {[...state.attendings]
+                  .sort((left, right) => comparePersonNames(left.name, right.name))
+                  .map((attending) => <option key={attending.id} value={`attending:${attending.id}`}>{attending.name}</option>)}
               </optgroup>
               {draft.line === "Practice" && practiceFellows.length > 0 && (
                 <optgroup label="Minimally invasive fellow">
@@ -2702,6 +2714,7 @@ function BlockView({
   state,
   block,
   canEdit,
+  currentResidentId,
   token,
   selectedService,
   onMutate
@@ -2709,6 +2722,7 @@ function BlockView({
   state: PlannerState;
   block: ScheduledBlock;
   canEdit: boolean;
+  currentResidentId?: string;
   token: string;
   selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
@@ -2748,6 +2762,7 @@ function BlockView({
             disabled={!canEdit}
             claimable={false}
             selectedService={selectedService}
+            currentResidentId={currentResidentId}
             onMutate={onMutate}
           />
           {canEdit && <QuickBlockEditor state={state} block={block} token={token} onMutate={onMutate} />}
@@ -2761,6 +2776,7 @@ function BlockView({
             state={state}
             surgeryCase={surgeryCase}
             canEdit={canEdit}
+            currentResidentId={currentResidentId}
             token={token}
             selectedService={selectedService}
             onMutate={onMutate}
@@ -2775,6 +2791,7 @@ function CaseRow({
   state,
   surgeryCase,
   canEdit,
+  currentResidentId,
   token,
   selectedService,
   onMutate
@@ -2782,6 +2799,7 @@ function CaseRow({
   state: PlannerState;
   surgeryCase: ScheduledCase;
   canEdit: boolean;
+  currentResidentId?: string;
   token: string;
   selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
@@ -2833,24 +2851,23 @@ function CaseRow({
             claimable={false}
             arrangementWarnings={index === 0 ? arrangementWarnings : []}
             selectedService={selectedService}
+            currentResidentId={currentResidentId}
             excludedResidentIds={assignedResidentIds}
             showLock={control.showLock}
             onMutate={onMutate}
           />
         ))}
         {isAddingResident && (
-          <AssignmentControl
+          <PersonAssignmentPicker
             state={state}
             token={token}
             kind="case"
             targetId={surgeryCase.id}
-            disabled={!canEdit}
-            claimable={false}
             selectedService={selectedService}
+            currentResidentId={currentResidentId}
             excludedResidentIds={assignedResidentIds}
-            emptyLabel="Select resident or medical student"
-            quietEmpty
             onMutate={onAdditionalResidentMutate}
+            onCancel={() => setIsAddingResident(false)}
           />
         )}
         {canAddResident && (
@@ -2868,6 +2885,7 @@ function ClinicView({
   state,
   clinic,
   canEdit,
+  currentResidentId,
   token,
   selectedService,
   onMutate
@@ -2875,6 +2893,7 @@ function ClinicView({
   state: PlannerState;
   clinic: ScheduledClinicSession;
   canEdit: boolean;
+  currentResidentId?: string;
   token: string;
   selectedService: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
@@ -2911,28 +2930,27 @@ function ClinicView({
             disabled={!canEdit}
             claimable={false}
             selectedService={selectedService}
+            currentResidentId={currentResidentId}
             excludedResidentIds={assignedResidentIds}
             onMutate={onMutate}
           />
         ))}
         {isAddingResident && (
-          <AssignmentControl
+          <PersonAssignmentPicker
             state={state}
             token={token}
             kind="clinic"
             targetId={clinic.id}
-            disabled={!canEdit}
-            claimable={false}
             selectedService={selectedService}
+            currentResidentId={currentResidentId}
             excludedResidentIds={assignedResidentIds}
-            emptyLabel="Select resident"
-            quietEmpty
             onMutate={onAdditionalResidentMutate}
+            onCancel={() => setIsAddingResident(false)}
           />
         )}
         {canAddResident && (
           <button type="button" className="secondary-button add-resident-button" onClick={() => setIsAddingResident(true)}>
-            +resident
+            +person
           </button>
         )}
       </div>
@@ -3283,6 +3301,137 @@ export function shiftEndTime(originalStart: string, originalEnd: string, nextSta
   return `${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`;
 }
 
+function PersonAssignmentPicker({
+  state,
+  token,
+  kind,
+  targetId,
+  selectedService,
+  currentResidentId,
+  excludedResidentIds,
+  onMutate,
+  onCancel
+}: {
+  state: PlannerState;
+  token: string;
+  kind: "case" | "clinic";
+  targetId: string;
+  selectedService: string;
+  currentResidentId?: string;
+  excludedResidentIds: string[];
+  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [showMedicalStudents, setShowMedicalStudents] = useState(false);
+  const [manualStudentName, setManualStudentName] = useState("");
+  const assignmentDate = getAssignmentDate(state, kind, targetId);
+  const residentChoices = orderAssignmentResidents(
+    state.residents.filter(
+      (resident) =>
+        resident.trainingLevel !== "Medical Student" &&
+        isGeneralOrPlasticSurgeryResident(resident) &&
+        !excludedResidentIds.includes(resident.id) &&
+        (kind === "clinic" || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
+    ),
+    selectedService,
+    assignmentDate,
+    currentResidentId
+  );
+  const medicalStudents = state.residents
+    .filter((resident) => resident.trainingLevel === "Medical Student" && !excludedResidentIds.includes(resident.id))
+    .sort((left, right) => comparePersonNames(left.name, right.name));
+
+  function assignResident(residentId: string) {
+    void onMutate(
+      () => createAssignment(token, { kind, targetId, residentId, locked: false }),
+      "Assignment saved"
+    );
+  }
+
+  function assignManualStudent(event: FormEvent) {
+    event.preventDefault();
+    const name = manualStudentName.trim();
+    if (!name) return;
+    void onMutate(
+      () => createAssignment(token, { kind, targetId, manualMedicalStudentName: name, locked: false }),
+      "Medical student assigned"
+    );
+  }
+
+  return (
+    <div className="person-assignment-picker" aria-label="Choose person">
+      <button
+        type="button"
+        className={`person-choice medical-student-choice${showMedicalStudents ? " active" : ""}`}
+        aria-expanded={showMedicalStudents}
+        onClick={() => setShowMedicalStudents((visible) => !visible)}
+      >
+        <strong>Med Student?</strong>
+        <span>Choose or enter a name</span>
+      </button>
+      {showMedicalStudents && (
+        <div className="medical-student-picker">
+          {medicalStudents.length > 0 && (
+            <div className="person-choice-list" aria-label="Medical students">
+              {medicalStudents.map((student) => (
+                <button key={student.id} type="button" className="person-choice" onClick={() => assignResident(student.id)}>
+                  <strong>{formatResidentName(student)}</strong>
+                  <span>Medical Student</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <form className="manual-student-form" onSubmit={assignManualStudent}>
+            <label>
+              Enter medical student name
+              <input
+                aria-label="Manual medical student name"
+                value={manualStudentName}
+                placeholder="First and last name"
+                onChange={(event) => setManualStudentName(event.target.value)}
+              />
+            </label>
+            <button type="submit" className="primary-button" disabled={!manualStudentName.trim()}>
+              <UserPlus size={15} />
+              Add
+            </button>
+          </form>
+        </div>
+      )}
+      <div className="person-choice-list" aria-label="Residents">
+        {residentChoices.map((resident) => {
+          const isCurrentResident = resident.id === currentResidentId;
+          const isCurrentTeam = isResidentOnService(resident, selectedService, assignmentDate);
+          return (
+            <button key={resident.id} type="button" className="person-choice" onClick={() => assignResident(resident.id)}>
+              <strong>{formatResidentName(resident)}</strong>
+              <span>{isCurrentResident ? "You" : isCurrentTeam ? `${selectedService} team` : resident.trainingLevel}</span>
+            </button>
+          );
+        })}
+      </div>
+      <button type="button" className="person-picker-cancel" onClick={onCancel}>Cancel</button>
+    </div>
+  );
+}
+
+export function orderAssignmentResidents(
+  residents: Resident[],
+  selectedService: string,
+  assignmentDate?: string,
+  currentResidentId?: string
+): Resident[] {
+  return [...residents].sort((left, right) => {
+    const currentUserDelta = Number(right.id === currentResidentId) - Number(left.id === currentResidentId);
+    if (currentUserDelta !== 0) return currentUserDelta;
+    const currentTeamDelta =
+      Number(isResidentOnService(right, selectedService, assignmentDate)) -
+      Number(isResidentOnService(left, selectedService, assignmentDate));
+    if (currentTeamDelta !== 0) return currentTeamDelta;
+    return comparePersonNames(left.name, right.name);
+  });
+}
+
 function AssignmentControl({
   state,
   token,
@@ -3296,6 +3445,7 @@ function AssignmentControl({
   claimable,
   arrangementWarnings = [],
   selectedService,
+  currentResidentId,
   excludedResidentIds = [],
   showLock = true,
   quietEmpty = false,
@@ -3313,6 +3463,7 @@ function AssignmentControl({
   claimable: boolean;
   arrangementWarnings?: string[];
   selectedService: string;
+  currentResidentId?: string;
   excludedResidentIds?: string[];
   showLock?: boolean;
   quietEmpty?: boolean;
@@ -3321,12 +3472,17 @@ function AssignmentControl({
   const displayedAssignment = assignment ?? inheritedAssignment;
   const isCovered = Boolean(displayedAssignment || coveredWithoutDirectAssignment);
   const assignmentDate = getAssignmentDate(state, kind, targetId);
-  const residents = sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
-    (resident) =>
-      (isGeneralOrPlasticSurgeryResident(resident) || resident.id === assignment?.residentId) &&
-      (kind === "case" || resident.trainingLevel !== "Medical Student") &&
-      (!excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId) &&
-      (kind === "clinic" || resident.id === assignment?.residentId || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
+  const residents = orderAssignmentResidents(
+    sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
+      (resident) =>
+        (isGeneralOrPlasticSurgeryResident(resident) || resident.id === assignment?.residentId) &&
+        (kind !== "block" || resident.trainingLevel !== "Medical Student") &&
+        (!excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId) &&
+        (kind === "clinic" || resident.id === assignment?.residentId || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
+    ),
+    selectedService,
+    assignmentDate,
+    currentResidentId
   );
   const [claimResidentId, setClaimResidentId] = useState(residents[0]?.id ?? "");
 
@@ -3946,7 +4102,7 @@ function ResidentScheduleTab({
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const todayBlock = getRotationBlockForDate(getTodayDate())?.blockNumber ?? 1;
-  const residents = [...state.residents].sort((a, b) => a.name.localeCompare(b.name));
+  const residents = [...state.residents].sort((a, b) => comparePersonNames(a.name, b.name));
   const [selectedBlock, setSelectedBlock] = useState<number>(todayBlock);
   const [selectedResidentId, setSelectedResidentId] = useState(residents[0]?.id ?? "");
   const selectedResident = residents.find((resident) => resident.id === selectedResidentId) ?? residents[0];
@@ -4350,7 +4506,7 @@ function AttendingsSetup({
         <button className="primary-button" type="submit"><Plus size={16} />Add</button>
       </fieldset>
       <div className="entity-list">
-        {state.attendings.map((item) => (
+        {[...state.attendings].sort((left, right) => comparePersonNames(left.name, right.name)).map((item) => (
           <div key={item.id} className="compact-entity attending-entity">
             <div>
               <strong>{item.name}</strong>
@@ -4672,7 +4828,7 @@ function serviceLineOptions(state: PlannerState): { id: string; name: string }[]
 function getGoldStarResidents(state: PlannerState): Resident[] {
   return state.residents
     .filter(isGeneralOrPlasticSurgeryResident)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => comparePersonNames(a.name, b.name));
 }
 
 function getGoldStarLeaderboard(
@@ -4686,7 +4842,7 @@ function getGoldStarLeaderboard(
   return residents
     .map((resident) => ({ resident, count: counts.get(resident.id) ?? 0 }))
     .filter((entry) => entry.count > 0)
-    .sort((a, b) => b.count - a.count || a.resident.name.localeCompare(b.resident.name));
+    .sort((a, b) => b.count - a.count || comparePersonNames(a.resident.name, b.resident.name));
 }
 
 function formatStarCount(count: number): string {
@@ -4880,7 +5036,7 @@ function getBlockServiceGroups(residents: Resident[], blockNumber: number): { se
   return [...groups.entries()]
     .map(([service, groupResidents]) => ({
       service,
-      residents: [...groupResidents].sort((a, b) => a.name.localeCompare(b.name))
+      residents: [...groupResidents].sort((a, b) => comparePersonNames(a.name, b.name))
     }))
     .sort((a, b) => a.service.localeCompare(b.service));
 }
@@ -5343,8 +5499,10 @@ function clampPriority(value: number): 1 | 2 | 3 | 4 | 5 {
   return Math.max(1, Math.min(5, value)) as 1 | 2 | 3 | 4 | 5;
 }
 
-function roleLabel(role: Role): string {
-  return role === "medical-student" ? "medical student" : role;
+export function getAccountRoleLabel(role: Role, resident?: Pick<Resident, "trainingLevel">): string {
+  if (role === "medical-student" || resident?.trainingLevel === "Medical Student") return "Medical Student";
+  if (role === "viewer") return resident?.trainingLevel ? `Resident · ${resident.trainingLevel}` : "Resident";
+  return role === "admin" ? "Admin" : "Attending";
 }
 
 export function shouldApplyScheduleLoad(

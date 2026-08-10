@@ -35,6 +35,7 @@ import {
 } from "../shared/coverage";
 import { addDays, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
+import { comparePersonNames } from "../shared/names";
 import {
   resolveIndependentCallCoverage
 } from "../shared/attendingCoverage";
@@ -99,7 +100,9 @@ export function CalendarTab({
   const dates = useMemo(() => getMonthGridDates(month), [month]);
   const serviceLineKey = serviceLines.join("\u0000");
   const visibleResidents = useMemo(
-    () => state.residents.filter((resident) => dates.some((date) => residentMatchesServices(resident, visibleServices, date))),
+    () => state.residents
+      .filter((resident) => dates.some((date) => residentMatchesServices(resident, visibleServices, date)))
+      .sort((left, right) => comparePersonNames(left.name, right.name)),
     [dates, state.residents, visibleServices]
   );
   const visibleCoverageEntries = useMemo(
@@ -482,7 +485,7 @@ function AddRounderControl({
     () =>
       state.residents
         .filter((resident) => !assignedResidentIds.has(resident.id) && isResidentAvailableForWork(state, resident, date))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .sort((a, b) => comparePersonNames(a.name, b.name)),
     [assignedResidentIds, date, state]
   );
   const [showPicker, setShowPicker] = useState(false);
@@ -637,7 +640,7 @@ function CoverageSlotSelect({
             Number(isResidentOnService(b, selectedService, date)) -
             Number(isResidentOnService(a, selectedService, date));
           if (serviceDelta !== 0) return serviceDelta;
-          return a.name.localeCompare(b.name);
+          return comparePersonNames(a.name, b.name);
         }),
     [currentResident?.id, date, kind, selectedService, state.residents]
   );

@@ -1,5 +1,6 @@
 import { Attending, AttendingBlock, ClinicSession, PlannerState, Resident, SERVICE_LINES, ServiceLine } from "./types";
 import { getResidentServiceTagsForDate, normalizeRotationServiceToServiceLine } from "./rotations";
+import { comparePersonNames } from "./names";
 
 export const DEFAULT_SERVICE_LINE: ServiceLine = "Davies";
 export const ENDOSCOPY_SERVICE_LINE: ServiceLine = "ENDO";
@@ -35,7 +36,7 @@ export function sortResidentsForService(residents: Resident[], selectedService: 
   return [...residents].sort((a, b) => {
     const serviceDelta = Number(isResidentOnService(b, selectedService, date)) - Number(isResidentOnService(a, selectedService, date));
     if (serviceDelta !== 0) return serviceDelta;
-    return a.name.localeCompare(b.name);
+    return comparePersonNames(a.name, b.name);
   });
 }
 

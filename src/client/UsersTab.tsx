@@ -12,6 +12,7 @@ import {
 } from "./api";
 import type { PasswordChangeResponse } from "./api";
 import { Attending, Role, ServicePrivilege, ServicePrivileges, UserSummary } from "../shared/types";
+import { comparePersonNames } from "../shared/names";
 
 type AddPrivilegePreset = "view" | "request" | "edit" | "custom" | "clone";
 
@@ -50,6 +51,8 @@ export function UsersTab({
     canAddContacts: false
   });
   const [error, setError] = useState<string | undefined>();
+  const sortedUsers = [...users].sort((left, right) => comparePersonNames(left.displayName, right.displayName));
+  const sortedAttendings = [...attendings].sort((left, right) => comparePersonNames(left.name, right.name));
 
   useEffect(() => {
     setDrafts(Object.fromEntries(users.map((user) => [user.username, user])));
@@ -242,7 +245,7 @@ export function UsersTab({
               onChange={(event) => setAddDraft({ ...addDraft, attendingId: event.target.value })}
             >
               <option value="">Choose attending</option>
-              {attendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
+              {sortedAttendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
             </select>
           </label>
         )}
@@ -277,7 +280,7 @@ export function UsersTab({
               value={addDraft.cloneFrom || users[0]?.username || ""}
               onChange={(event) => setAddDraft({ ...addDraft, cloneFrom: event.target.value })}
             >
-              {users.map((user) => (
+              {sortedUsers.map((user) => (
                 <option key={user.username} value={user.username}>
                   {user.username}
                 </option>
@@ -334,7 +337,7 @@ export function UsersTab({
           <span>Password</span>
           <span />
         </div>
-        {users.map((user) => {
+        {sortedUsers.map((user) => {
           const draft = drafts[user.username] ?? user;
           return (
             <article key={user.username} className="user-row">
@@ -369,7 +372,7 @@ export function UsersTab({
                     onChange={(event) => updateDraft(user.username, { attendingId: event.target.value || undefined })}
                   >
                     <option value="">Choose attending</option>
-                    {attendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
+                    {sortedAttendings.map((attending) => <option key={attending.id} value={attending.id}>{attending.name}</option>)}
                   </select>
                 </label>
               )}

@@ -4,7 +4,9 @@ import {
   getQuickEditHospitals,
   getAttendingNightScheduleForDate,
   getAttendingWeeklyScheduleForDate,
+  getAccountRoleLabel,
   normalizeQuickCaseDuration,
+  orderAssignmentResidents,
   shiftEndTime,
   shouldApplyScheduleLoad
 } from "./App";
@@ -86,6 +88,41 @@ describe("planner navigation", () => {
     expect(canEditScheduleForSelectedService(false, "edit")).toBe(true);
     expect(canEditScheduleForSelectedService(false, "request")).toBe(false);
     expect(canEditScheduleForSelectedService(false, "view")).toBe(false);
+  });
+});
+
+describe("resident identity and person ordering", () => {
+  it("shows residents and medical students instead of the technical viewer role", () => {
+    expect(getAccountRoleLabel("viewer", { trainingLevel: "PGY3" })).toBe("Resident · PGY3");
+    expect(getAccountRoleLabel("viewer")).toBe("Resident");
+    expect(getAccountRoleLabel("medical-student", { trainingLevel: "Medical Student" })).toBe("Medical Student");
+  });
+
+  it("puts the signed-in resident first, then the dated team, then other residents by last name", () => {
+    const state = createInitialState();
+    const [current, teamYoung, otherAdams, teamClark] = state.residents.slice(0, 4).map((resident) => ({
+      ...resident,
+      rotationSchedule: []
+    }));
+    current.id = "current";
+    current.name = "Taylor Zebra";
+    current.serviceTags = ["Berry"];
+    teamYoung.id = "team-young";
+    teamYoung.name = "Alex Young";
+    teamYoung.serviceTags = ["Davies"];
+    otherAdams.id = "other-adams";
+    otherAdams.name = "Jamie Adams";
+    otherAdams.serviceTags = ["Berry"];
+    teamClark.id = "team-clark";
+    teamClark.name = "Morgan Clark";
+    teamClark.serviceTags = ["Davies"];
+
+    expect(orderAssignmentResidents(
+      [teamYoung, otherAdams, current, teamClark],
+      "Davies",
+      "2026-08-10",
+      current.id
+    ).map((resident) => resident.id)).toEqual(["current", "team-clark", "team-young", "other-adams"]);
   });
 });
 

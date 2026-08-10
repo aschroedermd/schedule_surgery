@@ -1,5 +1,6 @@
 import { formatDate } from "./date";
 import { Resident, ResidentRotationBlock, SERVICE_LINES, ServiceLine, TrainingLevel } from "./types";
+import { comparePersonNames } from "./names";
 
 export const ROTATION_BLOCK_DATES = [
   { blockNumber: 1, startDate: "2026-07-01", endDate: "2026-08-02" },
@@ -85,7 +86,7 @@ export function sortResidentsBySeniority<T extends Pick<Resident, "name" | "trai
   return [...residents].sort((a, b) => {
     const rankDelta = getTrainingLevelRank(b.trainingLevel) - getTrainingLevelRank(a.trainingLevel);
     if (rankDelta !== 0) return rankDelta;
-    return a.name.localeCompare(b.name);
+    return comparePersonNames(a.name, b.name);
   });
 }
 
@@ -118,5 +119,5 @@ function normalizeServiceTagList(values: string[] | undefined): string[] {
 }
 
 function sortResidentsByName(residents: Resident[]): Resident[] {
-  return [...residents].sort((a, b) => a.name.localeCompare(b.name));
+  return [...residents].sort((a, b) => comparePersonNames(a.name, b.name));
 }

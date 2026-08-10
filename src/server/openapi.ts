@@ -417,11 +417,15 @@ export function getOpenApiDocument() {
         },
         AssignmentInput: {
           type: "object",
-          required: ["kind", "targetId", "residentId"],
+          required: ["kind", "targetId"],
           properties: {
             kind: { type: "string", enum: ["case", "block", "clinic"] },
             targetId: { type: "string" },
-            residentId: { type: "string" },
+            residentId: { type: "string", description: "Existing resident or medical-student roster id." },
+            manualMedicalStudentName: {
+              type: "string",
+              description: "Creates or reuses an assignable-only medical-student roster entry for a case or clinic assignment."
+            },
             locked: { type: "boolean", default: false }
           }
         },

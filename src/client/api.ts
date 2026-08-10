@@ -395,7 +395,13 @@ export async function deleteEntity(token: string, collection: CollectionName, id
 
 export async function createAssignment(
   token: string,
-  payload: { kind: "case" | "block" | "clinic"; targetId: string; residentId: string; locked?: boolean }
+  payload: {
+    kind: "case" | "block" | "clinic";
+    targetId: string;
+    residentId?: string;
+    manualMedicalStudentName?: string;
+    locked?: boolean;
+  }
 ): Promise<PlannerState> {
   return request<PlannerState>("/api/assignments", {
     method: "POST",

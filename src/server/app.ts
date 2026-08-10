@@ -1564,13 +1564,27 @@ export function createApp(
 
   app.post("/api/assignments", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
-      const state = await store.load();
+      let state = await store.load();
       const serviceLine = getAssignmentTargetServiceLine(state, req.body.kind, req.body.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
-      requireResident(state, req.body.residentId);
-      assertMedicalStudentAssignmentKind(state, req.body.kind, req.body.residentId);
-      assertResidentAvailableForAssignment(state, req.body.kind, req.body.targetId, req.body.residentId);
-      const assignment = makeAssignment(req.body.kind, req.body.targetId, req.body.residentId, "admin", Boolean(req.body.locked));
+      const manualMedicalStudentName = readOptionalString(req.body.manualMedicalStudentName);
+      if (manualMedicalStudentName && req.body.residentId) {
+        throw new HttpError(400, "Choose an existing person or enter a medical student name, not both");
+      }
+      if (manualMedicalStudentName && req.body.kind !== "case" && req.body.kind !== "clinic") {
+        throw new HttpError(400, "Medical students can be assigned to cases or clinics only");
+      }
+      const manualMedicalStudent = manualMedicalStudentName
+        ? findOrCreateManualMedicalStudent(state, manualMedicalStudentName)
+        : undefined;
+      if (manualMedicalStudent?.created) {
+        state = { ...state, residents: [...state.residents, manualMedicalStudent.resident] };
+      }
+      const residentId = manualMedicalStudent?.resident.id ?? req.body.residentId;
+      requireResident(state, residentId);
+      assertMedicalStudentAssignmentKind(state, req.body.kind, residentId);
+      assertResidentAvailableForAssignment(state, req.body.kind, req.body.targetId, residentId);
+      const assignment = makeAssignment(req.body.kind, req.body.targetId, residentId, "admin", Boolean(req.body.locked));
       if (
         assignment.kind === "case" &&
         state.assignments.some(
@@ -3929,7 +3943,7 @@ function isTradeableCoverageKind(kind: CoverageKind): boolean {
   return kind === "call" || kind === "rounding";
 }
 
-function requireResident(state: PlannerState, residentId: unknown): void {
+function requireResident(state: PlannerState, residentId: unknown): asserts residentId is string {
   if (typeof residentId !== "string" || !state.residents.some((resident) => resident.id === residentId)) {
     throw new HttpError(400, `Unknown resident: ${String(residentId ?? "")}`);
   }
@@ -5170,9 +5184,51 @@ function assertResidentAvailableForAssignment(state: PlannerState, kind: unknown
 function assertMedicalStudentAssignmentKind(state: PlannerState, kind: unknown, residentId: unknown): void {
   if (typeof residentId !== "string") return;
   const resident = state.residents.find((candidate) => candidate.id === residentId);
-  if (resident?.trainingLevel === "Medical Student" && kind !== "case") {
-    throw new HttpError(400, "Medical students can be assigned to cases only");
+  if (resident?.trainingLevel === "Medical Student" && kind !== "case" && kind !== "clinic") {
+    throw new HttpError(400, "Medical students can be assigned to cases or clinics only");
   }
+}
+
+function findOrCreateManualMedicalStudent(
+  state: PlannerState,
+  inputName: string
+): { resident: Resident; created: boolean } {
+  const name = inputName.trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 100) {
+    throw new HttpError(400, "Medical student name must be 2-100 characters");
+  }
+  const normalizedName = normalizePersonLookupName(name);
+  const existing = state.residents.find(
+    (resident) => resident.trainingLevel === "Medical Student" && normalizePersonLookupName(resident.name) === normalizedName
+  );
+  if (existing) return { resident: existing, created: false };
+
+  return {
+    created: true,
+    resident: {
+      id: createId("res_med_student"),
+      name,
+      aliases: [],
+      trainingLevel: "Medical Student",
+      designation: "resident",
+      rosterKind: "off-service",
+      sourceProgram: "Medical Student",
+      sourceProgramAbbreviation: "MS",
+      accountEligible: false,
+      serviceTags: [],
+      serviceStatus: "off-service",
+      color: "#64748b",
+      tags: ["manual-medical-student"],
+      trainingInterests: [],
+      unavailable: [],
+      vacation: [],
+      rotationSchedule: []
+    }
+  };
+}
+
+function normalizePersonLookupName(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function assertResidentAvailableForWork(state: PlannerState, residentId: unknown, date: string, workLabel: "case" | "rounding"): void {
