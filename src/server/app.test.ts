@@ -1640,10 +1640,14 @@ describe("planner API", () => {
       entry_kind: null,
       call_position: null,
       case_id: "case_chen_whipple",
+      clinic_id: null,
       assignment_id: null,
       entry_id: null,
       request_id: null,
       requested_order: null,
+      start_time: null,
+      end_time: null,
+      is_procedure: null,
       note: null
     };
     const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
@@ -1729,6 +1733,62 @@ describe("planner API", () => {
         .set("authorization", `Bearer ${editorToken}`)
         .expect(200);
       expect((await store.load()).cases.find((surgeryCase) => surgeryCase.id === "case_chen_whipple")?.order).toBe(1);
+
+      assistantArguments = {
+        ...assistantArguments,
+        action_type: "clinic_session",
+        operation: "update",
+        date: null,
+        attending_name: null,
+        case_id: null,
+        clinic_id: "clinic_hpb_tue",
+        requested_order: null,
+        start_time: "08:00",
+        end_time: null,
+        is_procedure: true
+      };
+      const clinicPreview = await request(app)
+        .post("/api/chat")
+        .set("authorization", `Bearer ${editorToken}`)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "Start Chen's Tuesday clinic at 0800 and make it a procedure clinic" }] })
+        .expect(200);
+      expect(clinicPreview.body.interaction.options[0].label).toBe("Confirm change");
+      await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(clinicPreview.body.interaction.actionToken)}/commit`)
+        .set("authorization", `Bearer ${editorToken}`)
+        .expect(200)
+        .expect(({ body }) => expect(body.message).toContain("Clinic session updated"));
+      expect((await store.load()).clinicSessions.find((clinic) => clinic.id === "clinic_hpb_tue")).toMatchObject({
+        startTime: "08:00",
+        endTime: "17:00",
+        isProcedure: true
+      });
+
+      assistantArguments = {
+        ...assistantArguments,
+        end_time: "16:30"
+      };
+      const clinicRequestPreview = await request(app)
+        .post("/api/chat")
+        .set("authorization", `Bearer ${requesterToken}`)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "Request that Chen's Tuesday procedure clinic end at 1630" }] })
+        .expect(200);
+      expect(clinicRequestPreview.body.interaction.options[0].label).toBe("Submit request");
+      await request(app)
+        .post(`/api/chat/actions/${encodeURIComponent(clinicRequestPreview.body.interaction.actionToken)}/commit`)
+        .set("authorization", `Bearer ${requesterToken}`)
+        .expect(200);
+      const clinicRequest = (await store.load()).coverageRequests.find((item) => item.requestType === "clinic-session-change");
+      expect(clinicRequest).toMatchObject({
+        status: "pending",
+        serviceLine: "Davies",
+        requestedClinicSessionChange: { clinicId: "clinic_hpb_tue", startTime: "08:00", endTime: "16:30", isProcedure: true }
+      });
+      await request(app)
+        .post(`/api/coverage-requests/${clinicRequest!.id}/approve`)
+        .set("authorization", `Bearer ${editorToken}`)
+        .expect(200);
+      expect((await store.load()).clinicSessions.find((clinic) => clinic.id === "clinic_hpb_tue")?.endTime).toBe("16:30");
 
       assistantArguments = {
         ...assistantArguments,

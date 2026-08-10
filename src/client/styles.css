@@ -1071,7 +1071,7 @@ h2 {
 .quick-case-heading,
 .quick-case-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 104px;
+  grid-template-columns: minmax(0, 1fr) 104px 32px;
   gap: 8px;
 }
 
@@ -1096,6 +1096,12 @@ h2 {
 .quick-editor-footer .primary-button {
   min-height: 34px;
   padding: 6px 12px;
+}
+
+.quick-remove-case {
+  width: 32px;
+  min-height: 32px;
+  color: var(--danger-text, #b42318);
 }
 
 .case-list {

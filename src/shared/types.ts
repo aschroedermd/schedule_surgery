@@ -36,7 +36,8 @@ export type CoverageRequestType =
   | "resident-profile"
   | "resident-vacation"
   | "assignment-change"
-  | "case-order-change";
+  | "case-order-change"
+  | "clinic-session-change";
 
 export type Priority = 1 | 2 | 3 | 4 | 5;
 
@@ -246,6 +247,13 @@ export interface CaseOrderChange {
   order: number;
 }
 
+export interface ClinicSessionChange {
+  clinicId: string;
+  startTime?: string;
+  endTime?: string;
+  isProcedure?: boolean;
+}
+
 export interface CoverageChangeRequest {
   id: string;
   requestType?: CoverageRequestType;
@@ -259,6 +267,7 @@ export interface CoverageChangeRequest {
   requestedResidentVacation?: ResidentVacationChange;
   requestedAssignmentChange?: AssignmentChange;
   requestedCaseOrderChange?: CaseOrderChange;
+  requestedClinicSessionChange?: ClinicSessionChange;
   swapEntryId?: string;
   swapRequestedEntry?: CoverageEntry;
   serviceLine?: string;

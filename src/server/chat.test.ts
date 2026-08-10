@@ -450,6 +450,21 @@ describe("schedule assistant", () => {
     expect(gapsPrompt).toContain("<FAST_COVERAGE_GAPS");
     expect(gapsPrompt).toContain("type=OR case");
     expect(gapsPrompt).toContain("type=clinic");
+
+    const state = createInitialState(FAST_CONTEXT_NOW);
+    const clinic = state.clinicSessions[0];
+    const [lookup] = refreshScheduleLookups([{
+      tool: "get_or_schedule",
+      arguments: { start_date: clinic.date, end_date: clinic.date, service: clinic.service, attending_name: null }
+    }], { state, user, serviceLine: "Davies", now: FAST_CONTEXT_NOW });
+    expect(lookup.result).toMatchObject({
+      days: [{
+        clinics: [expect.objectContaining({
+          clinic_ref: clinic.id,
+          session_type: "clinic"
+        })]
+      }]
+    });
   });
 
   it("injects linked-user, named-person, availability, and rotation summaries", async () => {
@@ -639,6 +654,13 @@ describe("schedule assistant", () => {
       expect(tool.function.strict).toBe(true);
       expect(tool.function.parameters).toMatchObject({ type: "object", additionalProperties: false });
     }
+    const actionTool = tools.find((tool) => (tool.function as { name?: string }).name === "prepare_schedule_action");
+    const actionProperties = (actionTool?.function.parameters as {
+      properties?: Record<string, { enum?: unknown[] }>;
+      required?: string[];
+    });
+    expect(actionProperties.properties?.action_type.enum).toContain("clinic_session");
+    expect(actionProperties.required).toEqual(expect.arrayContaining(["clinic_id", "start_time", "end_time", "is_procedure"]));
   });
 
   it("narrows fast context by month and hospital and includes pending trade requests", async () => {

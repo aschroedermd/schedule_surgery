@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   Lock,
   LogOut,
+  Minus,
   Pencil,
   Plus,
   Printer,
@@ -3025,6 +3026,30 @@ function QuickBlockEditor({
     }
   }
 
+  async function removeCase(draft: QuickCaseDraft) {
+    if (savingRef.current) return;
+    const caseName = draft.procedureLabel.trim() || "this case";
+    const confirmation = draft.isNew
+      ? `Remove unsaved ${caseName}?`
+      : `Delete ${caseName}? This cannot be undone.`;
+    if (!window.confirm(confirmation)) return;
+
+    if (draft.isNew) {
+      setCaseDrafts((current) => current.filter((candidate) => candidate.id !== draft.id));
+      return;
+    }
+
+    savingRef.current = true;
+    setIsSaving(true);
+    try {
+      await onMutate(() => deleteEntity(token, "cases", draft.id), "Case deleted");
+      setCaseDrafts((current) => current.filter((candidate) => candidate.id !== draft.id));
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
   useEffect(() => {
     if (!isOpen) return;
     function handlePointerDown(event: PointerEvent) {
@@ -3078,6 +3103,7 @@ function QuickBlockEditor({
           <div className="quick-case-heading" aria-hidden="true">
             <span>Case</span>
             <span>Duration (min)</span>
+            <span />
           </div>
           <div className="quick-case-list">
             {caseDrafts.map((draft) => (
@@ -3096,6 +3122,16 @@ function QuickBlockEditor({
                   value={draft.durationMinutes}
                   onChange={(event) => setCaseDrafts((current) => current.map((candidate) => candidate.id === draft.id ? { ...candidate, durationMinutes: event.target.value ? Number(event.target.value) : "" } : candidate))}
                 />
+                <button
+                  type="button"
+                  className="icon-button quick-remove-case"
+                  title="Delete case"
+                  aria-label={`Delete ${draft.procedureLabel.trim() || "case"}`}
+                  disabled={isSaving}
+                  onClick={() => void removeCase(draft)}
+                >
+                  <Minus size={16} />
+                </button>
               </div>
             ))}
           </div>
@@ -5055,7 +5091,12 @@ function getAttendingScheduleDisplay(state: PlannerState, attendingId: string | 
   if (!attendingId) return undefined;
   const attending = state.attendings.find((candidate) => candidate.id === attendingId);
   if (!attending) return undefined;
-  return { displayName: getResidentLastName(attending.name), fullName: attending.name };
+  return { displayName: getAttendingLastName(attending.name), fullName: attending.name };
+}
+
+function getAttendingLastName(name: string): string {
+  const nameParts = name.trim().split(/\s+/).filter(Boolean);
+  return nameParts.at(-1) ?? "";
 }
 
 function getWeekendAnchorDate(date: string): string {

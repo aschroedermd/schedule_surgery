@@ -36,8 +36,6 @@ import {
 import { addDays, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
 import {
-  INDEPENDENT_CALL_LABELS,
-  INDEPENDENT_CALL_LINES,
   resolveIndependentCallCoverage
 } from "../shared/attendingCoverage";
 import {
@@ -840,28 +838,64 @@ function CallTeamSummary({ state, entries }: { state: PlannerState; entries: Cov
 }
 
 function IndependentAttendingCallSummary({ state, date }: { state: PlannerState; date: string }) {
-  const items = INDEPENDENT_CALL_LINES.map((line) => {
-    const day = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "day");
-    const night = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "night");
-    const dayName = getCoverageClinicianLastName(state, day?.assignment);
-    const nightName = getCoverageClinicianLastName(state, night?.assignment);
-    return {
-      label: INDEPENDENT_CALL_LABELS[line],
-      name: dayName && nightName && dayName !== nightName
-        ? `${dayName}/${nightName}`
-        : nightName ?? dayName ?? "—"
-    };
-  });
-  if (items.every((item) => item.name === "—")) return null;
+  const summary = getCalendarAttendingCallSummary(state, date);
+  if (!summary) return null;
 
   return (
-    <div className="coverage-independent-call" aria-label="Practice, vascular, and pediatric surgeons on call">
-      {items.map((item) => <span key={item.label}>{item.label} {item.name}</span>)}
+    <div className="coverage-independent-call" aria-label="ACS, practice, pediatric, vascular, and NRV surgeons on call">
+      <span>{summary}</span>
     </div>
   );
 }
 
-function getCoverageClinicianLastName(
+const CALENDAR_INDEPENDENT_CALL_LINES = ["Practice", "Pediatrics", "Vascular", "NRV"] as const;
+
+export function getCalendarAttendingCallSummary(state: PlannerState, date: string): string | undefined {
+  const acsName = getCoverageClinicianInitialAndLastName(state, getAcsCallAssignment(state, date));
+  const independentNames = CALENDAR_INDEPENDENT_CALL_LINES.map((line) => {
+    const day = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "day");
+    const night = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "night");
+    const dayName = getCoverageClinicianInitialAndLastName(state, day?.assignment);
+    const nightName = getCoverageClinicianInitialAndLastName(state, night?.assignment);
+    return dayName && nightName && dayName !== nightName
+      ? `${dayName}/${nightName}`
+      : nightName ?? dayName;
+  });
+
+  if (!acsName && independentNames.every((name) => !name)) return undefined;
+  return [acsName, ...independentNames].map((name) => name ?? "—").join(", ");
+}
+
+function getAcsCallAssignment(
+  state: PlannerState,
+  date: string
+): PlannerState["attendingCoverageAssignments"][number] | undefined {
+  const assignment = state.attendingCoverageAssignments.find(
+    (candidate) =>
+      candidate.date === date &&
+      candidate.line === "ACS" &&
+      candidate.shift === "night" &&
+      candidate.role === "primary"
+  );
+  if (assignment) return assignment;
+
+  const legacyEntry = state.coverageEntries.find((entry) => entry.date === date && entry.kind === "attending-call");
+  if (!legacyEntry) return undefined;
+  return {
+    id: legacyEntry.id,
+    date,
+    line: "ACS",
+    shift: "night",
+    role: "primary",
+    attendingId: legacyEntry.nightAttendingId ?? legacyEntry.dayAttendingId,
+    source: "manual",
+    note: "",
+    createdAt: "",
+    updatedAt: ""
+  };
+}
+
+function getCoverageClinicianInitialAndLastName(
   state: PlannerState,
   assignment: PlannerState["attendingCoverageAssignments"][number] | undefined
 ): string | undefined {
@@ -869,7 +903,15 @@ function getCoverageClinicianLastName(
   const clinician = assignment.attendingId
     ? state.attendings.find((candidate) => candidate.id === assignment.attendingId)
     : state.residents.find((candidate) => candidate.id === assignment.fellowResidentId);
-  return clinician ? getResidentLastName(clinician.name) : undefined;
+  return clinician ? formatClinicianInitialAndLastName(clinician.name) : undefined;
+}
+
+function formatClinicianInitialAndLastName(name: string): string {
+  const nameParts = name.trim().split(/\s+/).filter(
+    (part) => !/^(dr\.?|md|do|mbbs|mph|facs)$/i.test(part.replace(/[,.]/g, ""))
+  );
+  if (nameParts.length <= 1) return nameParts[0] ?? name.trim();
+  return `${nameParts[0][0].toUpperCase()}. ${nameParts.at(-1)}`;
 }
 
 function getOrderedSurgeryCallEntries(entries: CoverageEntry[]): CoverageEntry[] {
@@ -1336,6 +1378,20 @@ function describeRequest(state: PlannerState, coverageRequest: CoverageChangeReq
     const change = coverageRequest.requestedCaseOrderChange;
     const surgeryCase = change ? state.cases.find((candidate) => candidate.id === change.caseId) : undefined;
     return `Move ${surgeryCase?.procedureLabel ?? "OR case"} to case #${change?.order ?? "?"}`;
+  }
+  if (coverageRequest.requestType === "clinic-session-change") {
+    const change = coverageRequest.requestedClinicSessionChange;
+    const clinic = change ? state.clinicSessions.find((candidate) => candidate.id === change.clinicId) : undefined;
+    const attending = clinic?.attendingId
+      ? state.attendings.find((candidate) => candidate.id === clinic.attendingId)
+      : undefined;
+    const time = clinic && change
+      ? `${clinic.startTime}-${clinic.endTime} to ${change.startTime ?? clinic.startTime}-${change.endTime ?? clinic.endTime}`
+      : "requested times";
+    const type = change?.isProcedure === undefined
+      ? ""
+      : ` and make it a ${change.isProcedure ? "procedure clinic" : "clinic"}`;
+    return `Update ${attending?.name ?? clinic?.service ?? "clinic session"} on ${clinic?.date ?? "the scheduled date"} from ${time}${type}`;
   }
   if (isResidentProfileRequest(coverageRequest)) {
     return describeResidentProfileRequest(state, coverageRequest);

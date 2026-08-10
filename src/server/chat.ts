@@ -1079,6 +1079,7 @@ Interaction and action boundaries:
 - Resolve relative dates from Today, state the interpreted date or range, and understand conversational follow-ups such as "what about Friday?"
 - Ask only when ambiguity materially changes the result. When two to five clear answers are possible, call ask_user_question by itself so the interface can show response buttons.
 - For a requested schedule change, call prepare_schedule_action only after dates and people are unambiguous. The server resolves records, validates conflicts, re-checks authority, and shows the exact change for confirmation. Do not ask a separate Yes/No question before that tool.
+- Clinic session times and clinic/procedure-clinic type are editable through prepare_schedule_action with action_type clinic_session. Use the clinic_ref from get_or_schedule when available.
 - Direct edits are used only when the server-computed permissions allow them. Otherwise the same preparation tool creates an approval request when request permission exists. If neither permission exists, report the tool denial plainly. Never claim success before the user confirms and the action endpoint succeeds.
 
 Lead with the direct answer. Keep the default response concise, clinically professional, and easy to scan; the interface separately presents detailed schedule records. When comparing schedules, explain the important differences. When data shows uncovered work, overlaps, post-call concerns, vacation, or timing conflicts, call those out plainly. If asked why someone cannot cover, explain only from supplied availability and schedule facts and suggest qualified alternatives only when the data supports them.
@@ -2222,10 +2223,12 @@ function getOrSchedule(context: AssistantContext, args: Record<string, unknown>)
           }))
         })),
         clinics: clinics.map((clinic) => ({
+          clinic_ref: clinic.id,
           time: `${clinic.startTime}-${clinic.endTime}`,
           attending: clinic.attending?.name,
           service: clinic.service,
           location: clinic.location,
+          session_type: clinic.isProcedure ? "procedure clinic" : "clinic",
           residents: clinic.assignments.map((assignment) => residentName(context.state, assignment.residentId)),
           warnings: clinic.warningMessages
         })),
@@ -2873,11 +2876,11 @@ const SCHEDULE_TOOLS = [
       name: "prepare_schedule_action",
       strict: true,
       description:
-        "Prepare one permission-aware schedule action and return an exact confirmation. Supports resident call swaps, OR case coverage, case order, calendar entries, and pending-request decisions. The server resolves names and records, validates authority and conflicts, and chooses direct edit versus approval request.",
+        "Prepare one permission-aware schedule action and return an exact confirmation. Supports resident call swaps, OR case coverage, case order, clinic session time/type edits, calendar entries, and pending-request decisions. The server resolves names and records, validates authority and conflicts, and chooses direct edit versus approval request.",
       parameters: {
         type: "object",
         properties: {
-          action_type: { type: "string", enum: ["call_swap", "case_coverage", "case_order", "calendar_entry", "request_resolution"] },
+          action_type: { type: "string", enum: ["call_swap", "case_coverage", "case_order", "clinic_session", "calendar_entry", "request_resolution"] },
           operation: { type: "string", enum: ["create", "update", "delete", "swap", "approve", "deny"] },
           date: { type: ["string", "null"], description: "Primary date in YYYY-MM-DD format, or null." },
           target_date: { type: ["string", "null"], description: "Target resident's swap date in YYYY-MM-DD format, or null for a one-way coverage request." },
@@ -2889,16 +2892,21 @@ const SCHEDULE_TOOLS = [
           entry_kind: { type: ["string", "null"], enum: ["call", "rounding", "off", "note", null], description: "Calendar entry kind, or null." },
           call_position: { type: ["string", "null"], enum: ["senior", "mid-level", "intern", null], description: "Call position for a calendar create/update, or null." },
           case_id: { type: ["string", "null"], description: "Case id returned by a schedule lookup, or null." },
+          clinic_id: { type: ["string", "null"], description: "Clinic session id returned as clinic_ref by a schedule lookup, or null when date, attending, and service identify one session." },
           assignment_id: { type: ["string", "null"], description: "Assignment id returned by a schedule lookup, or null." },
           entry_id: { type: ["string", "null"], description: "Calendar entry id returned by a schedule lookup, or null." },
           request_id: { type: ["string", "null"], description: "Pending request id returned by request context, or null." },
           requested_order: { type: ["integer", "null"], minimum: 1, description: "Requested one-based OR case order, or null." },
+          start_time: { type: ["string", "null"], description: "New clinic session start time in 24-hour HH:MM format, or null to keep it." },
+          end_time: { type: ["string", "null"], description: "New clinic session end time in 24-hour HH:MM format, or null to keep it." },
+          is_procedure: { type: ["boolean", "null"], description: "True for a procedure clinic, false for a standard clinic, or null to keep it." },
           note: { type: ["string", "null"], description: "Optional change-request note, or null." }
         },
         required: [
           "action_type", "operation", "date", "target_date", "service", "resident_name",
           "target_resident_name", "attending_name", "procedure", "entry_kind", "call_position",
-          "case_id", "assignment_id", "entry_id", "request_id", "requested_order", "note"
+          "case_id", "clinic_id", "assignment_id", "entry_id", "request_id", "requested_order",
+          "start_time", "end_time", "is_procedure", "note"
         ],
         additionalProperties: false
       }

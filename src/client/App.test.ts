@@ -183,7 +183,7 @@ describe("attending call calendars", () => {
     const state: PlannerState = createInitialState();
     state.attendings = [
       { id: "att_night", name: "Dr. Night", service: "Davies", priority: 3 },
-      { id: "att_egs", name: "Dr. Egs", service: "Davies", priority: 3 },
+      { id: "att_egs", name: "Dr. Alex Egs", service: "Davies", priority: 3 },
       { id: "att_trauma", name: "Dr. Trauma", service: "Davies", priority: 3 },
       { id: "att_scc", name: "Dr. Scc", service: "Davies", priority: 3 },
       { id: "att_backup", name: "Dr. Backup", service: "Davies", priority: 3 }

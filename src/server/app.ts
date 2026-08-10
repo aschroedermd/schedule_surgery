@@ -47,6 +47,7 @@ import {
   CaseOrderChange,
   ClaimRequest,
   ClinicSession,
+  ClinicSessionChange,
   CollectionName,
   ContactRequest,
   CoverageChangeRequest,
@@ -137,6 +138,8 @@ type AssistantScheduleAction =
   | { kind: "assignment-direct"; action: CoverageRequestAction; change: AssignmentChange; serviceLine: string }
   | { kind: "case-order-request"; request: CoverageChangeRequest }
   | { kind: "case-order-direct"; change: CaseOrderChange; serviceLine: string }
+  | { kind: "clinic-session-request"; request: CoverageChangeRequest }
+  | { kind: "clinic-session-direct"; change: ClinicSessionChange; serviceLine: string }
   | { kind: "request-resolution"; requestId: string; resolution: "approve" | "deny" };
 
 interface PendingAssistantScheduleAction {
@@ -2782,6 +2785,8 @@ function prepareAssistantScheduleAction(
       ? prepareAssistantCaseCoverage(state, user, args, operation)
       : actionType === "case_order"
         ? prepareAssistantCaseOrder(state, user, args, operation)
+        : actionType === "clinic_session"
+          ? prepareAssistantClinicSession(state, user, args, operation)
         : actionType === "calendar_entry"
           ? prepareAssistantCalendarEntry(state, user, currentServiceLine, args, operation)
           : actionType === "request_resolution"
@@ -2936,6 +2941,75 @@ function prepareAssistantCaseOrder(
   return { mode, summary, action: { kind: "case-order-direct", change, serviceLine } };
 }
 
+function prepareAssistantClinicSession(
+  state: PlannerState,
+  user: SessionUser,
+  args: Record<string, unknown>,
+  operation: string
+): Pick<PendingAssistantScheduleAction, "mode" | "summary" | "action"> {
+  if (operation !== "update") throw new HttpError(400, "Clinic session changes use the update operation");
+  const clinic = findAssistantClinicSession(state, args);
+  const startTime = readOptionalString(args.start_time);
+  const endTime = readOptionalString(args.end_time);
+  const isProcedure = args.is_procedure === null || args.is_procedure === undefined
+    ? undefined
+    : typeof args.is_procedure === "boolean"
+      ? args.is_procedure
+      : (() => { throw new HttpError(400, "is_procedure must be true, false, or null"); })();
+  if (startTime === undefined && endTime === undefined && isProcedure === undefined) {
+    throw new HttpError(400, "Specify a clinic start time, end time, and/or session type to change");
+  }
+  const nextStartTime = startTime ?? clinic.startTime;
+  const nextEndTime = endTime ?? clinic.endTime;
+  assertAssistantClinicTime(nextStartTime, "start_time");
+  assertAssistantClinicTime(nextEndTime, "end_time");
+  if (timeToMinutes(nextStartTime) >= timeToMinutes(nextEndTime)) {
+    throw new HttpError(400, "Clinic start time must be before its end time");
+  }
+  const change: ClinicSessionChange = {
+    clinicId: clinic.id,
+    startTime,
+    endTime,
+    isProcedure
+  };
+  const attending = clinic.attendingId
+    ? state.attendings.find((candidate) => candidate.id === clinic.attendingId)
+    : undefined;
+  const serviceLine = clinic.service || (attending ? getAttendingServiceLine(state, attending.id) : undefined);
+  if (!serviceLine) throw new HttpError(400, "The clinic session does not have a service line");
+  const ownsClinic = user.role === "attending" && user.attendingId === clinic.attendingId;
+  const mode = ownsClinic || hasServicePrivilege(user, serviceLine, "edit")
+    ? "direct"
+    : assistantServiceActionMode(user, serviceLine);
+  const oldType = clinic.isProcedure ? "procedure clinic" : "clinic";
+  const nextType = (isProcedure ?? clinic.isProcedure) ? "procedure clinic" : "clinic";
+  const summary = `Update ${attending?.name ?? clinic.service} ${oldType} on ${clinic.date} from ${clinic.startTime}-${clinic.endTime} to ${nextStartTime}-${nextEndTime}${nextType !== oldType ? ` and make it a ${nextType}` : ""}`;
+  if (mode === "request") {
+    const now = new Date().toISOString();
+    const request: CoverageChangeRequest = {
+      id: createId("clinic_req"),
+      requestType: "clinic-session-change",
+      action: "update",
+      status: "pending",
+      requestedClinicSessionChange: change,
+      serviceLine,
+      requesterUsername: user.username,
+      requesterName: user.displayName,
+      message: readOptionalString(args.note) ?? "Submitted through the schedule assistant",
+      createdAt: now,
+      updatedAt: now
+    };
+    return { mode, summary, action: { kind: "clinic-session-request", request } };
+  }
+  return { mode, summary, action: { kind: "clinic-session-direct", change, serviceLine } };
+}
+
+function assertAssistantClinicTime(value: string, field: string): void {
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    throw new HttpError(400, `${field} must use 24-hour HH:MM format`);
+  }
+}
+
 function prepareAssistantCalendarEntry(
   state: PlannerState,
   user: SessionUser,
@@ -3041,6 +3115,30 @@ function findAssistantCase(state: PlannerState, args: Record<string, unknown>): 
   return matches[0];
 }
 
+function findAssistantClinicSession(state: PlannerState, args: Record<string, unknown>): ClinicSession {
+  const clinicId = readOptionalString(args.clinic_id);
+  if (clinicId) {
+    const clinic = state.clinicSessions.find((candidate) => candidate.id === clinicId);
+    if (!clinic) throw new HttpError(404, "The selected clinic session is no longer available");
+    return clinic;
+  }
+  const date = readOptionalString(args.date);
+  const service = readOptionalString(args.service);
+  const attendingName = readOptionalString(args.attending_name);
+  const attending = attendingName ? findAttendingByName(state, attendingName) : undefined;
+  const matches = state.clinicSessions.filter((clinic) =>
+    (!date || clinic.date === date) &&
+    (!service || clinic.service.toLowerCase() === service.toLowerCase()) &&
+    (!attending || clinic.attendingId === attending.id)
+  );
+  if (matches.length !== 1) {
+    throw new HttpError(400, matches.length
+      ? "More than one clinic session matches; include the date, attending, and service"
+      : "No matching clinic session was found");
+  }
+  return matches[0];
+}
+
 function findResidentByName(state: PlannerState, name: string): Resident {
   const normalized = normalizeUsername(name);
   const exact = state.residents.filter((resident) =>
@@ -3092,14 +3190,19 @@ function commitAssistantScheduleAction(
   pending: PendingAssistantScheduleAction
 ): { state: PlannerState; message: string } {
   const action = pending.action;
-  if (action.kind === "coverage-request" || action.kind === "assignment-request" || action.kind === "case-order-request") {
+  if (
+    action.kind === "coverage-request" ||
+    action.kind === "assignment-request" ||
+    action.kind === "case-order-request" ||
+    action.kind === "clinic-session-request"
+  ) {
     validateAssistantRequestAuthority(state, user, action.request);
     const nextState = addActivity({
       ...state,
       coverageRequests: [action.request, ...state.coverageRequests]
     }, {
       ...userActivityActor(user),
-      activityType: action.kind === "assignment-request" ? "assignment" : "calendar",
+      activityType: action.kind === "assignment-request" || action.kind === "case-order-request" ? "assignment" : "calendar",
       action: "submitted assistant schedule request",
       details: describeCoverageRequest(state, action.request),
       entityType: "coverageRequest",
@@ -3169,6 +3272,27 @@ function commitAssistantScheduleAction(
         entityId: action.change.caseId
       }),
       message: `Case order updated: ${pending.summary}`
+    };
+  }
+
+  if (action.kind === "clinic-session-direct") {
+    const clinic = state.clinicSessions.find((candidate) => candidate.id === action.change.clinicId);
+    if (!clinic) throw new HttpError(404, "The selected clinic session is no longer available");
+    const ownsClinic = user.role === "attending" && user.attendingId === clinic.attendingId;
+    if (!ownsClinic && !hasServicePrivilege(user, action.serviceLine, "edit")) {
+      throw new HttpError(403, "Edit permission is no longer available for this clinic session");
+    }
+    const nextState = applyClinicSessionChange(state, action.change);
+    return {
+      state: addActivity(nextState, {
+        ...userActivityActor(user),
+        activityType: "calendar",
+        action: "completed assistant clinic session change",
+        details: pending.summary,
+        entityType: "clinicSessions",
+        entityId: action.change.clinicId
+      }),
+      message: `Clinic session updated: ${pending.summary}`
     };
   }
 
@@ -3267,6 +3391,29 @@ function applyCaseOrderChange(state: PlannerState, change: CaseOrderChange): Pla
   return {
     ...state,
     cases: state.cases.map((candidate) => orders.has(candidate.id) ? { ...candidate, order: orders.get(candidate.id)! } : candidate)
+  };
+}
+
+function applyClinicSessionChange(state: PlannerState, change: ClinicSessionChange): PlannerState {
+  const clinic = state.clinicSessions.find((candidate) => candidate.id === change.clinicId);
+  if (!clinic) throw new Error(`Clinic session not found: ${change.clinicId}`);
+  const startTime = change.startTime ?? clinic.startTime;
+  const endTime = change.endTime ?? clinic.endTime;
+  assertAssistantClinicTime(startTime, "start_time");
+  assertAssistantClinicTime(endTime, "end_time");
+  if (timeToMinutes(startTime) >= timeToMinutes(endTime)) {
+    throw new Error("Clinic start time must be before its end time");
+  }
+  return {
+    ...state,
+    clinicSessions: state.clinicSessions.map((candidate) => candidate.id === clinic.id
+      ? {
+        ...candidate,
+        startTime,
+        endTime,
+        isProcedure: change.isProcedure ?? candidate.isProcedure
+      }
+      : candidate)
   };
 }
 
@@ -3507,6 +3654,11 @@ function applyCoverageRequest(state: PlannerState, coverageRequest: CoverageChan
   if (isCaseOrderChangeRequest(coverageRequest)) {
     if (!coverageRequest.requestedCaseOrderChange) throw new Error("Case order request is missing requested change");
     return applyCaseOrderChange(state, coverageRequest.requestedCaseOrderChange);
+  }
+
+  if (isClinicSessionChangeRequest(coverageRequest)) {
+    if (!coverageRequest.requestedClinicSessionChange) throw new Error("Clinic session request is missing requested change");
+    return applyClinicSessionChange(state, coverageRequest.requestedClinicSessionChange);
   }
 
   if (isResidentProfileRequest(coverageRequest)) {
@@ -4700,6 +4852,21 @@ function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageC
     return `Move ${surgeryCase?.procedureLabel ?? "OR case"} to case #${change?.order ?? "?"}`;
   }
 
+  if (isClinicSessionChangeRequest(coverageRequest)) {
+    const change = coverageRequest.requestedClinicSessionChange;
+    const clinic = change ? state.clinicSessions.find((candidate) => candidate.id === change.clinicId) : undefined;
+    const attending = clinic?.attendingId
+      ? state.attendings.find((candidate) => candidate.id === clinic.attendingId)
+      : undefined;
+    const time = clinic && change
+      ? `${clinic.startTime}-${clinic.endTime} to ${change.startTime ?? clinic.startTime}-${change.endTime ?? clinic.endTime}`
+      : "requested times";
+    const type = change?.isProcedure === undefined
+      ? ""
+      : ` and make it a ${change.isProcedure ? "procedure clinic" : "clinic"}`;
+    return `Update ${attending?.name ?? clinic?.service ?? "clinic session"} on ${clinic?.date ?? "the scheduled date"} from ${time}${type}`;
+  }
+
   if (isResidentProfileRequest(coverageRequest)) {
     return describeResidentProfileRequest(state, coverageRequest);
   }
@@ -4729,6 +4896,7 @@ function describeCoverageRequest(state: PlannerState, coverageRequest: CoverageC
 function getApprovedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
   if (isAssignmentChangeRequest(coverageRequest)) return "approved case coverage request";
   if (isCaseOrderChangeRequest(coverageRequest)) return "approved case order request";
+  if (isClinicSessionChangeRequest(coverageRequest)) return "approved clinic session request";
   if (isResidentProfileRequest(coverageRequest)) return "approved resident profile request";
   if (isResidentVacationRequest(coverageRequest)) return "approved resident vacation request";
   if (isResidentTradeRequest(coverageRequest)) return "accepted resident call trade";
@@ -4738,6 +4906,7 @@ function getApprovedCoverageRequestActivity(coverageRequest: CoverageChangeReque
 function getDeniedCoverageRequestActivity(coverageRequest: CoverageChangeRequest): string {
   if (isAssignmentChangeRequest(coverageRequest)) return "denied case coverage request";
   if (isCaseOrderChangeRequest(coverageRequest)) return "denied case order request";
+  if (isClinicSessionChangeRequest(coverageRequest)) return "denied clinic session request";
   if (isResidentProfileRequest(coverageRequest)) return "denied resident profile request";
   if (isResidentVacationRequest(coverageRequest)) return "denied resident vacation request";
   if (isResidentTradeRequest(coverageRequest)) return "denied resident call trade";
@@ -4884,6 +5053,10 @@ function isAssignmentChangeRequest(coverageRequest: CoverageChangeRequest): bool
 
 function isCaseOrderChangeRequest(coverageRequest: CoverageChangeRequest): boolean {
   return coverageRequest.requestType === "case-order-change";
+}
+
+function isClinicSessionChangeRequest(coverageRequest: CoverageChangeRequest): boolean {
+  return coverageRequest.requestType === "clinic-session-change";
 }
 
 function coverageRequestTargetsUserResident(
