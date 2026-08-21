@@ -879,6 +879,49 @@ describe("planner API", () => {
     );
   });
 
+  it("lets medical students add only themselves to cases and clinics", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+
+    await request(app)
+      .post("/api/users")
+      .set("x-api-key", "test-admin-api-key")
+      .send({
+        username: "studentself",
+        displayName: "Sam Student",
+        accountType: "medical-student",
+        temporaryPassword: "TempStudent-2026"
+      })
+      .expect(201);
+
+    const token = await loginOnApp(app, "studentself", "TempStudent-2026");
+    const state = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
+    const student = state.body.residents.find((resident: { username?: string }) => resident.username === "studentself");
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: student.id })
+      .expect(201);
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "clinic", targetId: "clinic_hpb_tue", residentId: student.id })
+      .expect(201);
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "case", targetId: "case_chen_chole", residentId: "res_blue" })
+      .expect(403);
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
+      .send({ kind: "block", targetId: "block_chen_mon", residentId: student.id })
+      .expect(403);
+  });
+
   it("lets linked residents award one weekly gold star without exposing other givers to viewers", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
     const adminToken = await loginOnApp(app, "admin", "admin-dev-password");

@@ -209,6 +209,9 @@ export function App() {
   const canEditSelectedService = Boolean(session && canEditScheduleForSelectedService(isAdmin, selectedPrivilege));
   const canRequestSelectedService = Boolean(session && (canEditSelectedService || selectedPrivilege === "request"));
   const linkedResident = state && session ? findResidentForSession(state, session) : undefined;
+  const canMedicalStudentSelfAssign = Boolean(
+    session?.role === "medical-student" && linkedResident?.trainingLevel === "Medical Student"
+  );
   const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session) || linkedResident || (state?.coverageRequests.length ?? 0) > 0));
   const pendingCoverageRequestCount = state?.coverageRequests.filter((request) => request.status === "pending").length ?? 0;
   const liveUpdatesReady = Boolean(state && schedule && selectedWeekId);
@@ -747,6 +750,7 @@ export function App() {
           token={session.token}
           selectedService={selectedService}
           canEdit={canEditSelectedService}
+          canMedicalStudentSelfAssign={canMedicalStudentSelfAssign}
           currentResidentId={linkedResident?.id}
           editableAttendingId={isAttending ? session.attendingId : undefined}
           showScheduleEditor={isScheduleEditorOpen}
@@ -1272,6 +1276,7 @@ function BoardTab({
   token,
   selectedService,
   canEdit,
+  canMedicalStudentSelfAssign,
   currentResidentId,
   editableAttendingId,
   showScheduleEditor,
@@ -1283,6 +1288,7 @@ function BoardTab({
   token: string;
   selectedService: string;
   canEdit: boolean;
+  canMedicalStudentSelfAssign: boolean;
   currentResidentId?: string;
   editableAttendingId?: string;
   showScheduleEditor: boolean;
@@ -1378,6 +1384,7 @@ function BoardTab({
                 state={state}
                 block={block}
                 canEdit={canEdit}
+                canMedicalStudentSelfAssign={canMedicalStudentSelfAssign}
                 currentResidentId={currentResidentId}
                 token={token}
                 selectedService={selectedService}
@@ -1391,6 +1398,7 @@ function BoardTab({
                 state={state}
                 clinic={clinic}
                 canEdit={canEdit}
+                canMedicalStudentSelfAssign={canMedicalStudentSelfAssign}
                 currentResidentId={currentResidentId}
                 token={token}
                 selectedService={selectedService}
@@ -2714,6 +2722,7 @@ function BlockView({
   state,
   block,
   canEdit,
+  canMedicalStudentSelfAssign,
   currentResidentId,
   token,
   selectedService,
@@ -2722,6 +2731,7 @@ function BlockView({
   state: PlannerState;
   block: ScheduledBlock;
   canEdit: boolean;
+  canMedicalStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
   selectedService: string;
@@ -2776,6 +2786,7 @@ function BlockView({
             state={state}
             surgeryCase={surgeryCase}
             canEdit={canEdit}
+            canMedicalStudentSelfAssign={canMedicalStudentSelfAssign}
             currentResidentId={currentResidentId}
             token={token}
             selectedService={selectedService}
@@ -2791,6 +2802,7 @@ function CaseRow({
   state,
   surgeryCase,
   canEdit,
+  canMedicalStudentSelfAssign,
   currentResidentId,
   token,
   selectedService,
@@ -2799,6 +2811,7 @@ function CaseRow({
   state: PlannerState;
   surgeryCase: ScheduledCase;
   canEdit: boolean;
+  canMedicalStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
   selectedService: string;
@@ -2825,7 +2838,13 @@ function CaseRow({
         ? []
         : [{ kind: "case" as const, targetId: surgeryCase.id, showLock: true }])
   ];
-  const canAddResident = canEdit && assignedResidentIds.length === 1 && !isAddingResident;
+  const canAddResident =
+    !isAddingResident &&
+    ((canEdit && assignedResidentIds.length === 1) ||
+      (canMedicalStudentSelfAssign &&
+        currentResidentId !== undefined &&
+        !assignedResidentIds.includes(currentResidentId) &&
+        assignedResidentIds.length < 2));
   const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
     await onMutate(action, message);
     setIsAddingResident(false);
@@ -2865,6 +2884,7 @@ function CaseRow({
             targetId={surgeryCase.id}
             selectedService={selectedService}
             currentResidentId={currentResidentId}
+            selfAssignmentOnly={canMedicalStudentSelfAssign}
             excludedResidentIds={assignedResidentIds}
             onMutate={onAdditionalResidentMutate}
             onCancel={() => setIsAddingResident(false)}
@@ -2885,6 +2905,7 @@ function ClinicView({
   state,
   clinic,
   canEdit,
+  canMedicalStudentSelfAssign,
   currentResidentId,
   token,
   selectedService,
@@ -2893,6 +2914,7 @@ function ClinicView({
   state: PlannerState;
   clinic: ScheduledClinicSession;
   canEdit: boolean;
+  canMedicalStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
   selectedService: string;
@@ -2900,7 +2922,11 @@ function ClinicView({
 }) {
   const [isAddingResident, setIsAddingResident] = useState(false);
   const assignedResidentIds = clinic.assignments.map((assignment) => assignment.residentId);
-  const canAddResident = canEdit && !isAddingResident && clinic.assignments.length < Math.max(1, clinic.capacity);
+  const canAddResident =
+    !isAddingResident &&
+    (canEdit || (canMedicalStudentSelfAssign && Boolean(currentResidentId))) &&
+    !assignedResidentIds.includes(currentResidentId ?? "") &&
+    clinic.assignments.length < Math.max(1, clinic.capacity);
   const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
     await onMutate(action, message);
     setIsAddingResident(false);
@@ -2943,6 +2969,7 @@ function ClinicView({
             targetId={clinic.id}
             selectedService={selectedService}
             currentResidentId={currentResidentId}
+            selfAssignmentOnly={canMedicalStudentSelfAssign}
             excludedResidentIds={assignedResidentIds}
             onMutate={onAdditionalResidentMutate}
             onCancel={() => setIsAddingResident(false)}
@@ -3308,6 +3335,7 @@ function PersonAssignmentPicker({
   targetId,
   selectedService,
   currentResidentId,
+  selfAssignmentOnly = false,
   excludedResidentIds,
   onMutate,
   onCancel
@@ -3318,6 +3346,7 @@ function PersonAssignmentPicker({
   targetId: string;
   selectedService: string;
   currentResidentId?: string;
+  selfAssignmentOnly?: boolean;
   excludedResidentIds: string[];
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
   onCancel: () => void;
@@ -3326,13 +3355,15 @@ function PersonAssignmentPicker({
   const [manualStudentName, setManualStudentName] = useState("");
   const assignmentDate = getAssignmentDate(state, kind, targetId);
   const residentChoices = orderAssignmentResidents(
-    state.residents.filter(
-      (resident) =>
+    state.residents.filter((resident) => {
+      if (selfAssignmentOnly) return resident.id === currentResidentId && resident.trainingLevel === "Medical Student";
+      return (
         resident.trainingLevel !== "Medical Student" &&
         isGeneralOrPlasticSurgeryResident(resident) &&
         !excludedResidentIds.includes(resident.id) &&
         (kind === "clinic" || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
-    ),
+      );
+    }),
     selectedService,
     assignmentDate,
     currentResidentId
@@ -3360,7 +3391,7 @@ function PersonAssignmentPicker({
 
   return (
     <div className="person-assignment-picker" aria-label="Choose person">
-      <button
+      {!selfAssignmentOnly && <button
         type="button"
         className={`person-choice medical-student-choice${showMedicalStudents ? " active" : ""}`}
         aria-expanded={showMedicalStudents}
@@ -3368,8 +3399,8 @@ function PersonAssignmentPicker({
       >
         <strong>Med Student?</strong>
         <span>Choose or enter a name</span>
-      </button>
-      {showMedicalStudents && (
+      </button>}
+      {!selfAssignmentOnly && showMedicalStudents && (
         <div className="medical-student-picker">
           {medicalStudents.length > 0 && (
             <div className="person-choice-list" aria-label="Medical students">
@@ -3398,7 +3429,7 @@ function PersonAssignmentPicker({
           </form>
         </div>
       )}
-      <div className="person-choice-list" aria-label="Residents">
+      <div className="person-choice-list" aria-label={selfAssignmentOnly ? "Add yourself" : "Residents"}>
         {residentChoices.map((resident) => {
           const isCurrentResident = resident.id === currentResidentId;
           const isCurrentTeam = isResidentOnService(resident, selectedService, assignmentDate);

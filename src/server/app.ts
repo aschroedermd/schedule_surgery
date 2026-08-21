@@ -1566,7 +1566,12 @@ export function createApp(
     try {
       let state = await store.load();
       const serviceLine = getAssignmentTargetServiceLine(state, req.body.kind, req.body.targetId);
-      if (!requireServiceEdit(req, res, serviceLine)) return;
+      const isMedicalStudentSelfAssignment = req.user?.role === "medical-student";
+      if (isMedicalStudentSelfAssignment) {
+        assertMedicalStudentSelfAssignment(state, req.user, req.body);
+      } else if (!requireServiceEdit(req, res, serviceLine)) {
+        return;
+      }
       const manualMedicalStudentName = readOptionalString(req.body.manualMedicalStudentName);
       if (manualMedicalStudentName && req.body.residentId) {
         throw new HttpError(400, "Choose an existing person or enter a medical student name, not both");
@@ -5179,6 +5184,45 @@ function getAssignmentTargetDate(state: PlannerState, kind: unknown, targetId: u
 function assertResidentAvailableForAssignment(state: PlannerState, kind: unknown, targetId: unknown, residentId: unknown): void {
   if (kind !== "case" && kind !== "block") return;
   assertResidentAvailableForWork(state, residentId, getAssignmentTargetDate(state, kind, targetId), "case");
+}
+
+function assertMedicalStudentSelfAssignment(state: PlannerState, user: SessionUser | undefined, input: Record<string, unknown>): void {
+  if (input.kind !== "case" && input.kind !== "clinic") {
+    throw new HttpError(403, "Medical students can add themselves to cases or clinics only");
+  }
+  if (readOptionalString(input.manualMedicalStudentName)) {
+    throw new HttpError(403, "Medical students can only add their own linked profile");
+  }
+  if (input.locked) {
+    throw new HttpError(403, "Medical student self-assignments cannot be locked");
+  }
+
+  const resident = findResidentForUser(state, user);
+  if (!resident || resident.trainingLevel !== "Medical Student" || input.residentId !== resident.id) {
+    throw new HttpError(403, "Medical students can only add themselves");
+  }
+
+  if (input.kind === "case") {
+    const surgeryCase = state.cases.find((candidate) => candidate.id === input.targetId);
+    const directAssignmentCount = state.assignments.filter(
+      (assignment) => assignment.kind === "case" && assignment.targetId === input.targetId
+    ).length;
+    const hasBlockAssignment = Boolean(
+      surgeryCase && state.assignments.some((assignment) => assignment.kind === "block" && assignment.targetId === surgeryCase.blockId)
+    );
+    if (directAssignmentCount + Number(hasBlockAssignment) >= 2) {
+      throw new HttpError(400, "This case already has its maximum of two assigned people");
+    }
+    return;
+  }
+
+  const clinic = state.clinicSessions.find((candidate) => candidate.id === input.targetId);
+  const assignedCount = state.assignments.filter(
+    (assignment) => assignment.kind === "clinic" && assignment.targetId === input.targetId
+  ).length;
+  if (clinic && assignedCount >= Math.max(1, clinic.capacity)) {
+    throw new HttpError(400, "This clinic is already at capacity");
+  }
 }
 
 function assertMedicalStudentAssignmentKind(state: PlannerState, kind: unknown, residentId: unknown): void {
