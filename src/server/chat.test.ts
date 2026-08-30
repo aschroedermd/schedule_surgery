@@ -10,6 +10,7 @@ const user: SessionUser = {
   role: "viewer",
   servicePrivileges: { Davies: "view" },
   canAddContacts: false,
+  canBuildCall: false,
   passwordUpdatedAt: new Date(0).toISOString(),
   mustChangePassword: false
 };

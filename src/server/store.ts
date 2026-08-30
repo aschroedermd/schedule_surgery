@@ -8,6 +8,7 @@ import {
   ActivityEventType,
   Attending,
   AttendingCoverageAssignment,
+  CallOffRequest,
   ClinicSession,
   ContactRequest,
   CoverageEntry,
@@ -336,6 +337,7 @@ export function normalizePlannerState(
       ...partial.qgendaSync
     },
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
+    callOffRequests: normalizeCallOffRequests(partial.callOffRequests ?? []),
     coverageRequests: partial.coverageRequests ?? [],
     contacts: normalizeContacts(mergeSeedContacts(partial.contacts)),
     contactRequests: normalizeContactRequests(partial.contactRequests ?? []),
@@ -419,6 +421,28 @@ function normalizeContactRequests(requests: ContactRequest[]): ContactRequest[] 
       createdAt: normalizeOptionalString(request.createdAt) ?? new Date().toISOString(),
       updatedAt: normalizeOptionalString(request.updatedAt) ?? request.createdAt ?? new Date().toISOString()
     }));
+}
+
+function normalizeCallOffRequests(requests: CallOffRequest[]): CallOffRequest[] {
+  return requests
+    .filter(
+      (request) =>
+        Boolean(request?.id && request.residentId && request.requesterUsername) &&
+        isIsoDate(request.date)
+    )
+    .map((request) => {
+      const createdAt = normalizeOptionalString(request.createdAt) ?? new Date().toISOString();
+      return {
+        ...request,
+        scope: request.scope === "weekend" ? "weekend" as const : "day" as const,
+        priority: request.priority === "secondary" ? "secondary" as const : "priority" as const,
+        requesterName: normalizeOptionalString(request.requesterName) ?? request.requesterUsername,
+        reason: normalizeOptionalString(request.reason),
+        createdAt,
+        updatedAt: normalizeOptionalString(request.updatedAt) ?? createdAt
+      };
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function normalizeActivityEvents(activityEvents: ActivityEvent[]): ActivityEvent[] {
@@ -873,6 +897,7 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
         (!entry.dayAttendingId || attendingIds.has(entry.dayAttendingId)) &&
         (!entry.nightAttendingId || attendingIds.has(entry.nightAttendingId))
     ),
+    callOffRequests: state.callOffRequests.filter((request) => residentIds.has(request.residentId)),
     coverageRequests: state.coverageRequests.filter((request) => {
       const requestedResidentId = request.requestedEntry?.residentId;
       if (requestedResidentId && !residentIds.has(requestedResidentId)) return false;

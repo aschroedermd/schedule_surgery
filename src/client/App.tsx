@@ -56,6 +56,7 @@ import {
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { ChatTab } from "./ChatTab";
 import { ContactsTab } from "./ContactsTab";
+import { CallBuilderTab, CallOffRequestForm } from "./CallBuilderTab";
 import { canSeeDiagnosticErrors, presentActionError, presentBackgroundError } from "./errorPresentation";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
@@ -203,6 +204,7 @@ export function App() {
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
   const isAdmin = session?.role === "admin";
+  const canBuildCall = Boolean(session && (isAdmin || session.canBuildCall));
   const showDiagnosticErrors = canSeeDiagnosticErrors(session);
   const isAttending = session?.role === "attending";
   const selectedPrivilege = session ? getSessionPrivilege(session, selectedService) : "view";
@@ -287,6 +289,7 @@ export function App() {
       role: user.role,
       servicePrivileges: user.servicePrivileges,
       canAddContacts: user.canAddContacts,
+      canBuildCall: user.canBuildCall,
       passwordUpdatedAt: user.passwordUpdatedAt,
       mustChangePassword: user.mustChangePassword
     };
@@ -592,10 +595,14 @@ export function App() {
       setActiveTab("board");
       return;
     }
+    if (activeTab === "call-builder" && !canBuildCall) {
+      setActiveTab("call");
+      return;
+    }
     if (activeTab === "requests" && !canUseRequests) {
       setActiveTab("board");
     }
-  }, [activeTab, canUseRequests, isAdmin, session?.username]);
+  }, [activeTab, canBuildCall, canUseRequests, isAdmin, session?.username]);
 
   useEffect(() => {
     if (activeTab !== "board" || (!canEditSelectedService && !isAttending)) {
@@ -726,7 +733,7 @@ export function App() {
       </header>
 
       <PlannerNavigation
-        tabs={getNavigationTabs({ canUseRequests, pendingCoverageRequestCount, isAdmin })}
+        tabs={getNavigationTabs({ canUseRequests, canBuildCall, pendingCoverageRequestCount, isAdmin })}
         activeTab={activeTab}
         onSelect={handleSelectTab}
       />
@@ -801,8 +808,13 @@ export function App() {
           state={state}
           token={session.token}
           isAdmin={isAdmin}
+          linkedResident={linkedResident}
+          canBuildCall={canBuildCall}
           onMutate={runMutation}
         />
+      )}
+      {activeTab === "call-builder" && canBuildCall && (
+        <CallBuilderTab state={state} token={session.token} onMutate={runMutation} />
       )}
       {activeTab === "schedule" && (
         <ResidentScheduleTab state={state} token={session.token} isAdmin={isAdmin} disabled={!isAdmin} onMutate={runMutation} />
@@ -2061,16 +2073,21 @@ function CallShiftsTab({
   state,
   token,
   isAdmin,
+  linkedResident,
+  canBuildCall,
   onMutate
 }: {
   state: PlannerState;
   token: string;
   isAdmin: boolean;
+  linkedResident?: Resident;
+  canBuildCall: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
   const [attendingCalendarView, setAttendingCalendarView] = useState<"night" | "weekly" | null>(null);
   const [expandedCallDate, setExpandedCallDate] = useState<string | null>(null);
+  const [requestPanelOpen, setRequestPanelOpen] = useState(false);
   const nightTeamSegments = getNightTeamSegments(state, month);
   const weekendRows = getWeekendCallRows(state, month);
   const today = getTodayDate();
@@ -2094,8 +2111,22 @@ function CallShiftsTab({
           <button title="Next month" className="icon-button" onClick={() => setMonth(shiftMonthValue(month, 1))}>
             <ChevronRight size={17} />
           </button>
+          <button type="button" className="primary-button" onClick={() => setRequestPanelOpen((open) => !open)}>
+            <CalendarDays size={16} />Request call time off
+          </button>
         </div>
       </div>
+
+      {requestPanelOpen && (
+        <CallOffRequestForm
+          state={state}
+          token={token}
+          linkedResident={linkedResident}
+          canBuildCall={canBuildCall}
+          onClose={() => setRequestPanelOpen(false)}
+          onMutate={onMutate}
+        />
+      )}
 
       <div className="call-attending-view-actions" aria-label="Attending schedule views">
         <button
@@ -5377,6 +5408,8 @@ function getTabTitle(tab: Tab): string {
       return "Calendar 🗓️";
     case "call":
       return "CALL 📟";
+    case "call-builder":
+      return "Call Builder 🧩";
     case "schedule":
       return "Blocks ⏹️";
     case "requests":
@@ -5555,8 +5588,9 @@ function getStoredSession(): PlannerSession | undefined {
   const mustChangePassword = localStorage.getItem("plannerMustChangePassword") === "true";
   const attendingId = localStorage.getItem("plannerAttendingId") ?? undefined;
   const canAddContacts = localStorage.getItem("plannerCanAddContacts") === "true";
+  const canBuildCall = localStorage.getItem("plannerCanBuildCall") === "true";
   return token && username && displayName && passwordUpdatedAt && isRole(role)
-    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, canAddContacts, mustChangePassword }
+    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, canAddContacts, canBuildCall, mustChangePassword }
     : undefined;
 }
 
@@ -5570,6 +5604,7 @@ function storeSession(session: PlannerSession) {
   localStorage.setItem("plannerPasswordUpdatedAt", session.passwordUpdatedAt);
   localStorage.setItem("plannerServicePrivileges", JSON.stringify(session.servicePrivileges));
   localStorage.setItem("plannerCanAddContacts", String(session.canAddContacts));
+  localStorage.setItem("plannerCanBuildCall", String(session.canBuildCall));
   localStorage.setItem("plannerMustChangePassword", String(session.mustChangePassword));
   localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
 }
@@ -5672,5 +5707,7 @@ function clearStoredSession() {
   localStorage.removeItem("plannerPasswordUpdatedAt");
   localStorage.removeItem("plannerServicePrivileges");
   localStorage.removeItem("plannerMustChangePassword");
+  localStorage.removeItem("plannerCanAddContacts");
+  localStorage.removeItem("plannerCanBuildCall");
   localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
 }

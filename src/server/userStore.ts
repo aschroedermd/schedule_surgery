@@ -33,6 +33,7 @@ export interface UpsertUserInput {
   temporaryPassword?: string;
   servicePrivileges?: ServicePrivileges;
   canAddContacts?: boolean;
+  canBuildCall?: boolean;
 }
 
 export interface PasswordResetResult {
@@ -51,7 +52,7 @@ export interface UserStore {
   listUsers(): Promise<UserSummary[]>;
   createUser(input: UpsertUserInput): Promise<UserCreationResult>;
   createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]>;
-  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts">>): Promise<UserSummary>;
+  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts" | "canBuildCall">>): Promise<UserSummary>;
   updateVoiceDailyLimit(username: string, limit: number): Promise<UserSummary>;
   updatePreferredVoicePreset(username: string, preset: 1 | 2 | 3 | 4 | 5): Promise<UserSummary>;
   deleteUser(username: string): Promise<void>;
@@ -115,7 +116,7 @@ export class FileUserStore implements UserStore {
 
   async updateUser(
     username: string,
-    patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts">>
+    patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts" | "canBuildCall">>
   ): Promise<UserSummary> {
     return this.mutate(async (data) => {
       const user = requireStoredUser(data, username);
@@ -125,6 +126,7 @@ export class FileUserStore implements UserStore {
       if (user.role === "attending" && !user.attendingId) throw new Error("Attending accounts must be linked to an attending");
       if (patch.servicePrivileges) user.servicePrivileges = normalizePrivileges(patch.servicePrivileges);
       if (typeof patch.canAddContacts === "boolean") user.canAddContacts = user.role === "admin" || patch.canAddContacts;
+      if (typeof patch.canBuildCall === "boolean") user.canBuildCall = user.role === "admin" || patch.canBuildCall;
       user.updatedAt = new Date().toISOString();
       return toSummary(user);
     });
@@ -274,6 +276,7 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       attendingId: normalizeRole(user.role) === "attending" ? readOptionalString(user.attendingId) : undefined,
       servicePrivileges: normalizePrivileges(user.servicePrivileges),
       canAddContacts: username === "admin" || user.canAddContacts === true,
+      canBuildCall: username === "admin" || user.canBuildCall === true,
       voiceDailyLimit: normalizeVoiceDailyLimit(user.voiceDailyLimit),
       preferredVoicePreset: normalizeVoicePreset(user.preferredVoicePreset),
       createdAt: user.createdAt ?? now,
@@ -327,6 +330,7 @@ function makeSeedUser(
     role,
     servicePrivileges: normalizePrivileges(role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : {}),
     canAddContacts: role === "admin",
+    canBuildCall: role === "admin",
     voiceDailyLimit: DEFAULT_VOICE_DAILY_LIMIT,
     preferredVoicePreset: DEFAULT_VOICE_PRESET,
     passwordHash: hashSecret(password),
@@ -362,6 +366,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
         role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : input.servicePrivileges
       ),
       canAddContacts: role === "admin" || input.canAddContacts === true,
+      canBuildCall: role === "admin" || input.canBuildCall === true,
       voiceDailyLimit: DEFAULT_VOICE_DAILY_LIMIT,
       preferredVoicePreset: DEFAULT_VOICE_PRESET,
       passwordHash: hashSecret(password),
@@ -405,6 +410,7 @@ function toSummary(user: StoredUser): UserSummary {
     attendingId: user.attendingId,
     servicePrivileges: { ...user.servicePrivileges },
     canAddContacts: user.role === "admin" || user.canAddContacts,
+    canBuildCall: user.role === "admin" || user.canBuildCall,
     voiceDailyLimit: normalizeVoiceDailyLimit(user.voiceDailyLimit),
     preferredVoicePreset: normalizeVoicePreset(user.preferredVoicePreset),
     createdAt: user.createdAt,

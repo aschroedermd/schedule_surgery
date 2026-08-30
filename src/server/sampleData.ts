@@ -158,6 +158,7 @@ export function createInitialState(today = new Date()): PlannerState {
     attendingCoverageAssignments: [],
     qgendaSync: { enabled: false },
     coverageEntries: createSeedCoverageEntries(),
+    callOffRequests: [],
     coverageRequests: [],
     contacts: createSeedContacts(),
     contactRequests: [],

@@ -75,6 +75,12 @@ describe("planner navigation", () => {
     expect(tabIds(userTabs)).not.toContain("activity");
   });
 
+  it("shows Call Builder only to admins and specifically privileged users", () => {
+    expect(tabIds(getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true }))).toContain("call-builder");
+    expect(tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: true, pendingCoverageRequestCount: 0, isAdmin: false }))).toContain("call-builder");
+    expect(tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: false, pendingCoverageRequestCount: 0, isAdmin: false }))).not.toContain("call-builder");
+  });
+
   it("keeps the responsive navigation groups presentation-only", () => {
     expect(["roster", "defaults", "users", "activity"].every((tab) => isAdminNavigationTab(tab as Tab))).toBe(true);
     expect(isAdminNavigationTab("account")).toBe(false);

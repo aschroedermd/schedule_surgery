@@ -40,6 +40,7 @@ export function UsersTab({
     cloneFrom: string;
     servicePrivileges: ServicePrivileges;
     canAddContacts: boolean;
+    canBuildCall: boolean;
   }>({
     entries: "",
     temporaryPassword: "",
@@ -48,7 +49,8 @@ export function UsersTab({
     preset: "view",
     cloneFrom: "",
     servicePrivileges: buildPrivileges(serviceLines, "view"),
-    canAddContacts: false
+    canAddContacts: false,
+    canBuildCall: false
   });
   const [error, setError] = useState<string | undefined>();
   const sortedUsers = [...users].sort((left, right) => comparePersonNames(left.displayName, right.displayName));
@@ -96,7 +98,8 @@ export function UsersTab({
         attendingId: addDraft.role === "attending" ? addDraft.attendingId : undefined,
         temporaryPassword: addDraft.temporaryPassword.trim() || undefined,
         servicePrivileges,
-        canAddContacts: addDraft.role === "admin" || addDraft.canAddContacts
+        canAddContacts: addDraft.role === "admin" || addDraft.canAddContacts,
+        canBuildCall: addDraft.role === "admin" || addDraft.canBuildCall
       }));
       const result =
         payload.length === 1
@@ -127,7 +130,8 @@ export function UsersTab({
           role: draft.role,
           attendingId: draft.attendingId,
           servicePrivileges: draft.servicePrivileges,
-          canAddContacts: draft.canAddContacts
+          canAddContacts: draft.canAddContacts,
+          canBuildCall: draft.canBuildCall
         })
       );
       onToast("User saved");
@@ -301,6 +305,15 @@ export function UsersTab({
           />
           Add contacts without approval
         </label>
+        <label className="contact-permission-field">
+          <input
+            type="checkbox"
+            checked={addDraft.role === "admin" || addDraft.canBuildCall}
+            disabled={addDraft.role === "admin"}
+            onChange={(event) => setAddDraft({ ...addDraft, canBuildCall: event.target.checked })}
+          />
+          Call Builder
+        </label>
         {addDraft.preset === "custom" && addDraft.role !== "admin" && (
           <div className="privilege-grid add-privilege-grid">
             {serviceLines.map((serviceLine) => (
@@ -385,6 +398,15 @@ export function UsersTab({
                     onChange={(event) => updateDraft(user.username, { canAddContacts: event.target.checked })}
                   />
                   Add contacts without approval
+                </label>
+                <label className="contact-permission-field">
+                  <input
+                    type="checkbox"
+                    checked={draft.role === "admin" || draft.canBuildCall}
+                    disabled={draft.role === "admin"}
+                    onChange={(event) => updateDraft(user.username, { canBuildCall: event.target.checked })}
+                  />
+                  Call Builder
                 </label>
                 <div className="privilege-presets" aria-label={`${user.username} bulk privileges`}>
                   <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "edit")}>

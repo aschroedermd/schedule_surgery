@@ -26,6 +26,84 @@ export const CALL_POSITIONS = ["senior", "mid-level", "intern"] as const;
 
 export type CallPosition = (typeof CALL_POSITIONS)[number];
 
+export type CallOffRequestPriority = "priority" | "secondary";
+
+export type CallOffRequestScope = "day" | "weekend";
+
+export interface CallOffRequest {
+  id: string;
+  residentId: string;
+  requesterUsername: string;
+  requesterName: string;
+  date: string;
+  scope: CallOffRequestScope;
+  priority: CallOffRequestPriority;
+  reason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CallBuilderAssignment {
+  date: string;
+  callPosition: CallPosition;
+  residentId: string;
+}
+
+export type CallBuilderIssueSeverity = "error" | "warning" | "info";
+
+export type CallBuilderRule =
+  | "coverage"
+  | "fairness"
+  | "egs-chief"
+  | "egs-midlevel"
+  | "trauma-chief"
+  | "approved-unavailable"
+  | "priority-request"
+  | "vacation"
+  | "same-service"
+  | "cross-block-saturday"
+  | "secondary-request"
+  | "nrv-pool";
+
+export interface CallBuilderIssue {
+  id: string;
+  severity: CallBuilderIssueSeverity;
+  rule: CallBuilderRule;
+  message: string;
+  date?: string;
+  residentIds?: string[];
+}
+
+export interface CallBuilderResidentLoad {
+  residentId: string;
+  residentName: string;
+  callPosition: CallPosition;
+  service: string;
+  units: number;
+  shiftCount: number;
+  targetUnits: number;
+  regularPool: boolean;
+}
+
+export interface CallBuilderEvaluation {
+  blockNumber: number;
+  assignments: CallBuilderAssignment[];
+  issues: CallBuilderIssue[];
+  residentLoads: CallBuilderResidentLoad[];
+  hardViolationCount: number;
+  warningCount: number;
+  fairnessPercent: number;
+  qualityScore: number;
+  penalty: number;
+}
+
+export interface CallBuilderSuggestion {
+  id: string;
+  description: string;
+  improvement: number;
+  assignments: CallBuilderAssignment[];
+}
+
 export type CoverageRequestAction = "create" | "update" | "delete";
 
 export type CoverageRequestStatus = "pending" | "approved" | "denied";
@@ -533,6 +611,7 @@ export interface PlannerState {
   attendingCoverageAssignments: AttendingCoverageAssignment[];
   qgendaSync: QgendaSyncStatus;
   coverageEntries: CoverageEntry[];
+  callOffRequests: CallOffRequest[];
   coverageRequests: CoverageChangeRequest[];
   contacts: DirectoryContact[];
   contactRequests: ContactRequest[];
@@ -601,6 +680,7 @@ export interface UserSummary {
   attendingId?: string;
   servicePrivileges: ServicePrivileges;
   canAddContacts: boolean;
+  canBuildCall: boolean;
   voiceDailyLimit: number;
   preferredVoicePreset?: 1 | 2 | 3 | 4 | 5;
   createdAt: string;
@@ -616,6 +696,7 @@ export interface SessionUser {
   attendingId?: string;
   servicePrivileges: ServicePrivileges;
   canAddContacts: boolean;
+  canBuildCall: boolean;
   preferredVoicePreset?: 1 | 2 | 3 | 4 | 5;
   passwordUpdatedAt: string;
   mustChangePassword: boolean;

@@ -14,6 +14,12 @@ import { addDays, getCurrentMonday, minutesToTime, timeToMinutes } from "../shar
 import { createId } from "../shared/id";
 import { getResidentTimeOff } from "../shared/availability";
 import {
+  evaluateCallSchedule,
+  generateCallSchedule,
+  getCallBuilderBlock,
+  getCallBuilderWeekendAnchor
+} from "../shared/callBuilder";
+import {
   INDEPENDENT_CALL_LINES,
   isIndependentCallLine,
   resolveIndependentCallCoverage,
@@ -43,7 +49,9 @@ import {
   AttendingCoverageRole,
   AttendingCoverageShift,
   AttendingBlock,
+  CallBuilderAssignment,
   CallPosition,
+  CallOffRequest,
   CaseOrderChange,
   ClaimRequest,
   ClinicSession,
@@ -87,6 +95,8 @@ import {
   authenticate,
   createToken,
   requireAdmin,
+  hasCallBuilderAccess,
+  requireCallBuilder,
   requirePasswordReady,
   requireSessionAdmin,
   requireServiceEdit,
@@ -779,7 +789,8 @@ export function createApp(
         role: isRole(req.body.role) ? req.body.role : undefined,
         attendingId: readOptionalString(req.body.attendingId),
         servicePrivileges: req.body.servicePrivileges,
-        canAddContacts: typeof req.body.canAddContacts === "boolean" ? req.body.canAddContacts : undefined
+        canAddContacts: typeof req.body.canAddContacts === "boolean" ? req.body.canAddContacts : undefined,
+        canBuildCall: typeof req.body.canBuildCall === "boolean" ? req.body.canBuildCall : undefined
       });
       const nextState = addActivity(addMedicalStudentRosterEntries(state, [user]), {
         ...requestActivityActor(req),
@@ -876,6 +887,169 @@ export function createApp(
   app.get("/api/state", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       res.json(filterStateForUser(await store.load(), req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/call-off-requests", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const linkedResident = findResidentForUser(state, req.user);
+      const requestedResidentId = readOptionalString(req.body?.residentId);
+      const resident = hasCallBuilderAccess(req.user) && requestedResidentId
+        ? state.residents.find((candidate) => candidate.id === requestedResidentId)
+        : linkedResident;
+      if (!resident) {
+        throw new HttpError(403, "A linked resident roster record is required to submit a call-off request");
+      }
+      if (!hasCallBuilderAccess(req.user) && requestedResidentId && requestedResidentId !== resident.id) {
+        throw new HttpError(403, "Call-off requests may be submitted only for your linked resident record");
+      }
+
+      const date = assertDate(req.body?.date);
+      const weekday = new Date(`${date}T12:00:00`).getDay();
+      if (weekday !== 5 && weekday !== 6 && weekday !== 0) {
+        throw new HttpError(400, "Call-off requests must use a Friday, Saturday, or Sunday date");
+      }
+      const block = getCallBuilderBlockForDate(date);
+      if (!block) throw new HttpError(400, "The requested date is outside the configured rotation blocks");
+      const scope = req.body?.scope === "weekend" ? "weekend" as const : req.body?.scope === "day" ? "day" as const : undefined;
+      if (!scope) throw new HttpError(400, "scope must be day or weekend");
+      const priority = req.body?.priority === "secondary" ? "secondary" as const : req.body?.priority === "priority" ? "priority" as const : undefined;
+      if (!priority) throw new HttpError(400, "priority must be priority or secondary");
+      const reason = readOptionalString(req.body?.reason);
+      if (reason && reason.length > 280) throw new HttpError(400, "Reason must be 280 characters or fewer");
+      assertNoPhiText(reason ?? "", "call-off request reason");
+
+      const now = new Date().toISOString();
+      const existing = state.callOffRequests.find((request) => {
+        const requestBlock = getCallBuilderBlockForDate(request.date);
+        return request.residentId === resident.id && request.priority === priority && requestBlock?.blockNumber === block.blockNumber;
+      });
+      const request: CallOffRequest = existing
+        ? { ...existing, date, scope, reason, updatedAt: now }
+        : {
+            id: createId("call_off_request"),
+            residentId: resident.id,
+            requesterUsername: req.user!.username,
+            requesterName: req.user!.displayName || req.user!.username,
+            date,
+            scope,
+            priority,
+            reason,
+            createdAt: now,
+            updatedAt: now
+          };
+      const nextState: PlannerState = {
+        ...state,
+        callOffRequests: existing
+          ? state.callOffRequests.map((item) => item.id === existing.id ? request : item)
+          : [request, ...state.callOffRequests]
+      };
+      const withActivity = addActivity(nextState, {
+        ...requestActivityActor(req, "viewer"),
+        activityType: "calendar",
+        action: existing ? "updated call-off request" : "submitted call-off request",
+        details: `${resident.name} requested ${priority} ${scope} off on ${date}`,
+        entityType: "callOffRequest",
+        entityId: request.id
+      });
+      const saved = await commitState(req, withActivity);
+      res.status(existing ? 200 : 201).json(filterStateForUser(saved, req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/call-off-requests/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const id = getParam(req.params.id);
+      const state = await store.load();
+      const request = state.callOffRequests.find((candidate) => candidate.id === id);
+      if (!request) throw new HttpError(404, "Call-off request not found");
+      const linkedResident = findResidentForUser(state, req.user);
+      if (!hasCallBuilderAccess(req.user) && request.requesterUsername !== req.user?.username && request.residentId !== linkedResident?.id) {
+        throw new HttpError(403, "You can withdraw only your own call-off request");
+      }
+      const resident = state.residents.find((candidate) => candidate.id === request.residentId);
+      const nextState = addActivity(
+        { ...state, callOffRequests: state.callOffRequests.filter((candidate) => candidate.id !== id) },
+        {
+          ...requestActivityActor(req, "viewer"),
+          activityType: "calendar",
+          action: "withdrew call-off request",
+          details: `${resident?.name ?? request.requesterName} withdrew ${request.priority} ${request.scope} off on ${request.date}`,
+          entityType: "callOffRequest",
+          entityId: id
+        }
+      );
+      res.json(filterStateForUser(await commitState(req, nextState), req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/call-builder/generate", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
+      res.json(generateCallSchedule(await store.load(), blockNumber));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/call-builder/validate", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
+      const assignments = readCallBuilderAssignments(req.body?.assignments);
+      res.json(evaluateCallSchedule(await store.load(), blockNumber, assignments));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/call-builder/publish", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
+      const block = getCallBuilderBlock(blockNumber)!;
+      const assignments = readCallBuilderAssignments(req.body?.assignments);
+      const evaluation = evaluateCallSchedule(state, blockNumber, assignments);
+      if (evaluation.hardViolationCount > 0) {
+        const firstError = evaluation.issues.find((issue) => issue.severity === "error");
+        throw new HttpError(400, `Resolve ${evaluation.hardViolationCount} blocking issue${evaluation.hardViolationCount === 1 ? "" : "s"} before publishing${firstError ? `: ${firstError.message}` : ""}`);
+      }
+      const now = new Date().toISOString();
+      const callEntries: CoverageEntry[] = evaluation.assignments.map((assignment) => ({
+        id: createId("coverage_call_builder"),
+        date: assignment.date,
+        kind: "call",
+        residentId: assignment.residentId,
+        callPosition: assignment.callPosition,
+        note: `Call Builder · Block ${blockNumber}`,
+        createdAt: now,
+        updatedAt: now
+      }));
+      const nextState = addActivity(
+        {
+          ...state,
+          coverageEntries: [
+            ...state.coverageEntries.filter((entry) => entry.kind !== "call" || entry.date < block.startDate || entry.date > block.endDate),
+            ...callEntries
+          ]
+        },
+        {
+          ...requestActivityActor(req),
+          activityType: "calendar",
+          action: "published resident call schedule",
+          details: `Published ${callEntries.length} resident call assignments for block ${blockNumber} with ${evaluation.warningCount} advisory issue${evaluation.warningCount === 1 ? "" : "s"}`,
+          entityType: "callSchedule",
+          entityId: `block_${blockNumber}`
+        }
+      );
+      const saved = await commitState(req, nextState);
+      res.json(filterStateForUser(saved, req.user));
     } catch (error) {
       next(error);
     }
@@ -4196,6 +4370,41 @@ function assertDate(value: unknown): string {
   return value;
 }
 
+function getCallBuilderBlockForDate(date: string) {
+  for (let blockNumber = 1; blockNumber <= 13; blockNumber += 1) {
+    const block = getCallBuilderBlock(blockNumber);
+    if (block && block.startDate <= date && date <= block.endDate) return block;
+  }
+  return undefined;
+}
+
+function readCallBuilderBlockNumber(value: unknown): number {
+  const blockNumber = Number(value);
+  if (!Number.isInteger(blockNumber) || !getCallBuilderBlock(blockNumber)) {
+    throw new HttpError(400, "Choose a configured rotation block");
+  }
+  return blockNumber;
+}
+
+function readCallBuilderAssignments(value: unknown): CallBuilderAssignment[] {
+  if (!Array.isArray(value)) throw new HttpError(400, "assignments must be an array");
+  if (value.length > 100) throw new HttpError(400, "A call-builder draft may contain at most 100 assignments");
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new HttpError(400, `Assignment ${index + 1} must be an object`);
+    }
+    const input = item as Record<string, unknown>;
+    const date = assertDate(input.date);
+    const callPosition = input.callPosition;
+    if (callPosition !== "senior" && callPosition !== "mid-level" && callPosition !== "intern") {
+      throw new HttpError(400, `Assignment ${index + 1} has an invalid call position`);
+    }
+    const residentId = readOptionalString(input.residentId);
+    if (!residentId) throw new HttpError(400, `Assignment ${index + 1} requires a residentId`);
+    return { date, callPosition, residentId };
+  });
+}
+
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -5014,6 +5223,9 @@ function filterStateForUser(
       ? state.wikiSources.filter((source) => visibleSourceIds.has(source.id))
       : [],
     wikiChanges: [],
+    callOffRequests: hasCallBuilderAccess(user)
+      ? state.callOffRequests
+      : state.callOffRequests.filter((request) => request.requesterUsername === user.username || request.residentId === linkedResident?.id),
     coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest)),
     contactRequests: state.contactRequests.filter((contactRequest) => contactRequest.requesterUsername === user.username),
     goldStarAwards: state.goldStarAwards.map((award) =>

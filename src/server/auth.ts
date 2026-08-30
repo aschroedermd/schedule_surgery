@@ -39,6 +39,7 @@ export async function validateLogin(userStore: UserStore, username: string, pass
         attendingId: user.attendingId,
         servicePrivileges: user.servicePrivileges,
         canAddContacts: user.canAddContacts,
+        canBuildCall: user.canBuildCall,
         preferredVoicePreset: user.preferredVoicePreset,
         passwordUpdatedAt: user.passwordUpdatedAt,
         mustChangePassword: user.mustChangePassword
@@ -89,6 +90,7 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     attendingId: user.attendingId,
     servicePrivileges: user.servicePrivileges,
     canAddContacts: user.canAddContacts,
+    canBuildCall: user.canBuildCall,
     preferredVoicePreset: user.preferredVoicePreset,
     passwordUpdatedAt: user.passwordUpdatedAt,
     mustChangePassword: user.mustChangePassword && !passwordChangeDeferred
@@ -155,6 +157,19 @@ export function requireSessionAdmin(req: AuthenticatedRequest, res: Response, ne
   next();
 }
 
+export function hasCallBuilderAccess(user: Pick<SessionUser, "role" | "canBuildCall"> | undefined): boolean {
+  return Boolean(user && (user.role === "admin" || user.canBuildCall));
+}
+
+export function requireCallBuilder(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  if (!passwordReady(req, res)) return;
+  if (!hasCallBuilderAccess(req.user)) {
+    res.status(403).json({ error: "Call Builder privilege required" });
+    return;
+  }
+  next();
+}
+
 export function requireServiceEdit(req: AuthenticatedRequest, res: Response, serviceLine: string | undefined): boolean {
   if (!passwordReady(req, res)) return false;
   if (hasServicePrivilege(req.user, serviceLine, "edit")) return true;
@@ -176,6 +191,7 @@ function makeApiKeyUser(username: string, displayName: string, role: Role, privi
     role,
     servicePrivileges: Object.fromEntries(SERVICE_LINES.map((service) => [service, privilege])),
     canAddContacts: role === "admin",
+    canBuildCall: role === "admin",
     preferredVoicePreset: 1,
     passwordUpdatedAt: new Date(0).toISOString(),
     mustChangePassword: false

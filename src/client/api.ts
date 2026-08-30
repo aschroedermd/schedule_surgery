@@ -2,6 +2,10 @@ import {
   ClaimRequest,
   CollectionName,
   AttendingCoverageAssignment,
+  CallBuilderAssignment,
+  CallBuilderEvaluation,
+  CallOffRequestPriority,
+  CallOffRequestScope,
   DirectoryContact,
   CoverageChangeRequest,
   CoverageEntry,
@@ -199,6 +203,62 @@ export async function updatePreferredVoicePreset(token: string, preferredVoicePr
 
 export async function fetchState(token: string): Promise<PlannerState> {
   return request<PlannerState>("/api/state", { token });
+}
+
+export async function submitCallOffRequest(
+  token: string,
+  payload: {
+    residentId?: string;
+    date: string;
+    scope: CallOffRequestScope;
+    priority: CallOffRequestPriority;
+    reason?: string;
+  }
+): Promise<PlannerState> {
+  return request<PlannerState>("/api/call-off-requests", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteCallOffRequest(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/call-off-requests/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    token
+  });
+}
+
+export async function generateCallScheduleDraft(token: string, blockNumber: number): Promise<CallBuilderEvaluation> {
+  return request<CallBuilderEvaluation>("/api/call-builder/generate", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ blockNumber })
+  });
+}
+
+export async function validateCallScheduleDraft(
+  token: string,
+  blockNumber: number,
+  assignments: CallBuilderAssignment[]
+): Promise<CallBuilderEvaluation> {
+  return request<CallBuilderEvaluation>("/api/call-builder/validate", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ blockNumber, assignments })
+  });
+}
+
+export async function publishCallSchedule(
+  token: string,
+  blockNumber: number,
+  assignments: CallBuilderAssignment[]
+): Promise<PlannerState> {
+  return request<PlannerState>("/api/call-builder/publish", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ blockNumber, assignments })
+  });
 }
 
 export async function fetchChatQuota(token: string): Promise<ChatQuota> {
@@ -553,6 +613,7 @@ export async function createUser(
     temporaryPassword?: string;
     servicePrivileges?: ServicePrivileges;
     canAddContacts?: boolean;
+    canBuildCall?: boolean;
   }
 ): Promise<UserCreateResponse> {
   return request<UserCreateResponse>("/api/users", {
@@ -573,6 +634,7 @@ export async function createUsers(
     temporaryPassword?: string;
     servicePrivileges?: ServicePrivileges;
     canAddContacts?: boolean;
+    canBuildCall?: boolean;
   }>
 ): Promise<BulkUserCreateResponse> {
   return request<BulkUserCreateResponse>("/api/users/bulk", {
@@ -585,7 +647,7 @@ export async function createUsers(
 export async function updateUser(
   token: string,
   username: string,
-  patch: { displayName?: string; role?: Role; attendingId?: string; servicePrivileges?: ServicePrivileges; canAddContacts?: boolean }
+  patch: { displayName?: string; role?: Role; attendingId?: string; servicePrivileges?: ServicePrivileges; canAddContacts?: boolean; canBuildCall?: boolean }
 ): Promise<UserSummary[]> {
   const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}`, {
     method: "PATCH",
