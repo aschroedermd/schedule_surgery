@@ -44,7 +44,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
 
 Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
 
-Only a logged-in admin browser session can call `GET /api/users` or `PATCH/DELETE /api/users/{username}`. An admin API key can call `POST /api/users`, `POST /api/users/bulk`, `PATCH /api/users/{username}/password`, and the per-user voice-quota endpoints documented below. API-key creations use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"` (`user` is stored as the browser `viewer` role); a medical-student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
+An admin browser session or admin API key can call `GET /api/users` and `PATCH /api/users/{username}`. API-key updates may grant or revoke `servicePrivileges`, `canAddContacts`, and `canBuildCall` for non-admin accounts, but cannot modify an admin browser account, change account roles, or relink attending identities. Only a logged-in admin browser session can delete accounts. An admin API key can also call `POST /api/users`, `POST /api/users/bulk`, `PATCH /api/users/{username}/password`, and the per-user voice-quota endpoints documented below. API-key creations use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"` (`user` is stored as the browser `viewer` role); a medical-student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
 
 Example attending account creation (with an admin API key):
 
@@ -69,6 +69,25 @@ Browser clients can watch state changes with `GET /api/events?token=<browser-tok
 ## Admin API Quick Reference
 
 Use the admin API key only from a trusted secret store. Never place it, a temporary password, the OpenAI key, the OpenRouter key, or the ElevenLabs key in planner data, shell history, chat transcripts, or activity notes.
+
+### List users or change non-admin privileges
+
+Read current account permissions before changing them:
+
+```bash
+curl -H "X-API-Key: $ADMIN_API_KEY" "$BASE_URL/api/users"
+```
+
+Grant Call Builder access without replacing existing service privileges:
+
+```bash
+curl -X PATCH "$BASE_URL/api/users/aschroeder" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"canBuildCall":true}'
+```
+
+Read `GET /api/users` again and verify that the target account returns `"canBuildCall": true`. Use `false` to revoke it. A partial update preserves fields omitted from the request. The API key cannot modify `admin` or another admin browser account, change an account's role, relink an attending identity, or delete an account.
 
 ### Read, change, or reset a user's voice quota
 
@@ -272,10 +291,10 @@ GET    /api/admin/chat-settings           (admin browser session or admin API ke
 PATCH  /api/admin/chat-settings           (admin browser session or admin API key)
 GET    /api/admin/users/{username}/voice-quota   (admin browser session or admin API key)
 PATCH  /api/admin/users/{username}/voice-quota   (admin browser session or admin API key)
-GET    /api/users                         (admin browser session only)
+GET    /api/users                         (admin browser session or admin API key)
 POST   /api/users                         (admin browser session or admin API key)
 POST   /api/users/bulk                    (admin browser session or admin API key)
-PATCH  /api/users/{username}              (admin browser session only)
+PATCH  /api/users/{username}              (admin browser session, or admin API key for safe non-admin updates)
 PATCH  /api/users/{username}/password     (admin browser session or admin API key)
 DELETE /api/users/{username}              (admin browser session only)
 PATCH  /api/me/password
@@ -708,7 +727,7 @@ These are useful follow-ups but are not implemented yet:
 - Admin-controlled chat quota limits and usage summaries. Return aggregate counts; avoid storing or exposing prompt text.
 - A backup/export and validated restore workflow for planner state, browser users, chat settings, and integration settings. Restores should require a dry run and explicit confirmation.
 - Idempotency keys and a batch mutation endpoint for multi-step schedule changes, so an agent can retry safely without creating duplicate entities or leaving half-applied updates.
-- Full API-key user lifecycle management only after scoped keys and stronger audit logging exist. Until then, keep user listing, privilege changes, and deletion restricted to browser-admin sessions.
+- Scoped user-administration keys with narrower grants than the broad admin key, including separate privilege-management, password-reset, identity-linking, and deletion scopes.
 
 ## Smoke Test Pattern
 

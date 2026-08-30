@@ -718,7 +718,7 @@ export function createApp(
     }
   });
 
-  app.get("/api/users", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.get("/api/users", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       res.json({ users: await userStore.listUsers() });
     } catch (error) {
@@ -770,11 +770,12 @@ export function createApp(
     }
   });
 
-  app.patch("/api/users/:username", requireAuth, requireSessionAdmin, async (req: AuthenticatedRequest, res, next) => {
+  app.patch("/api/users/:username", requireAuth, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
     try {
       const username = getParam(req.params.username);
       const existing = await userStore.getUser(username);
       if (!existing) throw new HttpError(404, "User not found");
+      assertApiKeyUserUpdateAllowed(req, existing);
       const state = await store.load();
       const input = {
         role: req.body.role ?? existing.role,
@@ -2663,6 +2664,22 @@ function assertAttendingAccountLinks(state: PlannerState, inputs: Array<{ role?:
     if (!attendingId || !state.attendings.some((attending) => attending.id === attendingId)) {
       throw new HttpError(400, "Choose an existing attending for an attending account");
     }
+  }
+}
+
+function assertApiKeyUserUpdateAllowed(
+  req: AuthenticatedRequest,
+  existing: { username: string; role: Role; attendingId?: string }
+): void {
+  if (req.user?.authType !== "apiKey") return;
+  if (existing.role === "admin") {
+    throw new HttpError(403, "The admin API key cannot modify an admin browser account");
+  }
+  if (req.body.role !== undefined && req.body.role !== existing.role) {
+    throw new HttpError(403, "The admin API key cannot change browser account roles");
+  }
+  if (req.body.attendingId !== undefined && readOptionalString(req.body.attendingId) !== existing.attendingId) {
+    throw new HttpError(403, "The admin API key cannot relink an attending browser account");
   }
 }
 

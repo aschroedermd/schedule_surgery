@@ -1023,7 +1023,29 @@ describe("planner API", () => {
     const { app, token } = await loginAs("admin");
 
     const usersResponse = await request(app).get("/api/users").set("authorization", `Bearer ${token}`).expect(200);
-    await request(app).get("/api/users").set("x-api-key", "test-admin-api-key").expect(403);
+    const apiKeyUsersResponse = await request(app).get("/api/users").set("x-api-key", "test-admin-api-key").expect(200);
+    expect(apiKeyUsersResponse.body.users).toEqual(
+      expect.arrayContaining([expect.objectContaining({ username: "cblue", canBuildCall: false })])
+    );
+
+    const apiKeyPrivilegeResponse = await request(app)
+      .patch("/api/users/cblue")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ servicePrivileges: { Berry: "request" }, canBuildCall: true })
+      .expect(200);
+    expect(apiKeyPrivilegeResponse.body.user).toEqual(
+      expect.objectContaining({ username: "cblue", canBuildCall: true, servicePrivileges: expect.objectContaining({ Berry: "request" }) })
+    );
+    await request(app)
+      .patch("/api/users/cblue")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ role: "admin" })
+      .expect(403);
+    await request(app)
+      .patch("/api/users/admin")
+      .set("x-api-key", "test-admin-api-key")
+      .send({ canBuildCall: false })
+      .expect(403);
 
     expect(usersResponse.body.users).toEqual(
       expect.arrayContaining([

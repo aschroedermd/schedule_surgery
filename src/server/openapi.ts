@@ -69,6 +69,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean", description: "Allows adding directory contacts without admin approval." },
+            canBuildCall: { type: "boolean", description: "Allows access to the resident Call Builder." },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             passwordUpdatedAt: { type: "string", format: "date-time" },
             mustChangePassword: { type: "boolean" }
@@ -86,6 +87,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean" },
+            canBuildCall: { type: "boolean", description: "Allows access to the resident Call Builder." },
             voiceDailyLimit: { type: "integer", minimum: 0, maximum: 10000, default: 12 },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             createdAt: { type: "string", format: "date-time" },
@@ -120,7 +122,8 @@ export function getOpenApiDocument() {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
-            canAddContacts: { type: "boolean", description: "Grant direct contact publishing; otherwise submissions require approval." }
+            canAddContacts: { type: "boolean", description: "Grant direct contact publishing; otherwise submissions require approval." },
+            canBuildCall: { type: "boolean", description: "Grant access to the resident Call Builder." }
           }
         },
         DirectoryContactInput: {
@@ -975,7 +978,7 @@ export function getOpenApiDocument() {
       "/api/users": {
         get: {
           summary: "List browser users",
-          description: "Requires a logged-in admin browser session. API keys are not accepted for browser-user management.",
+          description: "Requires a logged-in admin browser session or the admin X-API-Key.",
           responses: {
             "200": {
               description: "User list",
@@ -990,7 +993,7 @@ export function getOpenApiDocument() {
                 }
               }
             },
-            "403": { description: "Non-admin user or API-key auth" }
+            "403": { description: "Admin access required" }
           }
         },
         post: {
@@ -1069,11 +1072,12 @@ export function getOpenApiDocument() {
       "/api/users/{username}": {
         patch: {
           summary: "Update browser user privileges",
-          description: "Requires a logged-in admin browser session. API keys are not accepted for browser-user management.",
+          description:
+            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers may update non-admin privileges such as servicePrivileges, canAddContacts, and canBuildCall, but cannot modify admin accounts, change roles, or relink attending identities.",
           parameters: [{ name: "username", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": { description: "Updated user and refreshed user list" },
-            "403": { description: "Non-admin user or API-key auth" }
+            "403": { description: "Admin access required or unsafe API-key account mutation" }
           }
         },
         delete: {
