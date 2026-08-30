@@ -1051,6 +1051,19 @@ h2 {
   min-width: 265px;
 }
 
+.call-off-requests-button > span {
+  display: grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: var(--text-inverse);
+  padding: 0 6px;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
 .call-builder-scorecard {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1385,6 +1398,262 @@ h2 {
   font-size: 0.74rem;
 }
 
+.off-call-modal-backdrop {
+  position: fixed;
+  z-index: 130;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(8px);
+}
+
+.off-call-modal {
+  width: min(780px, 100%);
+  max-height: min(860px, calc(100dvh - 36px));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  background: var(--bg-surface);
+  padding: 18px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
+}
+
+.off-call-modal-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 0 42px;
+  text-align: center;
+}
+
+.off-call-modal-header h2,
+.off-call-resident-section header,
+.off-call-resident-card > strong {
+  margin: 0;
+}
+
+.off-call-modal-header h2 {
+  font-size: 1.3rem;
+}
+
+.off-call-modal-header > div > span,
+.off-call-resident-section > header span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.off-call-modal-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.off-call-calendar {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--bg-muted) 58%, var(--bg-surface));
+  padding: 10px;
+}
+
+.off-call-calendar-weekdays,
+.off-call-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.off-call-calendar-weekdays span {
+  color: var(--text-muted);
+  font-size: 0.63rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.off-call-calendar-grid > button,
+.off-call-calendar-blank {
+  min-width: 0;
+  min-height: 48px;
+  border-radius: 10px;
+}
+
+.off-call-calendar-grid > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  padding: 5px 7px;
+  text-align: left;
+}
+
+.off-call-calendar-grid > button:disabled {
+  cursor: default;
+  opacity: 0.78;
+}
+
+.off-call-calendar-grid > button.has-requests {
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--border-color));
+  background: color-mix(in srgb, var(--color-primary-light) 55%, var(--bg-surface));
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.off-call-calendar-grid > button.has-requests:hover,
+.off-call-calendar-grid > button.selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
+.off-call-calendar-grid time {
+  overflow: hidden;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.off-call-calendar-grid strong {
+  display: grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: var(--text-inverse);
+  font-size: 0.72rem;
+}
+
+.off-call-selected-date {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  color: var(--text-muted);
+  padding: 9px 12px;
+  font-size: 0.76rem;
+}
+
+.off-call-selected-date.active {
+  align-items: flex-start;
+  border-style: solid;
+  background: var(--color-primary-light);
+  color: var(--text-main);
+}
+
+.off-call-selected-date > strong {
+  flex: 0 0 auto;
+  padding-top: 4px;
+}
+
+.off-call-selected-date > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.off-call-selected-date > div span {
+  border-radius: 999px;
+  background: var(--bg-surface);
+  padding: 4px 8px;
+  font-weight: 800;
+}
+
+.off-call-resident-section {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.off-call-resident-section > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.off-call-resident-scroll {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-muted);
+  padding: 9px;
+}
+
+.off-call-resident-card {
+  display: grid;
+  grid-template-columns: minmax(145px, 0.34fr) minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 11px;
+  background: var(--bg-surface);
+  padding: 10px 12px;
+}
+
+.off-call-resident-card > strong {
+  font-size: 0.82rem;
+}
+
+.off-call-resident-card > div,
+.off-call-resident-card > div > span {
+  display: grid;
+  gap: 3px;
+}
+
+.off-call-resident-card > div {
+  gap: 8px;
+}
+
+.off-call-resident-card > div > span {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.off-call-resident-card i {
+  justify-self: start;
+  font-style: normal;
+}
+
+.off-call-resident-card b {
+  font-size: 0.75rem;
+}
+
+.off-call-resident-card small {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.off-call-empty {
+  min-height: 110px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
 @media (max-width: 1120px) {
   .call-builder-workspace,
   .call-builder-start {
@@ -1431,6 +1700,67 @@ h2 {
   .call-builder-actions label,
   .call-builder-actions button {
     width: 100%;
+  }
+
+  .off-call-modal-backdrop {
+    align-items: end;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .off-call-modal {
+    max-height: calc(100dvh - 16px);
+    gap: 10px;
+    border-radius: 18px;
+    padding: 13px;
+  }
+
+  .off-call-modal-header {
+    gap: 7px;
+    padding: 0 34px 0 0;
+  }
+
+  .off-call-calendar {
+    padding: 7px;
+  }
+
+  .off-call-calendar-weekdays,
+  .off-call-calendar-grid {
+    gap: 3px;
+  }
+
+  .off-call-calendar-grid > button,
+  .off-call-calendar-blank {
+    min-height: 42px;
+    border-radius: 8px;
+  }
+
+  .off-call-calendar-grid > button {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    padding: 3px;
+    text-align: center;
+  }
+
+  .off-call-calendar-grid strong {
+    min-width: 20px;
+    height: 20px;
+    font-size: 0.65rem;
+  }
+
+  .off-call-selected-date,
+  .off-call-resident-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .off-call-selected-date {
+    display: grid;
+    gap: 6px;
+  }
+
+  .off-call-resident-section > header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .call-builder-scorecard > div {

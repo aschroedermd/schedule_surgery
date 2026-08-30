@@ -1,6 +1,6 @@
-import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, RefreshCw, Send, ShieldCheck, Trash2, Wand2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, RefreshCw, Send, ShieldCheck, Trash2, Users, Wand2, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteCallOffRequest,
   generateCallScheduleDraft,
@@ -17,10 +17,18 @@ import {
   suggestCallScheduleMoves
 } from "../shared/callBuilder";
 import { addDays, displayDate, parseLocalDate } from "../shared/date";
+import { comparePersonNames } from "../shared/names";
 import { getRotationForDate, ROTATION_BLOCK_DATES, getTodayDate } from "../shared/rotations";
+import {
+  getBlockCallOffRequests,
+  getCallOffRequestDates,
+  getCallOffRequestResidentIdsByDate,
+  groupCallOffRequestsByResident
+} from "./callOffRequestCalendar";
 import {
   CALL_POSITIONS,
   CallBuilderAssignment,
+  CallOffRequest,
   CallOffRequestPriority,
   CallOffRequestScope,
   PlannerState,
@@ -151,7 +159,9 @@ export function CallBuilderTab({
   const [assignments, setAssignments] = useState<CallBuilderAssignment[] | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [offCallRequestsOpen, setOffCallRequestsOpen] = useState(false);
   const block = getCallBuilderBlock(blockNumber)!;
+  const offCallResidentCount = new Set(getBlockCallOffRequests(state.callOffRequests, block).map((request) => request.residentId)).size;
   const evaluation = useMemo(
     () => assignments ? evaluateCallSchedule(state, blockNumber, assignments) : undefined,
     [assignments, blockNumber, state]
@@ -220,10 +230,21 @@ export function CallBuilderTab({
               ))}
             </select>
           </label>
+          <button type="button" className="secondary-button call-off-requests-button" onClick={() => setOffCallRequestsOpen(true)}>
+            <Users size={16} />Off Call Requests{offCallResidentCount > 0 && <span>{offCallResidentCount}</span>}
+          </button>
           <button type="button" className="secondary-button" onClick={loadPublishedSchedule}><RefreshCw size={16} />Load published</button>
           <button type="button" className="primary-button" disabled={busy} onClick={buildSchedule}><Wand2 size={17} />{busy ? "Building…" : "Build schedule"}</button>
         </div>
       </div>
+
+      {offCallRequestsOpen && (
+        <OffCallRequestsModal
+          state={state}
+          initialBlockNumber={blockNumber}
+          onClose={() => setOffCallRequestsOpen(false)}
+        />
+      )}
 
       {error && <div className="alert danger">{error}</div>}
 
@@ -288,6 +309,145 @@ export function CallBuilderTab({
         </>
       )}
     </section>
+  );
+}
+
+function OffCallRequestsModal({
+  state,
+  initialBlockNumber,
+  onClose
+}: {
+  state: PlannerState;
+  initialBlockNumber: number;
+  onClose: () => void;
+}) {
+  const [blockNumber, setBlockNumber] = useState(initialBlockNumber);
+  const [selectedDate, setSelectedDate] = useState<string>();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const blockIndex = ROTATION_BLOCK_DATES.findIndex((block) => block.blockNumber === blockNumber);
+  const block = getCallBuilderBlock(blockNumber)!;
+  const blockRequests = useMemo(
+    () => getBlockCallOffRequests(state.callOffRequests, block),
+    [state.callOffRequests, block]
+  );
+  const residentsByDate = useMemo(
+    () => getCallOffRequestResidentIdsByDate(blockRequests, block),
+    [blockRequests, block]
+  );
+  const residentGroups = useMemo(
+    () => groupCallOffRequestsByResident(blockRequests, state.residents, block),
+    [blockRequests, state.residents, block]
+  );
+  const residentNames = useMemo(
+    () => new Map(state.residents.map((resident) => [resident.id, resident.name])),
+    [state.residents]
+  );
+  const selectedResidentNames = (selectedDate ? residentsByDate[selectedDate] ?? [] : [])
+    .map((residentId) => residentNames.get(residentId) ?? residentId)
+    .sort(comparePersonNames);
+  const dates = getDatesInRange(block.startDate, block.endDate);
+  const leadingBlanks = (parseLocalDate(block.startDate).getDay() + 6) % 7;
+  const calendarCells: Array<string | undefined> = [
+    ...Array.from({ length: leadingBlanks }, () => undefined),
+    ...dates
+  ];
+  while (calendarCells.length % 7 !== 0) calendarCells.push(undefined);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  function moveBlock(direction: -1 | 1) {
+    const nextBlock = ROTATION_BLOCK_DATES[blockIndex + direction];
+    if (!nextBlock) return;
+    setBlockNumber(nextBlock.blockNumber);
+    setSelectedDate(undefined);
+  }
+
+  return (
+    <div className="off-call-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="off-call-modal" role="dialog" aria-modal="true" aria-labelledby="off-call-modal-title">
+        <header className="off-call-modal-header">
+          <button type="button" className="icon-button" aria-label="Previous rotation block" disabled={blockIndex <= 0} onClick={() => moveBlock(-1)}>
+            <ChevronLeft size={19} />
+          </button>
+          <div>
+            <p className="eyebrow">Off Call Requests</p>
+            <h2 id="off-call-modal-title">Block {blockNumber}</h2>
+            <span>{formatCompactDate(block.startDate)}–{formatCompactDate(block.endDate)} · {residentGroups.length} resident{residentGroups.length === 1 ? "" : "s"}</span>
+          </div>
+          <button type="button" className="icon-button" aria-label="Next rotation block" disabled={blockIndex >= ROTATION_BLOCK_DATES.length - 1} onClick={() => moveBlock(1)}>
+            <ChevronRight size={19} />
+          </button>
+          <button ref={closeButtonRef} type="button" className="icon-button off-call-modal-close" aria-label="Close off-call requests" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="off-call-calendar" aria-label={`Block ${blockNumber} off-call request calendar`}>
+          <div className="off-call-calendar-weekdays" aria-hidden="true">
+            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}
+          </div>
+          <div className="off-call-calendar-grid">
+            {calendarCells.map((date, index) => {
+              if (!date) return <span key={`blank-${index}`} className="off-call-calendar-blank" />;
+              const count = residentsByDate[date]?.length ?? 0;
+              return (
+                <button
+                  key={date}
+                  type="button"
+                  className={`${count ? "has-requests" : ""}${selectedDate === date ? " selected" : ""}`}
+                  disabled={count === 0}
+                  aria-label={`${formatLongDate(date)}: ${count} resident${count === 1 ? "" : "s"} requested off call`}
+                  onClick={() => setSelectedDate(date)}
+                >
+                  <time dateTime={date}>{formatCalendarDate(date)}</time>
+                  {count > 0 && <strong>{count}</strong>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className={`off-call-selected-date${selectedDate ? " active" : ""}`} aria-live="polite">
+          {selectedDate ? (
+            <>
+              <strong>{formatLongDate(selectedDate)}</strong>
+              <div>{selectedResidentNames.map((name) => <span key={name}>{name}</span>)}</div>
+            </>
+          ) : (
+            <span>Select a numbered date to see who requested it off.</span>
+          )}
+        </div>
+
+        <section className="off-call-resident-section" aria-label="Residents with off-call requests">
+          <header><strong>Requests by resident</strong><span>Alphabetical · {blockRequests.length} preference{blockRequests.length === 1 ? "" : "s"}</span></header>
+          <div className="off-call-resident-scroll">
+            {residentGroups.length === 0 ? (
+              <div className="off-call-empty"><CalendarDays size={20} /><span>No off-call requests for this block.</span></div>
+            ) : residentGroups.map((group) => (
+              <article key={group.residentId} className="off-call-resident-card">
+                <strong>{group.residentName}</strong>
+                <div>
+                  {group.requests.map((request) => (
+                    <span key={request.id}>
+                      <i className={`call-request-priority ${request.priority}`}>{request.priority}</i>
+                      <b>{formatRequestDates(request, block)}</b>
+                      <small>{request.scope === "weekend" ? "Entire weekend" : "Requested day"}{request.reason ? ` · ${request.reason}` : ""}</small>
+                    </span>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </section>
+    </div>
   );
 }
 
@@ -434,6 +594,30 @@ function CallBuilderStartState({ state, blockNumber }: { state: PlannerState; bl
       <ol>{CALL_BUILDER_GOALS.map((goal) => <li key={goal}>{goal}</li>)}</ol>
     </div>
   );
+}
+
+function getDatesInRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  for (let date = startDate; date <= endDate; date = addDays(date, 1)) dates.push(date);
+  return dates;
+}
+
+function formatCalendarDate(date: string): string {
+  return parseLocalDate(date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatCompactDate(date: string): string {
+  return parseLocalDate(date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatLongDate(date: string): string {
+  return parseLocalDate(date).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+}
+
+function formatRequestDates(request: CallOffRequest, block: { startDate: string; endDate: string }): string {
+  const dates = getCallOffRequestDates(request, block);
+  if (dates.length <= 1) return dates[0] ? formatCompactDate(dates[0]) : formatCompactDate(request.date);
+  return `${formatCompactDate(dates[0])}–${formatCompactDate(dates.at(-1)!)}`;
 }
 
 function getDefaultBlockNumber(): number {
