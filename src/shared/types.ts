@@ -54,11 +54,13 @@ export type CallBuilderIssueSeverity = "error" | "warning" | "info";
 export type CallBuilderRule =
   | "coverage"
   | "fairness"
+  | "consecutive-days"
   | "egs-chief"
   | "egs-midlevel"
   | "trauma-chief"
   | "approved-unavailable"
   | "priority-request"
+  | "same-weekend"
   | "vacation"
   | "same-service"
   | "cross-block-saturday"

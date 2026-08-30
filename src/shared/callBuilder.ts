@@ -18,6 +18,7 @@ import {
 
 const TARGET_CALL_UNITS = 2;
 const HARD_VIOLATION_PENALTY = 1_000_000;
+const NO_CALL_FAIRNESS_PENALTY = 15_000;
 
 interface EvaluationAccumulator {
   issues: CallBuilderIssue[];
@@ -32,12 +33,13 @@ interface HardEligibility {
 }
 
 export const CALL_BUILDER_GOALS = [
-  "Fairness: each regular call-pool resident should receive one Saturday or two Friday/Sunday shifts.",
+  "Fairness: each available regular call-pool resident should receive one Saturday or two Friday/Sunday shifts, with absolutely no call on consecutive days.",
   "EGS chiefs call on Sundays.",
   "EGS mid-level residents avoid Saturdays and weekends with the EGS chief.",
   "Trauma chiefs receive two nonconsecutive Fridays.",
   "Approved unavailable time is protected.",
   "Priority call-off requests are protected when possible.",
+  "A resident should not call twice in the same weekend.",
   "Avoid the weekends before and immediately after vacation weeks.",
   "Separate residents on the same service across weekends when possible.",
   "Avoid Saturdays at both a prior block's end and the new block's start.",
@@ -236,7 +238,7 @@ export function evaluateCallSchedule(
       "warning",
       "fairness",
       description,
-      delta * 12_000,
+      delta * 12_000 + (load.units === 0 ? NO_CALL_FAIRNESS_PENALTY : 0),
       undefined,
       [load.residentId],
       `fairness:${load.residentId}`
@@ -244,6 +246,7 @@ export function evaluateCallSchedule(
   }
 
   evaluateAssignmentPreferences(state, blockNumber, assignments, residentsById, accumulator);
+  evaluateResidentSpacing(assignments, residentsById, accumulator);
   evaluateWeekendServiceSeparation(state, assignments, residentsById, accumulator);
   evaluateEgsPairings(assignments, residentsById, accumulator);
   evaluateTraumaChiefTargets(state, blockNumber, assignments, residentsById, accumulator);
@@ -332,7 +335,7 @@ function optimizeAssignments(
   let assignments = initialAssignments;
   let evaluation = evaluateCallSchedule(state, blockNumber, assignments);
 
-  for (let pass = 0; pass < 4; pass += 1) {
+  for (let pass = 0; pass < 6; pass += 1) {
     let bestAssignments: CallBuilderAssignment[] | undefined;
     let bestEvaluation = evaluation;
 
@@ -415,12 +418,19 @@ function getCandidateCost(
     .reduce((total, assignment) => total + getCallUnits(assignment.date), 0);
   const unitsAfter = unitsBefore + getCallUnits(slot.date);
   let cost = (Math.abs(unitsAfter - TARGET_CALL_UNITS) - Math.abs(unitsBefore - TARGET_CALL_UNITS)) * 12_000;
+  if (unitsBefore === 0 && unitsAfter > 0) cost -= NO_CALL_FAIRNESS_PENALTY;
   if (unitsAfter > TARGET_CALL_UNITS) cost += (unitsAfter - TARGET_CALL_UNITS) * 20_000;
 
   const service = getResidentService(resident, slot.date);
   const weekendAnchor = getCallBuilderWeekendAnchor(slot.date);
   const weekday = parseLocalDate(slot.date).getDay();
   const sameWeekend = assignments.filter((assignment) => getCallBuilderWeekendAnchor(assignment.date) === weekendAnchor);
+  const residentWeekendAssignments = sameWeekend.filter((assignment) => assignment.residentId === resident.id);
+  if (residentWeekendAssignments.some((assignment) => Math.abs(daysBetween(assignment.date, slot.date)) === 1)) {
+    cost += HARD_VIOLATION_PENALTY;
+  } else if (residentWeekendAssignments.length > 0) {
+    cost += 2_500;
+  }
   const sameServiceCount = sameWeekend.filter((assignment) => {
     const assignedResident = state.residents.find((candidate) => candidate.id === assignment.residentId);
     return assignedResident && assignedResident.id !== resident.id && normalizeService(getResidentService(assignedResident, assignment.date)) === normalizeService(service);
@@ -455,6 +465,58 @@ function getCandidateCost(
   if (isNrvMidlevel(resident, slot.date)) cost += regularPoolCapacityCoversBlock(state, blockNumber, "mid-level") ? 6_000 : 800;
   if (isNrvChief(resident, slot.date)) cost += regularPoolCapacityCoversBlock(state, blockNumber, "senior", resident.id) ? 1_800 : 300;
   return cost;
+}
+
+function evaluateResidentSpacing(
+  assignments: CallBuilderAssignment[],
+  residentsById: Map<string, Resident>,
+  accumulator: EvaluationAccumulator
+) {
+  const assignmentsByResident = new Map<string, CallBuilderAssignment[]>();
+  for (const assignment of assignments) {
+    const residentAssignments = assignmentsByResident.get(assignment.residentId) ?? [];
+    residentAssignments.push(assignment);
+    assignmentsByResident.set(assignment.residentId, residentAssignments);
+  }
+
+  for (const [residentId, residentAssignments] of assignmentsByResident) {
+    const resident = residentsById.get(residentId);
+    const uniqueDates = [...new Set(residentAssignments.map((assignment) => assignment.date))].sort();
+    for (let index = 1; index < uniqueDates.length; index += 1) {
+      if (daysBetween(uniqueDates[index - 1], uniqueDates[index]) !== 1) continue;
+      addIssue(
+        accumulator,
+        "error",
+        "consecutive-days",
+        `${resident?.name ?? residentId} is assigned on consecutive days (${uniqueDates[index - 1]} and ${uniqueDates[index]}).`,
+        HARD_VIOLATION_PENALTY,
+        uniqueDates[index],
+        [residentId],
+        `consecutive-days:${residentId}:${uniqueDates[index - 1]}:${uniqueDates[index]}`
+      );
+    }
+
+    const datesByWeekend = new Map<string, Set<string>>();
+    for (const date of uniqueDates) {
+      const anchor = getCallBuilderWeekendAnchor(date);
+      const weekendDates = datesByWeekend.get(anchor) ?? new Set<string>();
+      weekendDates.add(date);
+      datesByWeekend.set(anchor, weekendDates);
+    }
+    for (const [anchor, weekendDates] of datesByWeekend) {
+      if (weekendDates.size <= 1) continue;
+      addIssue(
+        accumulator,
+        "warning",
+        "same-weekend",
+        `${resident?.name ?? residentId} is assigned more than once during the weekend of ${anchor}.`,
+        2_500,
+        anchor,
+        [residentId],
+        `same-weekend:${residentId}:${anchor}`
+      );
+    }
+  }
 }
 
 function evaluateAssignmentPreferences(
@@ -824,7 +886,28 @@ function sortAssignments(assignments: CallBuilderAssignment[]): CallBuilderAssig
 
 function sortIssues(issues: CallBuilderIssue[]): CallBuilderIssue[] {
   const severityRank: Record<CallBuilderIssueSeverity, number> = { error: 0, warning: 1, info: 2 };
-  return [...issues].sort((left, right) => severityRank[left.severity] - severityRank[right.severity] || (left.date ?? "").localeCompare(right.date ?? "") || left.message.localeCompare(right.message));
+  const ruleRank: Record<CallBuilderRule, number> = {
+    coverage: 0,
+    fairness: 1,
+    "consecutive-days": 1,
+    "egs-chief": 2,
+    "egs-midlevel": 3,
+    "trauma-chief": 4,
+    "approved-unavailable": 5,
+    "priority-request": 6,
+    "same-weekend": 7,
+    vacation: 8,
+    "same-service": 9,
+    "cross-block-saturday": 10,
+    "secondary-request": 11,
+    "nrv-pool": 12
+  };
+  return [...issues].sort((left, right) =>
+    severityRank[left.severity] - severityRank[right.severity]
+    || ruleRank[left.rule] - ruleRank[right.rule]
+    || (left.date ?? "").localeCompare(right.date ?? "")
+    || left.message.localeCompare(right.message)
+  );
 }
 
 function formatPosition(position: CallPosition): string {

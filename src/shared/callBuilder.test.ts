@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../server/sampleData";
 import {
+  CALL_BUILDER_GOALS,
   evaluateCallSchedule,
   generateCallSchedule,
   getCallBuilderDates,
+  getCallBuilderWeekendAnchor,
   getCallPositionForResident
 } from "./callBuilder";
 import { parseLocalDate } from "./date";
@@ -16,6 +18,8 @@ describe("resident call builder", () => {
 
     expect(result.assignments).toHaveLength(getCallBuilderDates(3).length * 3);
     expect(result.hardViolationCount).toBe(0);
+    expect(result.residentLoads.filter((load) => load.regularPool).every((load) => load.units > 0)).toBe(true);
+    expect(result.issues.some((issue) => issue.rule === "consecutive-days" || issue.rule === "same-weekend")).toBe(false);
 
     for (const assignment of result.assignments) {
       const resident = state.residents.find((candidate) => candidate.id === assignment.residentId)!;
@@ -23,6 +27,26 @@ describe("resident call builder", () => {
       expect(getCallPositionForResident(resident)).toBe(assignment.callPosition);
       expect(service).not.toMatch(/scc|transplant|burn|nfloat|night float/);
     }
+
+    for (const resident of state.residents) {
+      const dates = result.assignments
+        .filter((assignment) => assignment.residentId === resident.id)
+        .map((assignment) => assignment.date)
+        .sort();
+      for (let index = 1; index < dates.length; index += 1) {
+        expect(parseLocalDate(dates[index]).getTime() - parseLocalDate(dates[index - 1]).getTime()).not.toBe(24 * 60 * 60 * 1000);
+      }
+      expect(new Set(dates.map(getCallBuilderWeekendAnchor)).size).toBe(dates.length);
+    }
+  });
+
+  it("publishes the revised hierarchy in the requested order", () => {
+    expect(CALL_BUILDER_GOALS).toHaveLength(11);
+    expect(CALL_BUILDER_GOALS[0]).toContain("absolutely no call on consecutive days");
+    expect(CALL_BUILDER_GOALS[5]).toContain("Priority");
+    expect(CALL_BUILDER_GOALS[6]).toContain("twice in the same weekend");
+    expect(CALL_BUILDER_GOALS[7]).toContain("vacation");
+    expect(CALL_BUILDER_GOALS[10]).toContain("Secondary");
   });
 
   it("puts EGS chiefs on Sundays and Trauma chiefs on two separated Fridays", () => {
@@ -81,5 +105,36 @@ describe("resident call builder", () => {
 
     expect(evaluation.hardViolationCount).toBeGreaterThan(0);
     expect(evaluation.issues.some((issue) => issue.rule === "coverage" && issue.message.includes("missing"))).toBe(true);
+  });
+
+  it("blocks consecutive-day call and warns about a Friday-Sunday repeat", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const generated = generateCallSchedule(state, 3);
+    const friday = getCallBuilderDates(3).find((date) => parseLocalDate(date).getDay() === 5)!;
+    const saturday = getCallBuilderDates(3).find((date) => getCallBuilderWeekendAnchor(date) === friday && parseLocalDate(date).getDay() === 6)!;
+    const sunday = getCallBuilderDates(3).find((date) => getCallBuilderWeekendAnchor(date) === friday && parseLocalDate(date).getDay() === 0)!;
+    const fridayAssignment = generated.assignments.find((assignment) => assignment.date === friday && assignment.callPosition === "senior")!;
+
+    const consecutiveDraft = generated.assignments.map((assignment) =>
+      assignment.date === saturday && assignment.callPosition === fridayAssignment.callPosition
+        ? { ...assignment, residentId: fridayAssignment.residentId }
+        : assignment
+    );
+    const consecutiveEvaluation = evaluateCallSchedule(state, 3, consecutiveDraft);
+    expect(consecutiveEvaluation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "error", rule: "consecutive-days", residentIds: [fridayAssignment.residentId] }),
+      expect.objectContaining({ severity: "warning", rule: "same-weekend", residentIds: [fridayAssignment.residentId] })
+    ]));
+
+    const sameWeekendDraft = generated.assignments.map((assignment) =>
+      assignment.date === sunday && assignment.callPosition === fridayAssignment.callPosition
+        ? { ...assignment, residentId: fridayAssignment.residentId }
+        : assignment
+    );
+    const sameWeekendEvaluation = evaluateCallSchedule(state, 3, sameWeekendDraft);
+    expect(sameWeekendEvaluation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "warning", rule: "same-weekend", residentIds: [fridayAssignment.residentId] })
+    ]));
+    expect(sameWeekendEvaluation.issues.some((issue) => issue.rule === "consecutive-days" && issue.residentIds?.includes(fridayAssignment.residentId))).toBe(false);
   });
 });

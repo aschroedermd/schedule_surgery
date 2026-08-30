@@ -431,7 +431,7 @@ function CallBuilderStartState({ state, blockNumber }: { state: PlannerState; bl
     <div className="call-builder-start">
       <div className="call-builder-start-icon"><Wand2 size={26} /></div>
       <div><h3>Ready to build Block {blockNumber}</h3><p>The engine will fill {getCallBuilderDates(blockNumber).length * 3} positions using rotations, PGY level, vacation, approved unavailable time, and {requestCount} resident request{requestCount === 1 ? "" : "s"}.</p></div>
-      <ol>{CALL_BUILDER_GOALS.slice(0, 5).map((goal) => <li key={goal}>{goal}</li>)}</ol>
+      <ol>{CALL_BUILDER_GOALS.map((goal) => <li key={goal}>{goal}</li>)}</ol>
     </div>
   );
 }
