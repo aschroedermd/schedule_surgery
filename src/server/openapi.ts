@@ -126,6 +126,28 @@ export function getOpenApiDocument() {
             canBuildCall: { type: "boolean", description: "Grant access to the resident Call Builder." }
           }
         },
+        CallBuilderAssignment: {
+          type: "object",
+          required: ["date", "callPosition", "residentId"],
+          properties: {
+            date: { type: "string", format: "date" },
+            callPosition: { type: "string", enum: ["senior", "mid-level", "intern"] },
+            residentId: { type: "string" }
+          }
+        },
+        CallScheduleDraft: {
+          type: "object",
+          required: ["id", "blockNumber", "assignments", "createdByUsername", "createdByName", "createdAt", "isMain"],
+          properties: {
+            id: { type: "string" },
+            blockNumber: { type: "integer", minimum: 1, maximum: 13 },
+            assignments: { type: "array", items: { $ref: "#/components/schemas/CallBuilderAssignment" } },
+            createdByUsername: { type: "string" },
+            createdByName: { type: "string" },
+            createdAt: { type: "string", format: "date-time" },
+            isMain: { type: "boolean" }
+          }
+        },
         DirectoryContactInput: {
           type: "object",
           required: ["name", "phoneNumber", "category"],
@@ -1129,6 +1151,66 @@ export function getOpenApiDocument() {
               }
             },
             "403": { description: "Admin access required" }
+          }
+        }
+      },
+      "/api/call-builder/drafts": {
+        post: {
+          summary: "Save a shared Call Builder draft",
+          description: "Requires Call Builder access. Saves a timestamped snapshot without changing CALL coverage; work-in-progress drafts with validity blockers are allowed.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["blockNumber", "assignments"],
+                  properties: {
+                    blockNumber: { type: "integer", minimum: 1, maximum: 13 },
+                    assignments: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/CallBuilderAssignment" } }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            "201": { description: "Filtered PlannerState containing the saved draft" },
+            "400": { description: "Invalid block or empty/malformed assignments" },
+            "403": { description: "Call Builder privilege required" }
+          }
+        }
+      },
+      "/api/call-builder/drafts/{id}": {
+        patch: {
+          summary: "Select or clear a block's main draft",
+          description: "Requires Call Builder access. Setting isMain true makes this the sole default draft for its block.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["isMain"],
+                  properties: { isMain: { type: "boolean" } }
+                }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Filtered PlannerState with updated main-draft selection" },
+            "403": { description: "Call Builder privilege required" },
+            "404": { description: "Draft not found" }
+          }
+        },
+        delete: {
+          summary: "Delete one's own Call Builder draft",
+          description: "Requires Call Builder access and exact creator ownership. Admin status does not override ownership.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Filtered PlannerState without the deleted draft" },
+            "403": { description: "Not the draft creator or no Call Builder access" },
+            "404": { description: "Draft not found" }
           }
         }
       },

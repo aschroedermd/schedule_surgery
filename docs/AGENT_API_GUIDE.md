@@ -70,6 +70,19 @@ Browser clients can watch state changes with `GET /api/events?token=<browser-tok
 
 Use the admin API key only from a trusted secret store. Never place it, a temporary password, the OpenAI key, the OpenRouter key, or the ElevenLabs key in planner data, shell history, chat transcripts, or activity notes.
 
+### Save and manage Call Builder drafts
+
+`POST /api/call-builder/drafts` saves a timestamped shared snapshot and never writes CALL coverage. Send a valid rotation `blockNumber` and at least one `{date, callPosition, residentId}` assignment. Work-in-progress drafts with validity blockers are allowed:
+
+```bash
+curl -X POST "$BASE_URL/api/call-builder/drafts" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"blockNumber":3,"assignments":[{"date":"2026-09-04","callPosition":"senior","residentId":"res_example"}]}'
+```
+
+Set or clear the block's default draft with `PATCH /api/call-builder/drafts/{id}` and `{ "isMain": true }` or `{ "isMain": false }`. Setting one draft as main automatically clears the prior main draft in that block. All Call Builder users can view, load, and select a main draft. Only the exact `createdByUsername` may call `DELETE /api/call-builder/drafts/{id}`; an admin or admin API key cannot delete another user's draft.
+
 ### List users or change non-admin privileges
 
 Read current account permissions before changing them:

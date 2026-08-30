@@ -3,12 +3,14 @@ import { buildResidentUsername, isPlaceholderResidentUsername } from "../shared/
 import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
 import { ROTATION_BLOCK_DATES } from "../shared/rotations";
 import {
+  CALL_POSITIONS,
   ATTENDING_COVERAGE_LINES,
   ActivityEvent,
   ActivityEventType,
   Attending,
   AttendingCoverageAssignment,
   CallOffRequest,
+  CallScheduleDraft,
   ClinicSession,
   ContactRequest,
   CoverageEntry,
@@ -338,6 +340,7 @@ export function normalizePlannerState(
     },
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
     callOffRequests: normalizeCallOffRequests(partial.callOffRequests ?? []),
+    callScheduleDrafts: normalizeCallScheduleDrafts(partial.callScheduleDrafts ?? []),
     coverageRequests: partial.coverageRequests ?? [],
     contacts: normalizeContacts(mergeSeedContacts(partial.contacts)),
     contactRequests: normalizeContactRequests(partial.contactRequests ?? []),
@@ -443,6 +446,37 @@ function normalizeCallOffRequests(requests: CallOffRequest[]): CallOffRequest[] 
       };
     })
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function normalizeCallScheduleDrafts(drafts: CallScheduleDraft[]): CallScheduleDraft[] {
+  const validBlockNumbers = new Set<number>(ROTATION_BLOCK_DATES.map((block) => block.blockNumber));
+  const normalized = drafts
+    .filter((draft) => Boolean(
+      draft?.id
+      && Number.isInteger(draft.blockNumber)
+      && validBlockNumbers.has(draft.blockNumber)
+      && draft.createdByUsername
+    ))
+    .map((draft) => ({
+      ...draft,
+      assignments: Array.isArray(draft.assignments)
+        ? draft.assignments.filter((assignment) =>
+            isIsoDate(assignment?.date)
+            && CALL_POSITIONS.includes(assignment.callPosition)
+            && Boolean(assignment.residentId)
+          )
+        : [],
+      createdByName: normalizeOptionalString(draft.createdByName) ?? draft.createdByUsername,
+      createdAt: normalizeOptionalString(draft.createdAt) ?? new Date().toISOString(),
+      isMain: draft.isMain === true
+    }))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const mainBlocks = new Set<number>();
+  return normalized.map((draft) => {
+    if (!draft.isMain || mainBlocks.has(draft.blockNumber)) return { ...draft, isMain: false };
+    mainBlocks.add(draft.blockNumber);
+    return draft;
+  });
 }
 
 function normalizeActivityEvents(activityEvents: ActivityEvent[]): ActivityEvent[] {
@@ -898,6 +932,12 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
         (!entry.nightAttendingId || attendingIds.has(entry.nightAttendingId))
     ),
     callOffRequests: state.callOffRequests.filter((request) => residentIds.has(request.residentId)),
+    callScheduleDrafts: state.callScheduleDrafts
+      .map((draft) => ({
+        ...draft,
+        assignments: draft.assignments.filter((assignment) => residentIds.has(assignment.residentId))
+      }))
+      .filter((draft) => draft.assignments.length > 0),
     coverageRequests: state.coverageRequests.filter((request) => {
       const requestedResidentId = request.requestedEntry?.residentId;
       if (requestedResidentId && !residentIds.has(requestedResidentId)) return false;

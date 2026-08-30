@@ -61,6 +61,8 @@ Admins can read and partially update the assistant's persisted AI settings with 
 
 Spoken assistant output uses `GET /api/chat/voice/quota` for the signed-in user's allowance and `POST /api/chat/speech` with `{ "input": "final assistant text", "voicePreset": 1 }` to return an MP3. Presets 1–5 use the configured ElevenLabs model and ordered voice ids. `PATCH /api/me/voice-preset` with `{ "preferredVoicePreset": 1 }` stores that browser user's default selection for future sign-ins. Every user starts with 12 spoken responses per Eastern-time day. An admin browser session or admin API key can read, change, and reset a user's quota at `/api/admin/users/{username}/voice-quota`. See the [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert).
 
+Call Builder users save shared schedule snapshots through `POST /api/call-builder/drafts` with `{ "blockNumber": 3, "assignments": [...] }`. Saving a draft does not change `coverageEntries` or the CALL tab. `PATCH /api/call-builder/drafts/:id` with `{ "isMain": true }` makes that snapshot the sole default draft for its block; `false` clears it. All Call Builder users may select the main draft, but `DELETE /api/call-builder/drafts/:id` succeeds only for the username that originally saved that draft. Non-Call-Builder users receive no `callScheduleDrafts` in their filtered planner state.
+
 Create a regular user with the admin API key:
 
 ```bash

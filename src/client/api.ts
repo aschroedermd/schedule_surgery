@@ -249,15 +249,30 @@ export async function validateCallScheduleDraft(
   });
 }
 
-export async function publishCallSchedule(
+export async function saveCallScheduleDraft(
   token: string,
   blockNumber: number,
   assignments: CallBuilderAssignment[]
 ): Promise<PlannerState> {
-  return request<PlannerState>("/api/call-builder/publish", {
+  return request<PlannerState>("/api/call-builder/drafts", {
     method: "POST",
     token,
     body: JSON.stringify({ blockNumber, assignments })
+  });
+}
+
+export async function setCallScheduleDraftMain(token: string, id: string, isMain: boolean): Promise<PlannerState> {
+  return request<PlannerState>(`/api/call-builder/drafts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ isMain })
+  });
+}
+
+export async function deleteCallScheduleDraft(token: string, id: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/call-builder/drafts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    token
   });
 }
 

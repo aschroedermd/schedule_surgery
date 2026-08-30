@@ -814,7 +814,7 @@ export function App() {
         />
       )}
       {activeTab === "call-builder" && canBuildCall && (
-        <CallBuilderTab state={state} token={session.token} onMutate={runMutation} />
+        <CallBuilderTab state={state} token={session.token} username={session.username} onMutate={runMutation} />
       )}
       {activeTab === "schedule" && (
         <ResidentScheduleTab state={state} token={session.token} isAdmin={isAdmin} disabled={!isAdmin} onMutate={runMutation} />

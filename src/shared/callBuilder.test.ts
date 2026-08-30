@@ -98,7 +98,7 @@ describe("resident call builder", () => {
     ]));
   });
 
-  it("detects an incomplete manual draft before publishing", () => {
+  it("detects an incomplete manual draft for the live validity review", () => {
     const state = createInitialState(new Date("2026-08-30T12:00:00"));
     const generated = generateCallSchedule(state, 3);
     const evaluation = evaluateCallSchedule(state, 3, generated.assignments.slice(1));

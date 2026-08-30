@@ -49,6 +49,16 @@ export interface CallBuilderAssignment {
   residentId: string;
 }
 
+export interface CallScheduleDraft {
+  id: string;
+  blockNumber: number;
+  assignments: CallBuilderAssignment[];
+  createdByUsername: string;
+  createdByName: string;
+  createdAt: string;
+  isMain: boolean;
+}
+
 export type CallBuilderIssueSeverity = "error" | "warning" | "info";
 
 export type CallBuilderRule =
@@ -614,6 +624,7 @@ export interface PlannerState {
   qgendaSync: QgendaSyncStatus;
   coverageEntries: CoverageEntry[];
   callOffRequests: CallOffRequest[];
+  callScheduleDrafts: CallScheduleDraft[];
   coverageRequests: CoverageChangeRequest[];
   contacts: DirectoryContact[];
   contactRequests: ContactRequest[];

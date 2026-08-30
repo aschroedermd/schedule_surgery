@@ -52,6 +52,7 @@ import {
   CallBuilderAssignment,
   CallPosition,
   CallOffRequest,
+  CallScheduleDraft,
   CaseOrderChange,
   ClaimRequest,
   ClinicSession,
@@ -1010,43 +1011,90 @@ export function createApp(
     }
   });
 
-  app.post("/api/call-builder/publish", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
+  app.post("/api/call-builder/drafts", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
       const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
-      const block = getCallBuilderBlock(blockNumber)!;
       const assignments = readCallBuilderAssignments(req.body?.assignments);
+      if (assignments.length === 0) throw new HttpError(400, "Add at least one assignment before saving a draft");
       const evaluation = evaluateCallSchedule(state, blockNumber, assignments);
-      if (evaluation.hardViolationCount > 0) {
-        const firstError = evaluation.issues.find((issue) => issue.severity === "error");
-        throw new HttpError(400, `Resolve ${evaluation.hardViolationCount} blocking issue${evaluation.hardViolationCount === 1 ? "" : "s"} before publishing${firstError ? `: ${firstError.message}` : ""}`);
-      }
       const now = new Date().toISOString();
-      const callEntries: CoverageEntry[] = evaluation.assignments.map((assignment) => ({
-        id: createId("coverage_call_builder"),
-        date: assignment.date,
-        kind: "call",
-        residentId: assignment.residentId,
-        callPosition: assignment.callPosition,
-        note: `Call Builder · Block ${blockNumber}`,
+      const draft: CallScheduleDraft = {
+        id: createId("call_schedule_draft"),
+        blockNumber,
+        assignments: evaluation.assignments,
+        createdByUsername: req.user!.username,
+        createdByName: req.user!.displayName || req.user!.username,
         createdAt: now,
-        updatedAt: now
-      }));
+        isMain: false
+      };
       const nextState = addActivity(
-        {
-          ...state,
-          coverageEntries: [
-            ...state.coverageEntries.filter((entry) => entry.kind !== "call" || entry.date < block.startDate || entry.date > block.endDate),
-            ...callEntries
-          ]
-        },
+        { ...state, callScheduleDrafts: [draft, ...state.callScheduleDrafts] },
         {
           ...requestActivityActor(req),
           activityType: "calendar",
-          action: "published resident call schedule",
-          details: `Published ${callEntries.length} resident call assignments for block ${blockNumber} with ${evaluation.warningCount} advisory issue${evaluation.warningCount === 1 ? "" : "s"}`,
-          entityType: "callSchedule",
-          entityId: `block_${blockNumber}`
+          action: "saved call schedule draft",
+          details: `Saved a block ${blockNumber} call draft with ${evaluation.assignments.length} assignments, ${evaluation.hardViolationCount} blocker${evaluation.hardViolationCount === 1 ? "" : "s"}, and ${evaluation.warningCount} advisory issue${evaluation.warningCount === 1 ? "" : "s"}`,
+          entityType: "callScheduleDraft",
+          entityId: draft.id
+        }
+      );
+      const saved = await commitState(req, nextState);
+      res.status(201).json(filterStateForUser(saved, req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/call-builder/drafts/:id", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (typeof req.body?.isMain !== "boolean") throw new HttpError(400, "isMain must be true or false");
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const draft = state.callScheduleDrafts.find((candidate) => candidate.id === id);
+      if (!draft) throw new HttpError(404, "Call schedule draft not found");
+      const isMain = req.body.isMain as boolean;
+      const callScheduleDrafts = state.callScheduleDrafts.map((candidate) => {
+        if (candidate.id === id) return { ...candidate, isMain };
+        if (isMain && candidate.blockNumber === draft.blockNumber) return { ...candidate, isMain: false };
+        return candidate;
+      });
+      const nextState = addActivity(
+        { ...state, callScheduleDrafts },
+        {
+          ...requestActivityActor(req),
+          activityType: "calendar",
+          action: isMain ? "selected main call schedule draft" : "cleared main call schedule draft",
+          details: `${isMain ? "Selected" : "Cleared"} the ${draft.createdAt} draft for block ${draft.blockNumber}${isMain ? " as the default" : ""}`,
+          entityType: "callScheduleDraft",
+          entityId: draft.id
+        }
+      );
+      const saved = await commitState(req, nextState);
+      res.json(filterStateForUser(saved, req.user));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/call-builder/drafts/:id", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const draft = state.callScheduleDrafts.find((candidate) => candidate.id === id);
+      if (!draft) throw new HttpError(404, "Call schedule draft not found");
+      if (draft.createdByUsername !== req.user!.username) {
+        throw new HttpError(403, "Only the person who saved this draft can delete it");
+      }
+      const nextState = addActivity(
+        { ...state, callScheduleDrafts: state.callScheduleDrafts.filter((candidate) => candidate.id !== id) },
+        {
+          ...requestActivityActor(req),
+          activityType: "calendar",
+          action: "deleted call schedule draft",
+          details: `Deleted their ${draft.createdAt} call draft for block ${draft.blockNumber}`,
+          entityType: "callScheduleDraft",
+          entityId: draft.id
         }
       );
       const saved = await commitState(req, nextState);
@@ -5243,6 +5291,7 @@ function filterStateForUser(
     callOffRequests: hasCallBuilderAccess(user)
       ? state.callOffRequests
       : state.callOffRequests.filter((request) => request.requesterUsername === user.username || request.residentId === linkedResident?.id),
+    callScheduleDrafts: hasCallBuilderAccess(user) ? state.callScheduleDrafts : [],
     coverageRequests: state.coverageRequests.filter((coverageRequest) => canSeeCoverageRequest(state, user, coverageRequest)),
     contactRequests: state.contactRequests.filter((contactRequest) => contactRequest.requesterUsername === user.username),
     goldStarAwards: state.goldStarAwards.map((award) =>

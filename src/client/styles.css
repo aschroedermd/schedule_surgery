@@ -1398,6 +1398,128 @@ h2 {
   font-size: 0.74rem;
 }
 
+.call-schedule-drafts {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  padding: 13px 15px;
+  box-shadow: var(--shadow-sm);
+}
+
+.call-schedule-drafts > header,
+.call-schedule-drafts > header > div,
+.call-schedule-drafts > header span {
+  display: flex;
+  align-items: center;
+}
+
+.call-schedule-drafts > header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.call-schedule-drafts > header > div {
+  gap: 9px;
+  color: var(--color-primary);
+}
+
+.call-schedule-drafts > header span {
+  align-items: flex-start;
+  flex-direction: column;
+  color: var(--text-main);
+}
+
+.call-schedule-drafts > header small,
+.call-schedule-drafts > p,
+.call-schedule-draft-meta span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.call-schedule-drafts > header > b {
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--bg-muted);
+  font-size: 0.72rem;
+}
+
+.call-schedule-drafts > p {
+  margin: 0;
+}
+
+.call-schedule-draft-list {
+  display: grid;
+  gap: 7px;
+  max-height: 245px;
+  overflow-y: auto;
+}
+
+.call-schedule-draft {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 11px;
+  background: var(--bg-surface-hover);
+  padding: 9px 10px;
+}
+
+.call-schedule-draft.main {
+  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--border-color));
+  background: color-mix(in srgb, var(--color-primary-light) 48%, var(--bg-surface));
+}
+
+.call-schedule-draft-meta {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.call-schedule-draft-meta strong,
+.call-schedule-draft-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-schedule-main-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: var(--bg-muted);
+  padding: 6px 9px;
+  font-size: 0.7rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.call-schedule-main-toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-primary);
+}
+
+.call-schedule-draft.main .call-schedule-main-toggle {
+  background: var(--color-primary);
+  color: var(--text-inverse);
+}
+
+.call-schedule-draft .secondary-button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.call-schedule-draft .icon-button.danger {
+  color: var(--color-danger);
+}
+
 .off-call-modal-backdrop {
   position: fixed;
   z-index: 130;
@@ -1705,6 +1827,14 @@ h2 {
   .off-call-modal-backdrop {
     align-items: end;
     padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .call-schedule-draft {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .call-schedule-draft-meta {
+    grid-column: 1 / -1;
   }
 
   .off-call-modal {

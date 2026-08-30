@@ -1,10 +1,12 @@
-import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, RefreshCw, Send, ShieldCheck, Trash2, Users, Wand2, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileClock, RefreshCw, Save, Send, ShieldCheck, Trash2, Users, Wand2, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteCallOffRequest,
+  deleteCallScheduleDraft,
   generateCallScheduleDraft,
-  publishCallSchedule,
+  saveCallScheduleDraft,
+  setCallScheduleDraftMain,
   submitCallOffRequest
 } from "./api";
 import {
@@ -149,14 +151,18 @@ export function CallOffRequestForm({
 export function CallBuilderTab({
   state,
   token,
+  username,
   onMutate
 }: {
   state: PlannerState;
   token: string;
+  username: string;
   onMutate: Mutate;
 }) {
   const [blockNumber, setBlockNumber] = useState(() => getDefaultBlockNumber());
-  const [assignments, setAssignments] = useState<CallBuilderAssignment[] | undefined>();
+  const [assignments, setAssignments] = useState<CallBuilderAssignment[] | undefined>(() =>
+    getMainCallScheduleDraft(state, getDefaultBlockNumber())?.assignments
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [offCallRequestsOpen, setOffCallRequestsOpen] = useState(false);
@@ -218,8 +224,9 @@ export function CallBuilderTab({
             <select
               value={blockNumber}
               onChange={(event) => {
-                setBlockNumber(Number(event.target.value));
-                setAssignments(undefined);
+                const nextBlockNumber = Number(event.target.value);
+                setBlockNumber(nextBlockNumber);
+                setAssignments(getMainCallScheduleDraft(state, nextBlockNumber)?.assignments);
                 setError(undefined);
               }}
             >
@@ -246,6 +253,15 @@ export function CallBuilderTab({
         />
       )}
 
+      <CallScheduleDraftPanel
+        state={state}
+        blockNumber={blockNumber}
+        token={token}
+        username={username}
+        onLoad={setAssignments}
+        onMutate={onMutate}
+      />
+
       {error && <div className="alert danger">{error}</div>}
 
       {!evaluation ? (
@@ -271,18 +287,17 @@ export function CallBuilderTab({
                 <header>
                   <div>
                     <p className="eyebrow">Live validity check</p>
-                    <h3>{evaluation.hardViolationCount ? "Resolve blockers" : evaluation.warningCount ? "Review tradeoffs" : "Ready to publish"}</h3>
+                    <h3>{evaluation.hardViolationCount ? "Draft has blockers" : evaluation.warningCount ? "Review tradeoffs" : "Ready to save"}</h3>
                   </div>
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={evaluation.hardViolationCount > 0}
                     onClick={() => onMutate(
-                      () => publishCallSchedule(token, blockNumber, evaluation.assignments),
-                      `Block ${blockNumber} call schedule published`
+                      () => saveCallScheduleDraft(token, blockNumber, evaluation.assignments),
+                      `Block ${blockNumber} call schedule draft saved`
                     )}
                   >
-                    <ShieldCheck size={17} />Publish to CALL
+                    <Save size={17} />Save draft
                   </button>
                 </header>
                 {evaluation.issues.length === 0 ? (
@@ -307,6 +322,82 @@ export function CallBuilderTab({
             </aside>
           </div>
         </>
+      )}
+    </section>
+  );
+}
+
+function CallScheduleDraftPanel({
+  state,
+  blockNumber,
+  token,
+  username,
+  onLoad,
+  onMutate
+}: {
+  state: PlannerState;
+  blockNumber: number;
+  token: string;
+  username: string;
+  onLoad: (assignments: CallBuilderAssignment[]) => void;
+  onMutate: Mutate;
+}) {
+  const drafts = state.callScheduleDrafts
+    .filter((draft) => draft.blockNumber === blockNumber)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  return (
+    <section className="call-schedule-drafts" aria-label={`Saved call schedule drafts for block ${blockNumber}`}>
+      <header>
+        <div><FileClock size={18} /><span><strong>Saved drafts</strong><small>Block {blockNumber} · shared with Call Builder users</small></span></div>
+        <b>{drafts.length}</b>
+      </header>
+      {drafts.length === 0 ? (
+        <p>No saved drafts for this block yet. Build or edit a schedule, then choose <strong>Save draft</strong>.</p>
+      ) : (
+        <div className="call-schedule-draft-list">
+          {drafts.map((draft) => {
+            const isOwner = draft.createdByUsername === username;
+            return (
+              <article key={draft.id} className={`call-schedule-draft${draft.isMain ? " main" : ""}`}>
+                <div className="call-schedule-draft-meta">
+                  <strong>{formatDraftTimestamp(draft.createdAt)}</strong>
+                  <span>Saved by {draft.createdByName} · {draft.assignments.length} assignments</span>
+                </div>
+                <label className="call-schedule-main-toggle">
+                  <input
+                    type="checkbox"
+                    checked={draft.isMain}
+                    onChange={(event) => {
+                      const isMain = event.target.checked;
+                      if (isMain) onLoad(draft.assignments);
+                      void onMutate(
+                        () => setCallScheduleDraftMain(token, draft.id, isMain),
+                        isMain ? `Block ${blockNumber} main draft updated` : `Block ${blockNumber} main draft cleared`
+                      );
+                    }}
+                  />
+                  <span>{draft.isMain ? "Main draft" : "Make main"}</span>
+                </label>
+                <button type="button" className="secondary-button" onClick={() => onLoad(draft.assignments)}>Load</button>
+                {isOwner && (
+                  <button
+                    type="button"
+                    className="icon-button danger"
+                    aria-label={`Delete draft saved ${formatDraftTimestamp(draft.createdAt)}`}
+                    title="Delete your draft"
+                    onClick={() => {
+                      if (!window.confirm(`Delete your block ${blockNumber} draft from ${formatDraftTimestamp(draft.createdAt)}?`)) return;
+                      void onMutate(() => deleteCallScheduleDraft(token, draft.id), "Call schedule draft deleted");
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </article>
+            );
+          })}
+        </div>
       )}
     </section>
   );
@@ -618,6 +709,20 @@ function formatRequestDates(request: CallOffRequest, block: { startDate: string;
   const dates = getCallOffRequestDates(request, block);
   if (dates.length <= 1) return dates[0] ? formatCompactDate(dates[0]) : formatCompactDate(request.date);
   return `${formatCompactDate(dates[0])}–${formatCompactDate(dates.at(-1)!)}`;
+}
+
+function formatDraftTimestamp(timestamp: string): string {
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function getMainCallScheduleDraft(state: PlannerState, blockNumber: number) {
+  return state.callScheduleDrafts.find((draft) => draft.blockNumber === blockNumber && draft.isMain);
 }
 
 function getDefaultBlockNumber(): number {
