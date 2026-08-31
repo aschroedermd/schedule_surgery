@@ -57,6 +57,34 @@ export interface CallScheduleDraft {
   createdByName: string;
   createdAt: string;
   isMain: boolean;
+  solverSummary?: CallBuilderSolverSummary;
+  evaluationSnapshot?: CallBuilderEvaluationSnapshot;
+}
+
+export type CallBuilderSolverStatus = "optimal" | "feasible" | "infeasible" | "fallback" | "manual";
+
+export interface CallBuilderObjectiveResult {
+  key: string;
+  label: string;
+  value: number;
+  optimal: boolean;
+}
+
+export interface CallBuilderSolverSummary {
+  engine: "cp-sat" | "heuristic" | "manual";
+  engineVersion: string;
+  status: CallBuilderSolverStatus;
+  optimalityProven: boolean;
+  durationMs: number;
+  objectives: CallBuilderObjectiveResult[];
+  message?: string;
+}
+
+export interface CallBuilderEvaluationSnapshot {
+  hardViolationCount: number;
+  warningCount: number;
+  fairnessPercent: number;
+  qualityScore: number;
 }
 
 export type CallBuilderIssueSeverity = "error" | "warning" | "info";
@@ -94,6 +122,8 @@ export interface CallBuilderResidentLoad {
   units: number;
   shiftCount: number;
   targetUnits: number;
+  targetMinUnits: number;
+  targetMaxUnits: number;
   regularPool: boolean;
 }
 
@@ -107,6 +137,7 @@ export interface CallBuilderEvaluation {
   fairnessPercent: number;
   qualityScore: number;
   penalty: number;
+  solverSummary?: CallBuilderSolverSummary;
 }
 
 export interface CallBuilderSuggestion {
@@ -114,6 +145,7 @@ export interface CallBuilderSuggestion {
   description: string;
   improvement: number;
   assignments: CallBuilderAssignment[];
+  solverSummary?: CallBuilderSolverSummary;
 }
 
 export type CoverageRequestAction = "create" | "update" | "delete";

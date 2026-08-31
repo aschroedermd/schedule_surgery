@@ -1,5 +1,3 @@
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 export function timeToMinutes(time: string): number {
   const [hours, minutes] = time.split(":").map(Number);
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
@@ -21,7 +19,7 @@ export function addMinutes(time: string, minutes: number): string {
 
 export function addDays(date: string, days: number): string {
   const parsed = parseLocalDate(date);
-  return formatDate(new Date(parsed.getTime() + days * MS_PER_DAY));
+  return formatDate(new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate() + days));
 }
 
 export function formatDate(date: Date): string {

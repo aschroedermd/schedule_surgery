@@ -2,6 +2,7 @@ import { isResidentCallEligible } from "./coverage";
 import { addDays, parseLocalDate } from "./date";
 import { comparePersonNames } from "./names";
 import { getRotationForBlock, getRotationForDate, ROTATION_BLOCK_DATES } from "./rotations";
+import { normalizeRotationServiceToServiceLine } from "./rotations";
 import {
   CALL_POSITIONS,
   CallBuilderAssignment,
@@ -34,9 +35,9 @@ interface HardEligibility {
 
 export const CALL_BUILDER_GOALS = [
   "Fairness: each available regular call-pool resident should receive one Saturday or two Friday/Sunday shifts, with absolutely no call on consecutive days.",
-  "EGS chiefs call on Sundays.",
-  "EGS mid-level residents avoid Saturdays and weekends with the EGS chief.",
-  "Trauma chiefs receive two nonconsecutive Fridays.",
+  "EGS chiefs take Sunday call only.",
+  "EGS mid-level residents do not take Saturdays or share a call weekend with the EGS chief.",
+  "Trauma chiefs take Friday call only, with a goal of two nonconsecutive Fridays.",
   "Approved unavailable time is protected.",
   "Priority call-off requests are protected when possible.",
   "A resident should not call twice in the same weekend.",
@@ -87,7 +88,7 @@ export function generateCallSchedule(state: PlannerState, blockNumber: number): 
 
   for (const slot of slots) {
     const candidates = getCallBuilderResidentsForPosition(state, slot.callPosition)
-      .filter((resident) => isHardEligibleForDate(resident, slot.date).eligible)
+      .filter((resident) => isHardEligibleForCallAssignment(resident, slot.date).eligible)
       .filter((resident) => !assignments.some((assignment) => assignment.date === slot.date && assignment.residentId === resident.id))
       .map((resident) => ({ resident, cost: getCandidateCost(state, blockNumber, assignments, slot, resident) }))
       .sort((left, right) => left.cost - right.cost || comparePersonNames(left.resident.name, right.resident.name));
@@ -96,7 +97,18 @@ export function generateCallSchedule(state: PlannerState, blockNumber: number): 
   }
 
   assignments = optimizeAssignments(state, blockNumber, assignments);
-  return evaluateCallSchedule(state, blockNumber, assignments);
+  return {
+    ...evaluateCallSchedule(state, blockNumber, assignments),
+    solverSummary: {
+      engine: "heuristic",
+      engineVersion: "call-builder-heuristic-v2",
+      status: "fallback",
+      optimalityProven: false,
+      durationMs: 0,
+      objectives: [],
+      message: "The local constraint solver was unavailable, so the deterministic fallback was used."
+    }
+  };
 }
 
 export function evaluateCallSchedule(
@@ -159,7 +171,7 @@ export function evaluateCallSchedule(
       );
     }
 
-    const hardEligibility = isHardEligibleForDate(resident, assignment.date);
+    const hardEligibility = isHardEligibleForCallAssignment(resident, assignment.date);
     if (!hardEligibility.eligible) {
       addIssue(
         accumulator,
@@ -227,12 +239,16 @@ export function evaluateCallSchedule(
   const regularLoads = residentLoads.filter((load) => load.regularPool);
   let totalFairnessDelta = 0;
   for (const load of regularLoads) {
-    const delta = Math.abs(load.units - load.targetUnits);
+    const delta = load.units < load.targetMinUnits
+      ? load.targetMinUnits - load.units
+      : load.units > load.targetMaxUnits
+        ? load.units - load.targetMaxUnits
+        : 0;
     totalFairnessDelta += delta;
     if (delta === 0) continue;
     const description = load.units === 0
       ? `${load.residentName} is in the regular ${formatPosition(load.callPosition)} pool but has no call assignment.`
-      : `${load.residentName} has ${load.units} call unit${load.units === 1 ? "" : "s"}; the block target is ${load.targetUnits}.`;
+      : `${load.residentName} has ${load.units} call unit${load.units === 1 ? "" : "s"}; the achievable target is ${formatTargetRange(load.targetMinUnits, load.targetMaxUnits)}.`;
     addIssue(
       accumulator,
       "warning",
@@ -251,7 +267,7 @@ export function evaluateCallSchedule(
   evaluateEgsPairings(assignments, residentsById, accumulator);
   evaluateTraumaChiefTargets(state, blockNumber, assignments, residentsById, accumulator);
 
-  const fairnessDenominator = Math.max(1, regularLoads.length * TARGET_CALL_UNITS);
+  const fairnessDenominator = Math.max(1, regularLoads.reduce((total, load) => total + load.targetMinUnits, 0));
   const fairnessPercent = Math.max(0, Math.round(100 - (totalFairnessDelta / fairnessDenominator) * 100));
   const hardViolationCount = accumulator.issues.filter((issue) => issue.severity === "error").length;
   const warningCount = accumulator.issues.filter((issue) => issue.severity === "warning").length;
@@ -285,7 +301,7 @@ export function suggestCallScheduleMoves(
     const assignment = assignments[index];
     const currentResident = state.residents.find((resident) => resident.id === assignment.residentId);
     for (const resident of getCallBuilderResidentsForPosition(state, assignment.callPosition)) {
-      if (resident.id === assignment.residentId || !isHardEligibleForDate(resident, assignment.date).eligible) continue;
+      if (resident.id === assignment.residentId || !isHardEligibleForCallAssignment(resident, assignment.date).eligible) continue;
       if (assignments.some((item, itemIndex) => itemIndex !== index && item.date === assignment.date && item.residentId === resident.id)) continue;
       const next = assignments.map((item, itemIndex) => itemIndex === index ? { ...item, residentId: resident.id } : item);
       addSuggestion(
@@ -306,7 +322,7 @@ export function suggestCallScheduleMoves(
       const leftResident = state.residents.find((resident) => resident.id === left.residentId);
       const rightResident = state.residents.find((resident) => resident.id === right.residentId);
       if (!leftResident || !rightResident) continue;
-      if (!isHardEligibleForDate(leftResident, right.date).eligible || !isHardEligibleForDate(rightResident, left.date).eligible) continue;
+      if (!isHardEligibleForCallAssignment(leftResident, right.date).eligible || !isHardEligibleForCallAssignment(rightResident, left.date).eligible) continue;
       const next = assignments.map((item, itemIndex) => {
         if (itemIndex === leftIndex) return { ...item, residentId: right.residentId };
         if (itemIndex === rightIndex) return { ...item, residentId: left.residentId };
@@ -335,14 +351,14 @@ function optimizeAssignments(
   let assignments = initialAssignments;
   let evaluation = evaluateCallSchedule(state, blockNumber, assignments);
 
-  for (let pass = 0; pass < 6; pass += 1) {
+  for (let pass = 0; pass < 2; pass += 1) {
     let bestAssignments: CallBuilderAssignment[] | undefined;
     let bestEvaluation = evaluation;
 
     for (let index = 0; index < assignments.length; index += 1) {
       const assignment = assignments[index];
       for (const resident of getCallBuilderResidentsForPosition(state, assignment.callPosition)) {
-        if (resident.id === assignment.residentId || !isHardEligibleForDate(resident, assignment.date).eligible) continue;
+        if (resident.id === assignment.residentId || !isHardEligibleForCallAssignment(resident, assignment.date).eligible) continue;
         if (assignments.some((item, itemIndex) => itemIndex !== index && item.date === assignment.date && item.residentId === resident.id)) continue;
         const candidate = assignments.map((item, itemIndex) => itemIndex === index ? { ...item, residentId: resident.id } : item);
         const candidateEvaluation = evaluateCallSchedule(state, blockNumber, candidate);
@@ -361,7 +377,7 @@ function optimizeAssignments(
         const leftResident = state.residents.find((resident) => resident.id === left.residentId);
         const rightResident = state.residents.find((resident) => resident.id === right.residentId);
         if (!leftResident || !rightResident) continue;
-        if (!isHardEligibleForDate(leftResident, right.date).eligible || !isHardEligibleForDate(rightResident, left.date).eligible) continue;
+        if (!isHardEligibleForCallAssignment(leftResident, right.date).eligible || !isHardEligibleForCallAssignment(rightResident, left.date).eligible) continue;
         const candidate = assignments.map((item, itemIndex) => {
           if (itemIndex === leftIndex) return { ...item, residentId: right.residentId };
           if (itemIndex === rightIndex) return { ...item, residentId: left.residentId };
@@ -529,18 +545,6 @@ function evaluateAssignmentPreferences(
   for (const assignment of assignments) {
     const resident = residentsById.get(assignment.residentId);
     if (!resident) continue;
-    const weekday = parseLocalDate(assignment.date).getDay();
-
-    if (isEgsChief(resident, assignment.date) && weekday !== 0) {
-      addIssue(accumulator, "warning", "egs-chief", `${resident.name}, the EGS chief, is scheduled outside Sunday.`, 7_000, assignment.date, [resident.id]);
-    }
-    if (isEgsMidlevel(resident, assignment.date) && weekday === 6) {
-      addIssue(accumulator, "warning", "egs-midlevel", `${resident.name}, the EGS mid-level resident, is scheduled Saturday.`, 6_000, assignment.date, [resident.id]);
-    }
-    if (isTraumaChief(resident, assignment.date) && weekday !== 5) {
-      addIssue(accumulator, "warning", "trauma-chief", `${resident.name}, the Trauma chief, is scheduled outside Friday.`, 5_000, assignment.date, [resident.id]);
-    }
-
     const request = getCallOffRequest(state, resident.id, assignment.date);
     if (request?.priority === "priority") {
       addIssue(accumulator, "warning", "priority-request", `${resident.name}'s priority ${request.scope === "weekend" ? "weekend" : "day"} off request is not honored.`, 3_500, assignment.date, [resident.id]);
@@ -621,10 +625,10 @@ function evaluateEgsPairings(
     const ids = [...new Set([...chiefs, ...midlevels].map((assignment) => assignment.residentId))];
     addIssue(
       accumulator,
-      "warning",
+      "error",
       "egs-midlevel",
       `The EGS chief and EGS mid-level resident are both on call the weekend of ${anchor}.`,
-      5_000,
+      HARD_VIOLATION_PENALTY,
       anchor,
       ids,
       `egs-pair:${anchor}`
@@ -681,11 +685,14 @@ function buildResidentLoads(
   blockNumber: number,
   assignments: CallBuilderAssignment[]
 ): CallBuilderResidentLoad[] {
+  const targets = buildFairnessTargetRanges(state, blockNumber);
   return CALL_POSITIONS.flatMap((callPosition) => {
     const residents = getAvailablePoolResidents(state, blockNumber, callPosition);
     return residents.map((resident) => {
       const residentAssignments = assignments.filter((assignment) => assignment.residentId === resident.id);
       const service = getRotationForBlock(resident, blockNumber)?.service ?? "Not listed";
+      const regularPool = isRegularPoolResidentForState(state, resident, blockNumber);
+      const target = targets.get(callPosition) ?? { min: 0, max: 0 };
       return {
         residentId: resident.id,
         residentName: resident.name,
@@ -693,26 +700,28 @@ function buildResidentLoads(
         service,
         units: residentAssignments.reduce((total, assignment) => total + getCallUnits(assignment.date), 0),
         shiftCount: residentAssignments.length,
-        targetUnits: isRegularPoolResidentForState(state, resident, blockNumber) ? TARGET_CALL_UNITS : 0,
-        regularPool: isRegularPoolResidentForState(state, resident, blockNumber)
+        targetUnits: regularPool ? TARGET_CALL_UNITS : 0,
+        targetMinUnits: regularPool ? target.min : 0,
+        targetMaxUnits: regularPool ? target.max : 0,
+        regularPool
       };
     });
   }).sort((left, right) => CALL_POSITIONS.indexOf(left.callPosition) - CALL_POSITIONS.indexOf(right.callPosition) || comparePersonNames(left.residentName, right.residentName));
 }
 
-function getAvailablePoolResidents(state: PlannerState, blockNumber: number, callPosition: CallPosition): Resident[] {
+export function getAvailablePoolResidents(state: PlannerState, blockNumber: number, callPosition: CallPosition): Resident[] {
   const dates = getCallBuilderDates(blockNumber);
   return getCallBuilderResidentsForPosition(state, callPosition)
     .filter((resident) => Boolean(getRotationForBlock(resident, blockNumber)))
-    .filter((resident) => dates.some((date) => isHardEligibleForDate(resident, date).eligible));
+    .filter((resident) => dates.some((date) => isHardEligibleForCallAssignment(resident, date).eligible));
 }
 
-function getRegularPoolResidents(state: PlannerState, blockNumber: number, callPosition: CallPosition): Resident[] {
+export function getRegularPoolResidents(state: PlannerState, blockNumber: number, callPosition: CallPosition): Resident[] {
   return getAvailablePoolResidents(state, blockNumber, callPosition)
     .filter((resident) => isRegularPoolResidentForState(state, resident, blockNumber));
 }
 
-function isRegularPoolResidentForState(state: PlannerState, resident: Resident, blockNumber: number): boolean {
+export function isRegularPoolResidentForState(state: PlannerState, resident: Resident, blockNumber: number): boolean {
   const rotation = getRotationForBlock(resident, blockNumber);
   if (!rotation || isRestrictedRotation(rotation.service)) return false;
   const position = getCallPositionForResident(resident);
@@ -739,11 +748,35 @@ function regularPoolCapacityCoversBlock(
   return regularResidents.length * TARGET_CALL_UNITS >= requiredUnits;
 }
 
+export function getFairnessTargetRange(
+  state: PlannerState,
+  blockNumber: number,
+  callPosition: CallPosition
+): { min: number; max: number; desiredRegularUnits: number } {
+  const regularResidents = getRegularPoolResidents(state, blockNumber, callPosition);
+  if (regularResidents.length === 0) return { min: 0, max: 0, desiredRegularUnits: 0 };
+  const availableResidents = getAvailablePoolResidents(state, blockNumber, callPosition);
+  const hasReserve = availableResidents.some((resident) => !regularResidents.some((regular) => regular.id === resident.id));
+  const requiredUnits = getCallBuilderDates(blockNumber).reduce((total, date) => total + getCallUnits(date), 0);
+  const desiredRegularUnits = hasReserve
+    ? Math.min(requiredUnits, regularResidents.length * TARGET_CALL_UNITS)
+    : requiredUnits;
+  return {
+    min: Math.floor(desiredRegularUnits / regularResidents.length),
+    max: Math.ceil(desiredRegularUnits / regularResidents.length),
+    desiredRegularUnits
+  };
+}
+
+function buildFairnessTargetRanges(state: PlannerState, blockNumber: number) {
+  return new Map(CALL_POSITIONS.map((position) => [position, getFairnessTargetRange(state, blockNumber, position)]));
+}
+
 function isBaseCallPoolResident(resident: Resident): boolean {
   return resident.rosterKind === "primary" && isResidentCallEligible(resident) && Boolean(getCallPositionForResident(resident));
 }
 
-function isHardEligibleForDate(resident: Resident, date: string): HardEligibility {
+export function isHardEligibleForDate(resident: Resident, date: string): HardEligibility {
   if (!isBaseCallPoolResident(resident)) return { eligible: false, reason: "not in the resident call pool", rule: "coverage" };
   const rotation = getRotationForDate(resident, date);
   if (!rotation) return { eligible: false, reason: "no rotation is listed for this date", rule: "coverage" };
@@ -757,6 +790,22 @@ function isHardEligibleForDate(resident: Resident, date: string): HardEligibilit
   return { eligible: true };
 }
 
+export function isHardEligibleForCallAssignment(resident: Resident, date: string): HardEligibility {
+  const base = isHardEligibleForDate(resident, date);
+  if (!base.eligible) return base;
+  const weekday = parseLocalDate(date).getDay();
+  if (isEgsChief(resident, date) && weekday !== 0) {
+    return { eligible: false, reason: "EGS chiefs take Sunday call only", rule: "egs-chief" };
+  }
+  if (isEgsMidlevel(resident, date) && weekday === 6) {
+    return { eligible: false, reason: "EGS mid-level residents do not take Saturday call", rule: "egs-midlevel" };
+  }
+  if (isTraumaChief(resident, date) && weekday !== 5) {
+    return { eligible: false, reason: "Trauma chiefs take Friday call only", rule: "trauma-chief" };
+  }
+  return { eligible: true };
+}
+
 function isRestrictedRotation(service: string): boolean {
   const normalized = normalizeService(service);
   return normalized.includes("scc") || normalized.includes("critical care") || normalized.includes("transplant") || normalized.includes("burn") || normalized.includes("nfloat") || normalized.includes("night float");
@@ -766,45 +815,43 @@ function getResidentService(resident: Resident, date: string): string {
   return getRotationForDate(resident, date)?.service ?? resident.serviceTags[0] ?? "Not listed";
 }
 
-function normalizeService(service: string): string {
+export function normalizeService(service: string): string {
   return service.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 function isEgsService(service: string): boolean {
-  const normalized = normalizeService(service);
-  return normalized.includes("ferrara") || /\begs\b/.test(normalized);
+  return normalizeRotationServiceToServiceLine(service) === "Ferrara" || /\begs\b/.test(normalizeService(service));
 }
 
 function isTraumaService(service: string): boolean {
-  const normalized = normalizeService(service);
-  return normalized.includes("gilbert") || normalized.includes("trauma");
+  return normalizeRotationServiceToServiceLine(service) === "Gilbert" || normalizeService(service).includes("trauma");
 }
 
 function isNrvService(service: string): boolean {
-  return normalizeService(service).includes("nrv");
+  return normalizeRotationServiceToServiceLine(service) === "NRV";
 }
 
-function isEgsChief(resident: Resident, date: string): boolean {
+export function isEgsChief(resident: Resident, date: string): boolean {
   return getCallPositionForResident(resident) === "senior" && isEgsService(getResidentService(resident, date));
 }
 
-function isEgsMidlevel(resident: Resident, date: string): boolean {
+export function isEgsMidlevel(resident: Resident, date: string): boolean {
   return getCallPositionForResident(resident) === "mid-level" && isEgsService(getResidentService(resident, date));
 }
 
-function isTraumaChief(resident: Resident, date: string): boolean {
+export function isTraumaChief(resident: Resident, date: string): boolean {
   return getCallPositionForResident(resident) === "senior" && isTraumaService(getResidentService(resident, date));
 }
 
-function isNrvChief(resident: Resident, date: string): boolean {
+export function isNrvChief(resident: Resident, date: string): boolean {
   return getCallPositionForResident(resident) === "senior" && isNrvService(getResidentService(resident, date));
 }
 
-function isNrvMidlevel(resident: Resident, date: string): boolean {
+export function isNrvMidlevel(resident: Resident, date: string): boolean {
   return getCallPositionForResident(resident) === "mid-level" && isNrvService(getResidentService(resident, date));
 }
 
-function getCallOffRequest(state: PlannerState, residentId: string, date: string) {
+export function getCallOffRequest(state: PlannerState, residentId: string, date: string) {
   const requests = state.callOffRequests ?? [];
   return requests
     .filter((request) => request.residentId === residentId)
@@ -813,12 +860,12 @@ function getCallOffRequest(state: PlannerState, residentId: string, date: string
     .at(-1);
 }
 
-function isVacationAdjacent(resident: Resident, date: string): boolean {
+export function isVacationAdjacent(resident: Resident, date: string): boolean {
   const anchor = getCallBuilderWeekendAnchor(date);
   return (resident.vacation ?? []).some((vacation) => anchor >= addDays(vacation.startDate, -3) && anchor <= vacation.endDate);
 }
 
-function isCrossBlockSaturday(
+export function isCrossBlockSaturday(
   state: PlannerState,
   blockNumber: number,
   residentId: string,
@@ -828,10 +875,16 @@ function isCrossBlockSaturday(
   const firstSaturday = getCallBuilderDates(blockNumber).find((candidate) => parseLocalDate(candidate).getDay() === 6);
   if (!firstSaturday || date !== firstSaturday) return false;
   const priorSaturday = addDays(date, -7);
-  return state.coverageEntries.some((entry) => entry.kind === "call" && entry.date === priorSaturday && entry.residentId === residentId);
+  const previousMainDraftHasSaturday = state.callScheduleDrafts.some((draft) =>
+    draft.isMain
+    && draft.blockNumber < blockNumber
+    && draft.assignments.some((assignment) => assignment.date === priorSaturday && assignment.residentId === residentId)
+  );
+  return previousMainDraftHasSaturday
+    || state.coverageEntries.some((entry) => entry.kind === "call" && entry.date === priorSaturday && entry.residentId === residentId);
 }
 
-function getCallUnits(date: string): number {
+export function getCallUnits(date: string): number {
   return parseLocalDate(date).getDay() === 6 ? 2 : 1;
 }
 
@@ -912,4 +965,9 @@ function sortIssues(issues: CallBuilderIssue[]): CallBuilderIssue[] {
 
 function formatPosition(position: CallPosition): string {
   return position === "mid-level" ? "mid-level" : position;
+}
+
+function formatTargetRange(min: number, max: number): string {
+  if (min === max) return `${min} call unit${min === 1 ? "" : "s"}`;
+  return `${min}–${max} call units`;
 }

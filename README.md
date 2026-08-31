@@ -8,15 +8,20 @@ A no-PHI shared planner for weekly resident/fellow coverage of attending OR bloc
    ```bash
    npm install
    ```
-2. Start Postgres:
+2. Install the local Call Builder solver (Python 3.11+):
+   ```bash
+   python3 -m venv .local/call-builder-venv
+   .local/call-builder-venv/bin/pip install -r requirements-call-builder.txt
+   ```
+3. Start Postgres:
    ```bash
    npm run db:up
    ```
-3. Copy `.env.example` to `.env` and set local passwords/API keys:
+4. Copy `.env.example` to `.env` and set local passwords/API keys:
    ```bash
    cp .env.example .env
    ```
-4. Start the app:
+5. Start the app:
    ```bash
    npm run dev
    ```
@@ -45,7 +50,7 @@ DATABASE_URL=memory npm run dev
 - Monthly rounding calendar with resident colors, shared Friday-Sunday call-team summaries, service-specific Saturday-Sunday rounders, weekday off/note entries, and red weekend blocks when the visible service has neither an on-service call resident nor an assigned rounder.
 - Dedicated attending coverage on the Call tab for EGS, Trauma, SCC, consolidated ACS night call, day/night backup, Practice/Elective, Vascular, Pediatrics, and NRV/New River Valley. The four independent lines support separate day/night assignments on every date, automatic night-to-day fallback, and weekend-day carryover for missing Friday-Sunday entries. Backward-compatible weekend shorthand runs through Monday 6 AM, starting Friday morning for NRV and Friday 5 PM for the other lines. Call-day cards expand to the full team and the main calendar shows compact PR/V/PEDS/NRV coverage. A designated minimally invasive fellow may cover Practice weekend call while remaining outside the resident call pool.
 - Every signed-in resident can submit one priority and one secondary Friday, Saturday, Sunday, or full-weekend call-off request per block from the Call tab, with an optional no-PHI reason. Requests are persisted, visible to Call Builder users, and may be withdrawn by their owner.
-- A dedicated per-user **Call Builder** privilege unlocks a block-aware resident call scheduler. It combines rotations, PGY levels, vacation and approved-unavailable dates, resident requests, and prior published call into a deterministic first draft; scores fairness and rule adherence; supports manual assignment edits and suggested improvements; and saves timestamped collaborative drafts without changing CALL coverage. All Call Builder users can view and load the drafts, one may be selected as the default main draft for each block, and only the draft's creator may delete it. Admins can grant the privilege from the Users tab.
+- A dedicated per-user **Call Builder** privilege unlocks a block-aware resident call scheduler. A local CP-SAT constraint solver combines rotations, PGY levels, vacation and approved-unavailable dates, resident requests, prior main drafts, and published call history; enforces non-negotiable rules; and optimizes the stated goals in strict hierarchy order. Builders can lock manual choices, request coordinated minimum-change improvements, review optimality and per-goal results, and save timestamped collaborative drafts without changing CALL coverage. All Call Builder users can view and load the drafts, one may be selected as the default main draft for each block, and only the draft's creator may delete it. Admins can grant the privilege from the Users tab.
 - QGenda published-schedule synchronization on every server startup and daily around 03:00 Eastern, with an admin **Sync now** action, persisted success/failure status, transactional ACS-night validation, and manual/API coverage endpoints.
 - Request-privileged calendar edits are submitted as requests; users with edit privilege for that service can approve or deny them from the Requests tab.
 - Manual setup for hospitals, attendings, residents/fellows, off-service rotators, resident block rotations, unavailable time, case defaults, OR blocks, cases, and clinic sessions.

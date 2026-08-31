@@ -52,12 +52,25 @@ describe("call builder API", () => {
       .expect(200);
     expect(generated.body).toEqual(expect.objectContaining({ hardViolationCount: 0, blockNumber: 3 }));
     expect(generated.body.assignments).toHaveLength(36);
+    expect(generated.body.solverSummary).toEqual(expect.objectContaining({
+      engine: expect.stringMatching(/cp-sat|heuristic/),
+      status: expect.stringMatching(/optimal|feasible|fallback/)
+    }));
+
+    const suggested = await request(app)
+      .post("/api/call-builder/suggest")
+      .set("authorization", `Bearer ${residentToken}`)
+      .send({ blockNumber: 3, assignments: generated.body.assignments.slice(1) })
+      .expect(200);
+    expect(suggested.body).toEqual([
+      expect.objectContaining({ assignments: expect.arrayContaining(generated.body.assignments.slice(0, 1)) })
+    ]);
 
     const coverageBefore = (await store.load()).coverageEntries;
     const firstSaved = await request(app)
       .post("/api/call-builder/drafts")
       .set("authorization", `Bearer ${residentToken}`)
-      .send({ blockNumber: 3, assignments: generated.body.assignments })
+      .send({ blockNumber: 3, assignments: generated.body.assignments, solverSummary: generated.body.solverSummary })
       .expect(201);
     const firstDraft = firstSaved.body.callScheduleDrafts[0];
     expect(firstDraft).toEqual(expect.objectContaining({
@@ -65,7 +78,9 @@ describe("call builder API", () => {
       createdByUsername: "cblue",
       createdByName: "Christian Blue",
       isMain: false,
-      assignments: expect.any(Array)
+      assignments: expect.any(Array),
+      solverSummary: expect.objectContaining({ engine: expect.stringMatching(/cp-sat|heuristic/) }),
+      evaluationSnapshot: expect.objectContaining({ hardViolationCount: 0 })
     }));
     expect(firstDraft.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(firstSaved.body.coverageEntries).toEqual(coverageBefore);

@@ -4,6 +4,8 @@ import {
   AttendingCoverageAssignment,
   CallBuilderAssignment,
   CallBuilderEvaluation,
+  CallBuilderSolverSummary,
+  CallBuilderSuggestion,
   CallOffRequestPriority,
   CallOffRequestScope,
   DirectoryContact,
@@ -229,11 +231,28 @@ export async function deleteCallOffRequest(token: string, id: string): Promise<P
   });
 }
 
-export async function generateCallScheduleDraft(token: string, blockNumber: number): Promise<CallBuilderEvaluation> {
+export async function generateCallScheduleDraft(
+  token: string,
+  blockNumber: number,
+  options: { lockedAssignments?: CallBuilderAssignment[]; baselineAssignments?: CallBuilderAssignment[] } = {}
+): Promise<CallBuilderEvaluation> {
   return request<CallBuilderEvaluation>("/api/call-builder/generate", {
     method: "POST",
     token,
-    body: JSON.stringify({ blockNumber })
+    body: JSON.stringify({ blockNumber, ...options })
+  });
+}
+
+export async function suggestOptimizedCallSchedule(
+  token: string,
+  blockNumber: number,
+  assignments: CallBuilderAssignment[],
+  lockedAssignments: CallBuilderAssignment[] = []
+): Promise<CallBuilderSuggestion[]> {
+  return request<CallBuilderSuggestion[]>("/api/call-builder/suggest", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ blockNumber, assignments, lockedAssignments })
   });
 }
 
@@ -252,12 +271,13 @@ export async function validateCallScheduleDraft(
 export async function saveCallScheduleDraft(
   token: string,
   blockNumber: number,
-  assignments: CallBuilderAssignment[]
+  assignments: CallBuilderAssignment[],
+  solverSummary?: CallBuilderSolverSummary
 ): Promise<PlannerState> {
   return request<PlannerState>("/api/call-builder/drafts", {
     method: "POST",
     token,
-    body: JSON.stringify({ blockNumber, assignments })
+    body: JSON.stringify({ blockNumber, assignments, solverSummary })
   });
 }
 

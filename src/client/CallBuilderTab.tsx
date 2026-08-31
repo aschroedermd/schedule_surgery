@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileClock, RefreshCw, Save, Send, ShieldCheck, Trash2, Users, Wand2, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileClock, Lock, RefreshCw, Save, Send, ShieldCheck, Trash2, Unlock, Users, Wand2, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -7,6 +7,7 @@ import {
   generateCallScheduleDraft,
   saveCallScheduleDraft,
   setCallScheduleDraftMain,
+  suggestOptimizedCallSchedule,
   submitCallOffRequest
 } from "./api";
 import {
@@ -16,7 +17,6 @@ import {
   getCallBuilderDates,
   getCallBuilderResidentsForPosition,
   getCallBuilderWeekendAnchor,
-  suggestCallScheduleMoves
 } from "../shared/callBuilder";
 import { addDays, displayDate, parseLocalDate } from "../shared/date";
 import { comparePersonNames } from "../shared/names";
@@ -30,6 +30,8 @@ import {
 import {
   CALL_POSITIONS,
   CallBuilderAssignment,
+  CallBuilderSolverSummary,
+  CallBuilderSuggestion,
   CallOffRequest,
   CallOffRequestPriority,
   CallOffRequestScope,
@@ -159,10 +161,13 @@ export function CallBuilderTab({
   username: string;
   onMutate: Mutate;
 }) {
+  const defaultDraft = getMainCallScheduleDraft(state, getDefaultBlockNumber());
   const [blockNumber, setBlockNumber] = useState(() => getDefaultBlockNumber());
-  const [assignments, setAssignments] = useState<CallBuilderAssignment[] | undefined>(() =>
-    getMainCallScheduleDraft(state, getDefaultBlockNumber())?.assignments
-  );
+  const [assignments, setAssignments] = useState<CallBuilderAssignment[] | undefined>(() => defaultDraft?.assignments);
+  const [solverSummary, setSolverSummary] = useState<CallBuilderSolverSummary | undefined>(() => defaultDraft?.solverSummary);
+  const [lockedSlotKeys, setLockedSlotKeys] = useState<Set<string>>(() => new Set());
+  const [suggestions, setSuggestions] = useState<CallBuilderSuggestion[]>([]);
+  const [suggestionsBusy, setSuggestionsBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [offCallRequestsOpen, setOffCallRequestsOpen] = useState(false);
@@ -172,22 +177,36 @@ export function CallBuilderTab({
     () => assignments ? evaluateCallSchedule(state, blockNumber, assignments) : undefined,
     [assignments, blockNumber, state]
   );
-  const suggestions = useMemo(
-    () => evaluation ? suggestCallScheduleMoves(state, blockNumber, evaluation.assignments, 4) : [],
-    [evaluation, blockNumber, state]
-  );
   const weekendAnchors = [...new Set(getCallBuilderDates(blockNumber).map(getCallBuilderWeekendAnchor))];
 
   async function buildSchedule() {
     try {
       setBusy(true);
       setError(undefined);
-      const result = await generateCallScheduleDraft(token, blockNumber);
+      const baselineAssignments = assignments ?? [];
+      const lockedAssignments = baselineAssignments.filter((assignment) => lockedSlotKeys.has(callSlotKey(assignment)));
+      const result = await generateCallScheduleDraft(token, blockNumber, { baselineAssignments, lockedAssignments });
       setAssignments(result.assignments);
+      setSolverSummary(result.solverSummary);
+      setSuggestions([]);
     } catch (buildError) {
       setError(buildError instanceof Error ? buildError.message : "The call schedule could not be built");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function findSuggestedMoves() {
+    if (!evaluation) return;
+    try {
+      setSuggestionsBusy(true);
+      setError(undefined);
+      const lockedAssignments = evaluation.assignments.filter((assignment) => lockedSlotKeys.has(callSlotKey(assignment)));
+      setSuggestions(await suggestOptimizedCallSchedule(token, blockNumber, evaluation.assignments, lockedAssignments));
+    } catch (suggestionError) {
+      setError(suggestionError instanceof Error ? suggestionError.message : "Suggested moves could not be calculated");
+    } finally {
+      setSuggestionsBusy(false);
     }
   }
 
@@ -201,6 +220,17 @@ export function CallBuilderTab({
     }
     setError(undefined);
     setAssignments(published);
+    setSolverSummary({
+      engine: "manual",
+      engineVersion: "published-call-import",
+      status: "manual",
+      optimalityProven: false,
+      durationMs: 0,
+      objectives: [],
+      message: "Loaded from the published CALL calendar."
+    });
+    setLockedSlotKeys(new Set());
+    setSuggestions([]);
   }
 
   function updateAssignment(date: string, callPosition: CallBuilderAssignment["callPosition"], residentId: string) {
@@ -208,6 +238,8 @@ export function CallBuilderTab({
       const withoutSlot = (current ?? []).filter((assignment) => assignment.date !== date || assignment.callPosition !== callPosition);
       return residentId ? [...withoutSlot, { date, callPosition, residentId }] : withoutSlot;
     });
+    setSolverSummary(undefined);
+    setSuggestions([]);
   }
 
   return (
@@ -216,7 +248,7 @@ export function CallBuilderTab({
         <div>
           <p className="eyebrow">Protected scheduling workspace</p>
           <h2>Call Builder</h2>
-          <p>Build a fair draft, adjust any resident manually, then publish it to CALL.</p>
+          <p>Build an optimized draft, lock any manual choices, review tradeoffs, and save it for the Call Builder team.</p>
         </div>
         <div className="call-builder-actions">
           <label>
@@ -226,7 +258,11 @@ export function CallBuilderTab({
               onChange={(event) => {
                 const nextBlockNumber = Number(event.target.value);
                 setBlockNumber(nextBlockNumber);
-                setAssignments(getMainCallScheduleDraft(state, nextBlockNumber)?.assignments);
+                const nextDraft = getMainCallScheduleDraft(state, nextBlockNumber);
+                setAssignments(nextDraft?.assignments);
+                setSolverSummary(nextDraft?.solverSummary);
+                setLockedSlotKeys(new Set());
+                setSuggestions([]);
                 setError(undefined);
               }}
             >
@@ -258,7 +294,12 @@ export function CallBuilderTab({
         blockNumber={blockNumber}
         token={token}
         username={username}
-        onLoad={setAssignments}
+        onLoad={(nextAssignments, nextSummary) => {
+          setAssignments(nextAssignments);
+          setSolverSummary(nextSummary);
+          setLockedSlotKeys(new Set());
+          setSuggestions([]);
+        }}
         onMutate={onMutate}
       />
 
@@ -268,7 +309,7 @@ export function CallBuilderTab({
         <CallBuilderStartState state={state} blockNumber={blockNumber} />
       ) : (
         <>
-          <CallBuilderScorecard evaluation={evaluation} />
+          <CallBuilderScorecard evaluation={evaluation} solverSummary={solverSummary} />
           <div className="call-builder-workspace">
             <div className="call-builder-main">
               <div className="call-builder-weekends">
@@ -279,6 +320,17 @@ export function CallBuilderTab({
                     anchor={anchor}
                     assignments={evaluation.assignments}
                     onChange={updateAssignment}
+                    lockedSlotKeys={lockedSlotKeys}
+                    onToggleLock={(date, callPosition) => {
+                      const key = callSlotKey({ date, callPosition });
+                      setLockedSlotKeys((current) => {
+                        const next = new Set(current);
+                        if (next.has(key)) next.delete(key);
+                        else next.add(key);
+                        return next;
+                      });
+                      setSuggestions([]);
+                    }}
                   />
                 ))}
               </div>
@@ -293,7 +345,7 @@ export function CallBuilderTab({
                     type="button"
                     className="primary-button"
                     onClick={() => onMutate(
-                      () => saveCallScheduleDraft(token, blockNumber, evaluation.assignments),
+                      () => saveCallScheduleDraft(token, blockNumber, evaluation.assignments, solverSummary),
                       `Block ${blockNumber} call schedule draft saved`
                     )}
                   >
@@ -316,7 +368,18 @@ export function CallBuilderTab({
             </div>
 
             <aside className="call-builder-sidebar">
-              <CallBuilderSuggestions suggestions={suggestions} onApply={setAssignments} />
+              <CallBuilderSuggestions
+                suggestions={suggestions}
+                busy={suggestionsBusy}
+                solverSummary={solverSummary}
+                lockedCount={lockedSlotKeys.size}
+                onFind={() => void findSuggestedMoves()}
+                onApply={(nextAssignments, nextSummary) => {
+                  setAssignments(nextAssignments);
+                  setSolverSummary(nextSummary);
+                  setSuggestions([]);
+                }}
+              />
               <CallBuilderInputs state={state} blockNumber={blockNumber} />
               <CallBuilderFairness state={state} evaluation={evaluation} />
             </aside>
@@ -339,7 +402,7 @@ function CallScheduleDraftPanel({
   blockNumber: number;
   token: string;
   username: string;
-  onLoad: (assignments: CallBuilderAssignment[]) => void;
+  onLoad: (assignments: CallBuilderAssignment[], solverSummary?: CallBuilderSolverSummary) => void;
   onMutate: Mutate;
 }) {
   const drafts = state.callScheduleDrafts
@@ -362,7 +425,7 @@ function CallScheduleDraftPanel({
               <article key={draft.id} className={`call-schedule-draft${draft.isMain ? " main" : ""}`}>
                 <div className="call-schedule-draft-meta">
                   <strong>{formatDraftTimestamp(draft.createdAt)}</strong>
-                  <span>Saved by {draft.createdByName} · {draft.assignments.length} assignments</span>
+                  <span>Saved by {draft.createdByName} · {draft.assignments.length} assignments · {formatSolverStatus(draft.solverSummary)}</span>
                 </div>
                 <label className="call-schedule-main-toggle">
                   <input
@@ -370,7 +433,7 @@ function CallScheduleDraftPanel({
                     checked={draft.isMain}
                     onChange={(event) => {
                       const isMain = event.target.checked;
-                      if (isMain) onLoad(draft.assignments);
+                      if (isMain) onLoad(draft.assignments, draft.solverSummary);
                       void onMutate(
                         () => setCallScheduleDraftMain(token, draft.id, isMain),
                         isMain ? `Block ${blockNumber} main draft updated` : `Block ${blockNumber} main draft cleared`
@@ -379,7 +442,7 @@ function CallScheduleDraftPanel({
                   />
                   <span>{draft.isMain ? "Main draft" : "Make main"}</span>
                 </label>
-                <button type="button" className="secondary-button" onClick={() => onLoad(draft.assignments)}>Load</button>
+                <button type="button" className="secondary-button" onClick={() => onLoad(draft.assignments, draft.solverSummary)}>Load</button>
                 {isOwner && (
                   <button
                     type="button"
@@ -546,12 +609,16 @@ function CallBuilderWeekend({
   state,
   anchor,
   assignments,
-  onChange
+  onChange,
+  lockedSlotKeys,
+  onToggleLock
 }: {
   state: PlannerState;
   anchor: string;
   assignments: CallBuilderAssignment[];
   onChange: (date: string, callPosition: CallBuilderAssignment["callPosition"], residentId: string) => void;
+  lockedSlotKeys: Set<string>;
+  onToggleLock: (date: string, callPosition: CallBuilderAssignment["callPosition"]) => void;
 }) {
   const dates = [anchor, addDays(anchor, 1), addDays(anchor, 2)];
   return (
@@ -564,18 +631,31 @@ function CallBuilderWeekend({
             {CALL_POSITIONS.map((callPosition) => {
               const assignment = assignments.find((item) => item.date === date && item.callPosition === callPosition);
               const residents = getCallBuilderResidentsForPosition(state, callPosition);
+              const locked = lockedSlotKeys.has(callSlotKey({ date, callPosition }));
               return (
-                <label key={callPosition}>
-                  <span>{formatPosition(callPosition)}</span>
-                  <select value={assignment?.residentId ?? ""} onChange={(event) => onChange(date, callPosition, event.target.value)}>
-                    <option value="">Unassigned</option>
-                    {residents.map((resident) => (
-                      <option key={resident.id} value={resident.id}>
-                        {resident.name} · {getRotationForDate(resident, date)?.service ?? "no rotation"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div key={callPosition} className={`call-builder-assignment-control${locked ? " locked" : ""}`}>
+                  <label>
+                    <span>{formatPosition(callPosition)}</span>
+                    <select value={assignment?.residentId ?? ""} onChange={(event) => onChange(date, callPosition, event.target.value)}>
+                      <option value="">Unassigned</option>
+                      {residents.map((resident) => (
+                        <option key={resident.id} value={resident.id}>
+                          {resident.name} · {getRotationForDate(resident, date)?.service ?? "no rotation"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="call-builder-lock-button"
+                    disabled={!assignment}
+                    aria-label={`${locked ? "Unlock" : "Lock"} ${formatPosition(callPosition)} assignment on ${date}`}
+                    title={locked ? "Allow optimizer to change this assignment" : "Keep this assignment during optimization"}
+                    onClick={() => onToggleLock(date, callPosition)}
+                  >
+                    {locked ? <Lock size={13} /> : <Unlock size={13} />}
+                  </button>
+                </div>
               );
             })}
           </section>
@@ -585,31 +665,57 @@ function CallBuilderWeekend({
   );
 }
 
-function CallBuilderScorecard({ evaluation }: { evaluation: ReturnType<typeof evaluateCallSchedule> }) {
+function CallBuilderScorecard({
+  evaluation,
+  solverSummary
+}: {
+  evaluation: ReturnType<typeof evaluateCallSchedule>;
+  solverSummary?: CallBuilderSolverSummary;
+}) {
   return (
     <div className="call-builder-scorecard">
-      <div><span>Quality</span><strong>{evaluation.qualityScore}</strong><small>/ 100</small></div>
-      <div><span>Fairness</span><strong>{evaluation.fairnessPercent}%</strong><small>target workload</small></div>
+      <div className={solverSummary?.status === "optimal" ? "is-clear" : ""}><span>Solver</span><strong>{formatSolverStatus(solverSummary)}</strong><small>{solverSummary?.durationMs ? `${(solverSummary.durationMs / 1000).toFixed(1)} seconds` : "manual draft"}</small></div>
+      <div><span>Fairness</span><strong>{evaluation.fairnessPercent}%</strong><small>achievable load range</small></div>
       <div className={evaluation.hardViolationCount ? "has-errors" : "is-clear"}><span>Blocking</span><strong>{evaluation.hardViolationCount}</strong><small>{evaluation.hardViolationCount ? "must resolve" : "valid draft"}</small></div>
-      <div><span>Advisories</span><strong>{evaluation.warningCount}</strong><small>review before publish</small></div>
+      <div><span>Advisories</span><strong>{evaluation.warningCount}</strong><small>review before saving</small></div>
     </div>
   );
 }
 
 function CallBuilderSuggestions({
   suggestions,
+  busy,
+  solverSummary,
+  lockedCount,
+  onFind,
   onApply
 }: {
-  suggestions: ReturnType<typeof suggestCallScheduleMoves>;
-  onApply: (assignments: CallBuilderAssignment[]) => void;
+  suggestions: CallBuilderSuggestion[];
+  busy: boolean;
+  solverSummary?: CallBuilderSolverSummary;
+  lockedCount: number;
+  onFind: () => void;
+  onApply: (assignments: CallBuilderAssignment[], solverSummary?: CallBuilderSolverSummary) => void;
 }) {
   return (
     <section className="call-builder-side-panel">
-      <header><ArrowRightLeft size={17} /><div><strong>Suggested moves</strong><span>One-change improvements</span></div></header>
-      {suggestions.length === 0 ? <p className="muted-copy">No single swap or replacement improves this draft.</p> : suggestions.map((suggestion) => (
+      <header><ArrowRightLeft size={17} /><div><strong>Optimizer</strong><span>{lockedCount ? `${lockedCount} assignment${lockedCount === 1 ? "" : "s"} locked` : "Coordinated schedule improvements"}</span></div></header>
+      {solverSummary?.message && <p className={`call-builder-solver-message ${solverSummary.status}`}>{solverSummary.message}</p>}
+      {solverSummary?.objectives.length ? (
+        <details className="call-builder-objectives">
+          <summary>Hierarchy result</summary>
+          <div>{solverSummary.objectives.filter((objective) => objective.key !== "stable-tie-break").map((objective) => (
+            <span key={objective.key}><b>{objective.label}</b><em>{objective.value}</em></span>
+          ))}</div>
+        </details>
+      ) : null}
+      <button type="button" className="secondary-button call-builder-find-moves" disabled={busy} onClick={onFind}>
+        <Wand2 size={15} />{busy ? "Optimizing…" : "Find best moves"}
+      </button>
+      {!busy && suggestions.length === 0 ? <p className="muted-copy">Run the optimizer to look for a better coordinated schedule while preserving locked assignments.</p> : suggestions.map((suggestion) => (
         <div key={suggestion.id} className="call-builder-suggestion">
           <span>{suggestion.description}</span>
-          <button type="button" className="secondary-button" onClick={() => onApply(suggestion.assignments)}>Apply</button>
+          <button type="button" className="secondary-button" onClick={() => onApply(suggestion.assignments, suggestion.solverSummary)}>Apply</button>
         </div>
       ))}
     </section>
@@ -664,8 +770,8 @@ function CallBuilderFairness({
           <div key={position} className="call-builder-ledger-group">
             <strong>{formatPosition(position)}</strong>
             {evaluation.residentLoads.filter((load) => load.callPosition === position).map((load) => (
-              <span key={load.residentId} className={!load.regularPool ? "reserve" : load.units === load.targetUnits ? "balanced" : "unbalanced"}>
-                <b>{load.residentName}</b><i>{load.service}</i><em>{load.regularPool ? `${load.units}/${load.targetUnits}` : load.units ? `${load.units} used` : "reserve"}</em>
+              <span key={load.residentId} className={!load.regularPool ? "reserve" : load.units >= load.targetMinUnits && load.units <= load.targetMaxUnits ? "balanced" : "unbalanced"}>
+                <b>{load.residentName}</b><i>{load.service}</i><em>{load.regularPool ? `${load.units}/${formatTargetRange(load.targetMinUnits, load.targetMaxUnits)}` : load.units ? `${load.units} used` : "reserve"}</em>
               </span>
             ))}
           </div>
@@ -744,6 +850,23 @@ function getNextCallDate(date: string): string {
 function formatPosition(position: CallBuilderAssignment["callPosition"]): string {
   if (position === "mid-level") return "Mid-level";
   return position.charAt(0).toUpperCase() + position.slice(1);
+}
+
+function callSlotKey(assignment: Pick<CallBuilderAssignment, "date" | "callPosition">): string {
+  return `${assignment.date}:${assignment.callPosition}`;
+}
+
+function formatTargetRange(min: number, max: number): string {
+  return min === max ? String(min) : `${min}–${max}`;
+}
+
+function formatSolverStatus(summary: CallBuilderSolverSummary | undefined): string {
+  if (!summary) return "Manual";
+  if (summary.status === "optimal") return "Optimal";
+  if (summary.status === "feasible") return "Best found";
+  if (summary.status === "fallback") return "Fallback";
+  if (summary.status === "infeasible") return "Infeasible";
+  return "Manual";
 }
 
 function formatRule(rule: string): string {

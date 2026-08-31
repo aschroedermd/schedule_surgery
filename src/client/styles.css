@@ -1101,6 +1101,10 @@ h2 {
   line-height: 1;
 }
 
+.call-builder-scorecard > div:first-child strong {
+  font-size: 1.15rem;
+}
+
 .call-builder-scorecard .has-errors strong {
   color: var(--color-danger);
 }
@@ -1183,6 +1187,40 @@ h2 {
 .call-builder-day label {
   grid-template-columns: 58px minmax(0, 1fr);
   align-items: center;
+}
+
+.call-builder-assignment-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 6px;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.call-builder-assignment-control.locked {
+  background: color-mix(in srgb, var(--color-primary-light) 55%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary-light) 55%, transparent);
+}
+
+.call-builder-lock-button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+}
+
+.call-builder-assignment-control.locked .call-builder-lock-button {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--text-inverse);
+}
+
+.call-builder-lock-button:disabled {
+  opacity: 0.35;
 }
 
 .call-builder-day select {
@@ -1286,6 +1324,66 @@ h2 {
 .call-builder-suggestion .secondary-button {
   min-height: 30px;
   padding: 4px 8px;
+}
+
+.call-builder-solver-message {
+  margin: 0;
+  border-radius: 8px;
+  background: var(--bg-muted);
+  padding: 8px 9px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.call-builder-solver-message.optimal {
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
+}
+
+.call-builder-solver-message.fallback,
+.call-builder-solver-message.feasible {
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
+}
+
+.call-builder-objectives {
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
+
+.call-builder-objectives summary {
+  cursor: pointer;
+  color: var(--text-main);
+  font-size: 0.75rem;
+  font-weight: 850;
+}
+
+.call-builder-objectives > div {
+  display: grid;
+  gap: 4px;
+  padding-top: 7px;
+}
+
+.call-builder-objectives span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.67rem;
+}
+
+.call-builder-objectives b,
+.call-builder-objectives em {
+  font-style: normal;
+}
+
+.call-builder-objectives em {
+  font-weight: 900;
+}
+
+.call-builder-find-moves {
+  justify-content: center;
 }
 
 .call-builder-input-group {

@@ -15,10 +15,14 @@ import { createId } from "../shared/id";
 import { getResidentTimeOff } from "../shared/availability";
 import {
   evaluateCallSchedule,
-  generateCallSchedule,
   getCallBuilderBlock,
   getCallBuilderWeekendAnchor
 } from "../shared/callBuilder";
+import {
+  CallBuilderInfeasibleError,
+  describeScheduleChanges,
+  solveCallSchedule
+} from "./callBuilderSolver";
 import {
   INDEPENDENT_CALL_LINES,
   isIndependentCallLine,
@@ -50,6 +54,7 @@ import {
   AttendingCoverageShift,
   AttendingBlock,
   CallBuilderAssignment,
+  CallBuilderSolverSummary,
   CallPosition,
   CallOffRequest,
   CallScheduleDraft,
@@ -995,8 +1000,57 @@ export function createApp(
   app.post("/api/call-builder/generate", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
     try {
       const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
-      res.json(generateCallSchedule(await store.load(), blockNumber));
+      const lockedAssignments = req.body?.lockedAssignments === undefined
+        ? []
+        : readCallBuilderAssignments(req.body.lockedAssignments);
+      const baselineAssignments = req.body?.baselineAssignments === undefined
+        ? []
+        : readCallBuilderAssignments(req.body.baselineAssignments);
+      res.json(await solveCallSchedule(await store.load(), blockNumber, { lockedAssignments, baselineAssignments }));
     } catch (error) {
+      if (error instanceof CallBuilderInfeasibleError) {
+        next(new HttpError(422, error.message));
+        return;
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/call-builder/suggest", requireAuth, requireCallBuilder, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
+      const assignments = readCallBuilderAssignments(req.body?.assignments);
+      const lockedAssignments = req.body?.lockedAssignments === undefined
+        ? []
+        : readCallBuilderAssignments(req.body.lockedAssignments);
+      const current = evaluateCallSchedule(state, blockNumber, assignments);
+      const optimized = await solveCallSchedule(state, blockNumber, {
+        lockedAssignments,
+        baselineAssignments: assignments
+      });
+      if (optimized.assignments.every((assignment, index) => {
+        const candidate = assignments[index];
+        return candidate
+          && candidate.date === assignment.date
+          && candidate.callPosition === assignment.callPosition
+          && candidate.residentId === assignment.residentId;
+      })) {
+        res.json([]);
+        return;
+      }
+      res.json([{
+        id: `optimized:${blockNumber}:${Date.now()}`,
+        description: describeScheduleChanges(state, assignments, optimized.assignments),
+        improvement: Math.max(0, current.penalty - optimized.penalty),
+        assignments: optimized.assignments,
+        solverSummary: optimized.solverSummary
+      }]);
+    } catch (error) {
+      if (error instanceof CallBuilderInfeasibleError) {
+        next(new HttpError(422, error.message));
+        return;
+      }
       next(error);
     }
   });
@@ -1026,7 +1080,14 @@ export function createApp(
         createdByUsername: req.user!.username,
         createdByName: req.user!.displayName || req.user!.username,
         createdAt: now,
-        isMain: false
+        isMain: false,
+        solverSummary: readCallBuilderSolverSummary(req.body?.solverSummary),
+        evaluationSnapshot: {
+          hardViolationCount: evaluation.hardViolationCount,
+          warningCount: evaluation.warningCount,
+          fairnessPercent: evaluation.fairnessPercent,
+          qualityScore: evaluation.qualityScore
+        }
       };
       const nextState = addActivity(
         { ...state, callScheduleDrafts: [draft, ...state.callScheduleDrafts] },
@@ -4468,6 +4529,45 @@ function readCallBuilderAssignments(value: unknown): CallBuilderAssignment[] {
     if (!residentId) throw new HttpError(400, `Assignment ${index + 1} requires a residentId`);
     return { date, callPosition, residentId };
   });
+}
+
+function readCallBuilderSolverSummary(value: unknown): CallBuilderSolverSummary | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "solverSummary must be an object");
+  }
+  const input = value as Record<string, unknown>;
+  const engine = input.engine;
+  if (engine !== "cp-sat" && engine !== "heuristic" && engine !== "manual") {
+    throw new HttpError(400, "solverSummary has an invalid engine");
+  }
+  const status = input.status;
+  if (status !== "optimal" && status !== "feasible" && status !== "infeasible" && status !== "fallback" && status !== "manual") {
+    throw new HttpError(400, "solverSummary has an invalid status");
+  }
+  const objectives = Array.isArray(input.objectives)
+    ? input.objectives.slice(0, 30).map((objective, index) => {
+        if (!objective || typeof objective !== "object" || Array.isArray(objective)) {
+          throw new HttpError(400, `solverSummary objective ${index + 1} must be an object`);
+        }
+        const item = objective as Record<string, unknown>;
+        return {
+          key: readRequiredString(item.key, `solverSummary.objectives[${index}].key`),
+          label: readRequiredString(item.label, `solverSummary.objectives[${index}].label`),
+          value: Number.isFinite(Number(item.value)) ? Number(item.value) : 0,
+          optimal: item.optimal === true
+        };
+      })
+    : [];
+  return {
+    engine,
+    engineVersion: readRequiredString(input.engineVersion, "solverSummary.engineVersion"),
+    status,
+    optimalityProven: input.optimalityProven === true,
+    durationMs: Math.max(0, Math.round(Number(input.durationMs) || 0)),
+    objectives,
+    message: readOptionalString(input.message)
+  };
 }
 
 function readOptionalString(value: unknown): string | undefined {

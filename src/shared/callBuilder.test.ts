@@ -137,4 +137,30 @@ describe("resident call builder", () => {
     ]));
     expect(sameWeekendEvaluation.issues.some((issue) => issue.rule === "consecutive-days" && issue.residentIds?.includes(fridayAssignment.residentId))).toBe(false);
   });
+
+  it("checks the prior block main draft for back-to-back Saturdays", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const generated = generateCallSchedule(state, 3);
+    const firstSaturday = getCallBuilderDates(3).find((date) => parseLocalDate(date).getDay() === 6)!;
+    const saturdayAssignment = generated.assignments.find((assignment) => assignment.date === firstSaturday)!;
+    const priorSaturday = new Date(parseLocalDate(firstSaturday).getTime() - 7 * 24 * 60 * 60 * 1000);
+    const priorDate = `${priorSaturday.getFullYear()}-${String(priorSaturday.getMonth() + 1).padStart(2, "0")}-${String(priorSaturday.getDate()).padStart(2, "0")}`;
+    state.callScheduleDrafts = [{
+      id: "prior_main_draft",
+      blockNumber: 2,
+      assignments: [{ ...saturdayAssignment, date: priorDate }],
+      createdByUsername: "builder",
+      createdByName: "Call Builder",
+      createdAt: "2026-08-20T12:00:00.000Z",
+      isMain: true
+    }];
+
+    const evaluation = evaluateCallSchedule(state, 3, generated.assignments);
+    expect(evaluation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        rule: "cross-block-saturday",
+        residentIds: [saturdayAssignment.residentId]
+      })
+    ]));
+  });
 });

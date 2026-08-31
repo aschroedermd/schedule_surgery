@@ -1154,6 +1154,44 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/call-builder/generate": {
+        post: {
+          summary: "Optimize a resident call schedule",
+          description: "Requires Call Builder access. Runs the local CP-SAT constraint solver using the configured hard rules and lexicographic goal hierarchy. Optional locked assignments are preserved. If the solver runtime is unavailable, the response is explicitly marked as a heuristic fallback.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["blockNumber"],
+                  properties: {
+                    blockNumber: { type: "integer", minimum: 1, maximum: 13 },
+                    lockedAssignments: { type: "array", items: { $ref: "#/components/schemas/CallBuilderAssignment" } },
+                    baselineAssignments: { type: "array", items: { $ref: "#/components/schemas/CallBuilderAssignment" } }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Validated schedule evaluation with solver status and per-goal objective results" },
+            "403": { description: "Call Builder privilege required" },
+            "422": { description: "Locked assignments or hard constraints are infeasible" }
+          }
+        }
+      },
+      "/api/call-builder/suggest": {
+        post: {
+          summary: "Find coordinated improvements to a Call Builder draft",
+          description: "Requires Call Builder access. Re-optimizes the full hierarchy, preserves optional locks, and minimizes changes from the submitted draft after higher-priority goals are fixed.",
+          responses: {
+            "200": { description: "Zero or one coordinated minimum-change suggestion" },
+            "403": { description: "Call Builder privilege required" },
+            "422": { description: "Locked assignments or hard constraints are infeasible" }
+          }
+        }
+      },
       "/api/call-builder/drafts": {
         post: {
           summary: "Save a shared Call Builder draft",
@@ -1167,7 +1205,8 @@ export function getOpenApiDocument() {
                   required: ["blockNumber", "assignments"],
                   properties: {
                     blockNumber: { type: "integer", minimum: 1, maximum: 13 },
-                    assignments: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/CallBuilderAssignment" } }
+                    assignments: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/CallBuilderAssignment" } },
+                    solverSummary: { type: "object", description: "Optional generation status and lexicographic objective audit stored with the snapshot" }
                   }
                 }
               }
