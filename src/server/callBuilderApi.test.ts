@@ -161,6 +161,43 @@ describe("call builder API", () => {
       .expect(201);
     expect(workInProgress.body.callScheduleDrafts[0].assignments).toHaveLength(1);
   }, 30_000);
+
+  it("accepts, enforces, and saves draft-specific builder requirements", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState(new Date("2026-08-30T12:00:00"))));
+    const adminToken = await login(app, "admin", "call-builder-admin-password");
+    const builderConstraints = [
+      { id: "andrew_off", kind: "off", residentId: "res_chief", date: "2026-09-12", scope: "weekend" },
+      { id: "nathan_required", kind: "required-call", residentId: "res_shigley", date: "2026-09-19", scope: "day" }
+    ];
+    const generated = await request(app)
+      .post("/api/call-builder/generate")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ blockNumber: 3, builderConstraints })
+      .expect(200);
+
+    expect(generated.body.assignments).toContainEqual({ date: "2026-09-19", callPosition: "intern", residentId: "res_shigley" });
+    expect(generated.body.assignments.some((assignment: { date: string; residentId: string }) =>
+      assignment.residentId === "res_chief"
+      && assignment.date >= "2026-09-11"
+      && assignment.date <= "2026-09-13"
+    )).toBe(false);
+
+    const saved = await request(app)
+      .post("/api/call-builder/drafts")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ blockNumber: 3, assignments: generated.body.assignments, builderConstraints })
+      .expect(201);
+    expect(saved.body.callScheduleDrafts[0].builderConstraints).toEqual(builderConstraints);
+
+    await request(app)
+      .post("/api/call-builder/generate")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({
+        blockNumber: 3,
+        builderConstraints: [{ id: "weekday", kind: "off", residentId: "res_chief", date: "2026-09-09", scope: "day" }]
+      })
+      .expect(400);
+  }, 30_000);
 });
 
 async function login(app: ReturnType<typeof createApp>, username: string, password: string): Promise<string> {

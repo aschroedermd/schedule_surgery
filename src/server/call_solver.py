@@ -101,6 +101,15 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             )
         else:
             model.add(variable == 1)
+    for required in problem.get("requiredAssignments", []):
+        variable = variables.get((required["residentId"], required["date"]))
+        resident = resident_by_id.get(required["residentId"])
+        if variable is None or resident is None or resident["position"] != required["callPosition"]:
+            conflicts.append(
+                f"Required call assignment {required['date']} {required['callPosition']} is not eligible."
+            )
+        else:
+            model.add(variable == 1)
     if conflicts:
         return infeasible_response(started, conflicts)
 

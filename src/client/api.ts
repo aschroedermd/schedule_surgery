@@ -3,6 +3,7 @@ import {
   CollectionName,
   AttendingCoverageAssignment,
   CallBuilderAssignment,
+  CallBuilderConstraint,
   CallBuilderEvaluation,
   CallBuilderSolverSummary,
   CallBuilderSuggestion,
@@ -234,7 +235,11 @@ export async function deleteCallOffRequest(token: string, id: string): Promise<P
 export async function generateCallScheduleDraft(
   token: string,
   blockNumber: number,
-  options: { lockedAssignments?: CallBuilderAssignment[]; baselineAssignments?: CallBuilderAssignment[] } = {}
+  options: {
+    lockedAssignments?: CallBuilderAssignment[];
+    baselineAssignments?: CallBuilderAssignment[];
+    builderConstraints?: CallBuilderConstraint[];
+  } = {}
 ): Promise<CallBuilderEvaluation> {
   return request<CallBuilderEvaluation>("/api/call-builder/generate", {
     method: "POST",
@@ -247,24 +252,26 @@ export async function suggestOptimizedCallSchedule(
   token: string,
   blockNumber: number,
   assignments: CallBuilderAssignment[],
-  lockedAssignments: CallBuilderAssignment[] = []
+  lockedAssignments: CallBuilderAssignment[] = [],
+  builderConstraints: CallBuilderConstraint[] = []
 ): Promise<CallBuilderSuggestion[]> {
   return request<CallBuilderSuggestion[]>("/api/call-builder/suggest", {
     method: "POST",
     token,
-    body: JSON.stringify({ blockNumber, assignments, lockedAssignments })
+    body: JSON.stringify({ blockNumber, assignments, lockedAssignments, builderConstraints })
   });
 }
 
 export async function validateCallScheduleDraft(
   token: string,
   blockNumber: number,
-  assignments: CallBuilderAssignment[]
+  assignments: CallBuilderAssignment[],
+  builderConstraints: CallBuilderConstraint[] = []
 ): Promise<CallBuilderEvaluation> {
   return request<CallBuilderEvaluation>("/api/call-builder/validate", {
     method: "POST",
     token,
-    body: JSON.stringify({ blockNumber, assignments })
+    body: JSON.stringify({ blockNumber, assignments, builderConstraints })
   });
 }
 
@@ -272,12 +279,13 @@ export async function saveCallScheduleDraft(
   token: string,
   blockNumber: number,
   assignments: CallBuilderAssignment[],
-  solverSummary?: CallBuilderSolverSummary
+  solverSummary?: CallBuilderSolverSummary,
+  builderConstraints: CallBuilderConstraint[] = []
 ): Promise<PlannerState> {
   return request<PlannerState>("/api/call-builder/drafts", {
     method: "POST",
     token,
-    body: JSON.stringify({ blockNumber, assignments, solverSummary })
+    body: JSON.stringify({ blockNumber, assignments, solverSummary, builderConstraints })
   });
 }
 

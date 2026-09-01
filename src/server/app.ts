@@ -16,6 +16,7 @@ import { getResidentTimeOff } from "../shared/availability";
 import {
   evaluateCallSchedule,
   getCallBuilderBlock,
+  getCallBuilderDates,
   getCallBuilderWeekendAnchor
 } from "../shared/callBuilder";
 import {
@@ -54,6 +55,7 @@ import {
   AttendingCoverageShift,
   AttendingBlock,
   CallBuilderAssignment,
+  CallBuilderConstraint,
   CallBuilderSolverSummary,
   CallPosition,
   CallOffRequest,
@@ -1006,7 +1008,8 @@ export function createApp(
       const baselineAssignments = req.body?.baselineAssignments === undefined
         ? []
         : readCallBuilderAssignments(req.body.baselineAssignments);
-      res.json(await solveCallSchedule(await store.load(), blockNumber, { lockedAssignments, baselineAssignments }));
+      const builderConstraints = readCallBuilderConstraints(req.body?.builderConstraints, blockNumber);
+      res.json(await solveCallSchedule(await store.load(), blockNumber, { lockedAssignments, baselineAssignments, builderConstraints }));
     } catch (error) {
       if (error instanceof CallBuilderInfeasibleError) {
         next(new HttpError(422, error.message));
@@ -1024,10 +1027,12 @@ export function createApp(
       const lockedAssignments = req.body?.lockedAssignments === undefined
         ? []
         : readCallBuilderAssignments(req.body.lockedAssignments);
-      const current = evaluateCallSchedule(state, blockNumber, assignments);
+      const builderConstraints = readCallBuilderConstraints(req.body?.builderConstraints, blockNumber);
+      const current = evaluateCallSchedule(state, blockNumber, assignments, builderConstraints);
       const optimized = await solveCallSchedule(state, blockNumber, {
         lockedAssignments,
-        baselineAssignments: assignments
+        baselineAssignments: assignments,
+        builderConstraints
       });
       if (optimized.assignments.every((assignment, index) => {
         const candidate = assignments[index];
@@ -1059,7 +1064,8 @@ export function createApp(
     try {
       const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
       const assignments = readCallBuilderAssignments(req.body?.assignments);
-      res.json(evaluateCallSchedule(await store.load(), blockNumber, assignments));
+      const builderConstraints = readCallBuilderConstraints(req.body?.builderConstraints, blockNumber);
+      res.json(evaluateCallSchedule(await store.load(), blockNumber, assignments, builderConstraints));
     } catch (error) {
       next(error);
     }
@@ -1070,13 +1076,15 @@ export function createApp(
       const state = await store.load();
       const blockNumber = readCallBuilderBlockNumber(req.body?.blockNumber);
       const assignments = readCallBuilderAssignments(req.body?.assignments);
+      const builderConstraints = readCallBuilderConstraints(req.body?.builderConstraints, blockNumber);
       if (assignments.length === 0) throw new HttpError(400, "Add at least one assignment before saving a draft");
-      const evaluation = evaluateCallSchedule(state, blockNumber, assignments);
+      const evaluation = evaluateCallSchedule(state, blockNumber, assignments, builderConstraints);
       const now = new Date().toISOString();
       const draft: CallScheduleDraft = {
         id: createId("call_schedule_draft"),
         blockNumber,
         assignments: evaluation.assignments,
+        builderConstraints,
         createdByUsername: req.user!.username,
         createdByName: req.user!.displayName || req.user!.username,
         createdAt: now,
@@ -1095,7 +1103,7 @@ export function createApp(
           ...requestActivityActor(req),
           activityType: "calendar",
           action: "saved call schedule draft",
-          details: `Saved a block ${blockNumber} call draft with ${evaluation.assignments.length} assignments, ${evaluation.hardViolationCount} blocker${evaluation.hardViolationCount === 1 ? "" : "s"}, and ${evaluation.warningCount} advisory issue${evaluation.warningCount === 1 ? "" : "s"}`,
+          details: `Saved a block ${blockNumber} call draft with ${evaluation.assignments.length} assignments, ${builderConstraints.length} build-specific requirement${builderConstraints.length === 1 ? "" : "s"}, ${evaluation.hardViolationCount} blocker${evaluation.hardViolationCount === 1 ? "" : "s"}, and ${evaluation.warningCount} advisory issue${evaluation.warningCount === 1 ? "" : "s"}`,
           entityType: "callScheduleDraft",
           entityId: draft.id
         }
@@ -4528,6 +4536,36 @@ function readCallBuilderAssignments(value: unknown): CallBuilderAssignment[] {
     const residentId = readOptionalString(input.residentId);
     if (!residentId) throw new HttpError(400, `Assignment ${index + 1} requires a residentId`);
     return { date, callPosition, residentId };
+  });
+}
+
+function readCallBuilderConstraints(value: unknown, blockNumber: number): CallBuilderConstraint[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new HttpError(400, "builderConstraints must be an array");
+  if (value.length > 100) throw new HttpError(400, "A call-builder draft may contain at most 100 build-specific requirements");
+  const validDates = new Set(getCallBuilderDates(blockNumber));
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new HttpError(400, `Builder requirement ${index + 1} must be an object`);
+    }
+    const input = item as Record<string, unknown>;
+    const id = readRequiredString(input.id, `builderConstraints[${index}].id`);
+    const residentId = readRequiredString(input.residentId, `builderConstraints[${index}].residentId`);
+    const date = assertDate(input.date);
+    if (!validDates.has(date)) throw new HttpError(400, `Builder requirement ${index + 1} must use a Friday, Saturday, or Sunday in this block`);
+    const kind = input.kind;
+    if (kind !== "off" && kind !== "required-call") {
+      throw new HttpError(400, `Builder requirement ${index + 1} has an invalid kind`);
+    }
+    const scope = kind === "required-call" ? "day" : input.scope;
+    if (scope !== "day" && scope !== "weekend") {
+      throw new HttpError(400, `Builder requirement ${index + 1} has an invalid scope`);
+    }
+    const uniqueKey = `${kind}:${residentId}:${date}:${scope}`;
+    if (seen.has(uniqueKey)) throw new HttpError(400, `Builder requirement ${index + 1} is duplicated`);
+    seen.add(uniqueKey);
+    return { id, residentId, date, kind, scope };
   });
 }
 

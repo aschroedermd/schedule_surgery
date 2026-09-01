@@ -18,6 +18,7 @@ import {
   isEgsChief,
   isEgsMidlevel,
   isHardEligibleForCallAssignment,
+  isResidentForcedOff,
   isNrvChief,
   isNrvMidlevel,
   isRegularPoolResidentForState,
@@ -30,6 +31,7 @@ import { getRotationForDate, normalizeRotationServiceToServiceLine } from "../sh
 import {
   CALL_POSITIONS,
   CallBuilderAssignment,
+  CallBuilderConstraint,
   CallBuilderEvaluation,
   CallBuilderSolverSummary,
   CallPosition,
@@ -42,6 +44,7 @@ const SOLVER_PROCESS_TIMEOUT_MS = 6_000;
 interface SolveOptions {
   lockedAssignments?: CallBuilderAssignment[];
   baselineAssignments?: CallBuilderAssignment[];
+  builderConstraints?: CallBuilderConstraint[];
 }
 
 interface WorkerResult {
@@ -69,7 +72,7 @@ export async function solveCallSchedule(
 ): Promise<CallBuilderEvaluation> {
   const started = performance.now();
   if (process.env.CALL_BUILDER_SOLVER_ENABLED === "false") {
-    return fallbackEvaluation(state, blockNumber, started, "The constraint solver is disabled by configuration.");
+    return fallbackEvaluation(state, blockNumber, options.builderConstraints ?? [], started, "The constraint solver is disabled by configuration.");
   }
 
   try {
@@ -78,7 +81,7 @@ export async function solveCallSchedule(
     if (workerResult.error || !workerResult.assignments.length) {
       throw new Error(workerResult.error || "The solver returned no assignments");
     }
-    const evaluation = evaluateCallSchedule(state, blockNumber, workerResult.assignments);
+    const evaluation = evaluateCallSchedule(state, blockNumber, workerResult.assignments, options.builderConstraints);
     if (evaluation.hardViolationCount > 0) {
       throw new Error(`The solver result failed independent validation with ${evaluation.hardViolationCount} blocker(s)`);
     }
@@ -99,12 +102,18 @@ export async function solveCallSchedule(
   } catch (error) {
     if (error instanceof CallBuilderInfeasibleError) throw error;
     const reason = error instanceof Error ? error.message : "unknown solver error";
-    return fallbackEvaluation(state, blockNumber, started, `Constraint solver unavailable: ${reason}`);
+    return fallbackEvaluation(state, blockNumber, options.builderConstraints ?? [], started, `Constraint solver unavailable: ${reason}`);
   }
 }
 
-function fallbackEvaluation(state: PlannerState, blockNumber: number, started: number, reason: string): CallBuilderEvaluation {
-  const fallback = generateCallSchedule(state, blockNumber);
+function fallbackEvaluation(
+  state: PlannerState,
+  blockNumber: number,
+  builderConstraints: CallBuilderConstraint[],
+  started: number,
+  reason: string
+): CallBuilderEvaluation {
+  const fallback = generateCallSchedule(state, blockNumber, builderConstraints);
   return {
     ...fallback,
     solverSummary: {
@@ -128,13 +137,16 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
     units: getCallUnits(date),
     ordinal: calendarOrdinal(date)
   }));
+  const builderConstraints = sanitizeBuilderConstraints(options.builderConstraints, blockNumber);
+  validateBuilderConstraints(state, builderConstraints, options.lockedAssignments ?? []);
   const historicalUnits = getHistoricalCallUnits(state, block.startDate);
   const residents = CALL_POSITIONS.flatMap((position) => {
     const target = getFairnessTargetRange(state, blockNumber, position);
     return getCallBuilderResidentsForPosition(state, position).map((resident) => {
       const eligibleDates = dates
         .map((item) => item.date)
-        .filter((date) => isHardEligibleForCallAssignment(resident, date).eligible);
+        .filter((date) => isHardEligibleForCallAssignment(resident, date).eligible)
+        .filter((date) => !isResidentForcedOff(builderConstraints, resident.id, date));
       const dateValues = dates.map((item) => item.date);
       return {
         id: resident.id,
@@ -169,8 +181,88 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
     dates,
     residents,
     lockedAssignments: sanitizeAssignments(options.lockedAssignments, blockNumber),
-    baselineAssignments: sanitizeAssignments(options.baselineAssignments, blockNumber)
+    baselineAssignments: sanitizeAssignments(options.baselineAssignments, blockNumber),
+    requiredAssignments: builderConstraints
+      .filter((constraint) => constraint.kind === "required-call")
+      .flatMap((constraint) => {
+        const resident = state.residents.find((candidate) => candidate.id === constraint.residentId);
+        const callPosition = resident && getCallPositionForResident(resident);
+        return callPosition ? [{ date: constraint.date, callPosition, residentId: constraint.residentId }] : [];
+      })
   };
+}
+
+function sanitizeBuilderConstraints(
+  constraints: CallBuilderConstraint[] | undefined,
+  blockNumber: number
+): CallBuilderConstraint[] {
+  const expectedDates = new Set(getCallBuilderDates(blockNumber));
+  return (constraints ?? []).filter((constraint) =>
+    Boolean(constraint?.id && constraint.residentId)
+    && (constraint.kind === "off" || constraint.kind === "required-call")
+    && (constraint.scope === "day" || constraint.scope === "weekend")
+    && expectedDates.has(constraint.date)
+  );
+}
+
+function validateBuilderConstraints(
+  state: PlannerState,
+  constraints: CallBuilderConstraint[],
+  lockedAssignments: CallBuilderAssignment[]
+) {
+  const conflicts: string[] = [];
+  const requiredBySlot = new Map<string, CallBuilderConstraint>();
+  for (const constraint of constraints) {
+    const resident = state.residents.find((candidate) => candidate.id === constraint.residentId);
+    if (!resident) {
+      conflicts.push(`Builder requirement references unknown resident ${constraint.residentId}.`);
+      continue;
+    }
+    if (constraint.kind !== "required-call") continue;
+    const callPosition = getCallPositionForResident(resident);
+    if (!callPosition) {
+      conflicts.push(`${resident.name} does not have a resident call position.`);
+      continue;
+    }
+    const eligibility = isHardEligibleForCallAssignment(resident, constraint.date);
+    if (!eligibility.eligible) {
+      conflicts.push(`${resident.name} cannot be required on ${constraint.date}: ${eligibility.reason}.`);
+    }
+    if (isResidentForcedOff(constraints, resident.id, constraint.date)) {
+      conflicts.push(`${resident.name} is both required on call and required off on ${constraint.date}.`);
+    }
+    const slotKey = `${constraint.date}:${callPosition}`;
+    const existing = requiredBySlot.get(slotKey);
+    if (existing && existing.residentId !== constraint.residentId) {
+      const other = state.residents.find((candidate) => candidate.id === existing.residentId);
+      conflicts.push(`${resident.name} and ${other?.name ?? existing.residentId} are both required for the ${callPosition} slot on ${constraint.date}.`);
+    }
+    requiredBySlot.set(slotKey, constraint);
+  }
+  for (const locked of lockedAssignments) {
+    const required = requiredBySlot.get(`${locked.date}:${locked.callPosition}`);
+    if (required && required.residentId !== locked.residentId) {
+      conflicts.push(`The locked ${locked.callPosition} assignment on ${locked.date} conflicts with a required-call rule.`);
+    }
+    if (isResidentForcedOff(constraints, locked.residentId, locked.date)) {
+      conflicts.push(`A locked assignment on ${locked.date} conflicts with a required-off rule.`);
+    }
+  }
+  const requiredByResident = new Map<string, string[]>();
+  for (const constraint of constraints.filter((item) => item.kind === "required-call")) {
+    const residentDates = requiredByResident.get(constraint.residentId) ?? [];
+    residentDates.push(constraint.date);
+    requiredByResident.set(constraint.residentId, residentDates);
+  }
+  for (const [residentId, residentDates] of requiredByResident) {
+    const sorted = [...new Set(residentDates)].sort();
+    for (let index = 1; index < sorted.length; index += 1) {
+      if (Math.abs(calendarOrdinal(sorted[index]) - calendarOrdinal(sorted[index - 1])) !== 1) continue;
+      const resident = state.residents.find((candidate) => candidate.id === residentId);
+      conflicts.push(`${resident?.name ?? residentId} cannot be required on consecutive days ${sorted[index - 1]} and ${sorted[index]}.`);
+    }
+  }
+  if (conflicts.length) throw new CallBuilderInfeasibleError([...new Set(conflicts)]);
 }
 
 function sanitizeAssignments(assignments: CallBuilderAssignment[] | undefined, blockNumber: number) {

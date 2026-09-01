@@ -6,6 +6,7 @@ import { normalizeRotationServiceToServiceLine } from "./rotations";
 import {
   CALL_POSITIONS,
   CallBuilderAssignment,
+  CallBuilderConstraint,
   CallBuilderEvaluation,
   CallBuilderIssue,
   CallBuilderIssueSeverity,
@@ -82,13 +83,25 @@ export function getCallBuilderResidentsForPosition(state: PlannerState, callPosi
     .sort((left, right) => comparePersonNames(left.name, right.name));
 }
 
-export function generateCallSchedule(state: PlannerState, blockNumber: number): CallBuilderEvaluation {
+export function generateCallSchedule(
+  state: PlannerState,
+  blockNumber: number,
+  builderConstraints: CallBuilderConstraint[] = []
+): CallBuilderEvaluation {
   const slots = getExpectedSlots(blockNumber).sort(compareBuildSlotPriority);
-  let assignments: CallBuilderAssignment[] = [];
+  let assignments: CallBuilderAssignment[] = builderConstraints
+    .filter((constraint) => constraint.kind === "required-call")
+    .flatMap((constraint) => {
+      const resident = state.residents.find((candidate) => candidate.id === constraint.residentId);
+      const callPosition = resident && getCallPositionForResident(resident);
+      return callPosition ? [{ date: constraint.date, callPosition, residentId: constraint.residentId }] : [];
+    });
 
   for (const slot of slots) {
+    if (assignments.some((assignment) => assignment.date === slot.date && assignment.callPosition === slot.callPosition)) continue;
     const candidates = getCallBuilderResidentsForPosition(state, slot.callPosition)
       .filter((resident) => isHardEligibleForCallAssignment(resident, slot.date).eligible)
+      .filter((resident) => !isResidentForcedOff(builderConstraints, resident.id, slot.date))
       .filter((resident) => !assignments.some((assignment) => assignment.date === slot.date && assignment.residentId === resident.id))
       .map((resident) => ({ resident, cost: getCandidateCost(state, blockNumber, assignments, slot, resident) }))
       .sort((left, right) => left.cost - right.cost || comparePersonNames(left.resident.name, right.resident.name));
@@ -96,9 +109,9 @@ export function generateCallSchedule(state: PlannerState, blockNumber: number): 
     if (resident) assignments.push({ ...slot, residentId: resident.id });
   }
 
-  assignments = optimizeAssignments(state, blockNumber, assignments);
+  assignments = optimizeAssignments(state, blockNumber, assignments, builderConstraints);
   return {
-    ...evaluateCallSchedule(state, blockNumber, assignments),
+    ...evaluateCallSchedule(state, blockNumber, assignments, builderConstraints),
     solverSummary: {
       engine: "heuristic",
       engineVersion: "call-builder-heuristic-v2",
@@ -114,7 +127,8 @@ export function generateCallSchedule(state: PlannerState, blockNumber: number): 
 export function evaluateCallSchedule(
   state: PlannerState,
   blockNumber: number,
-  assignments: CallBuilderAssignment[]
+  assignments: CallBuilderAssignment[],
+  builderConstraints: CallBuilderConstraint[] = []
 ): CallBuilderEvaluation {
   const accumulator: EvaluationAccumulator = { issues: [], penalty: 0, issueKeys: new Set() };
   const block = getCallBuilderBlock(blockNumber);
@@ -185,6 +199,8 @@ export function evaluateCallSchedule(
       );
     }
   }
+
+  evaluateBuilderConstraints(builderConstraints, assignments, residentsById, accumulator);
 
   for (const slot of expectedSlots) {
     const count = slotCounts.get(assignmentSlotKey(slot)) ?? 0;
@@ -343,13 +359,88 @@ export function suggestCallScheduleMoves(
     .slice(0, Math.max(0, limit));
 }
 
+export function getCallBuilderConstraintDates(constraint: Pick<CallBuilderConstraint, "date" | "scope">): string[] {
+  if (constraint.scope === "day") return [constraint.date];
+  const anchor = getCallBuilderWeekendAnchor(constraint.date);
+  return [anchor, addDays(anchor, 1), addDays(anchor, 2)];
+}
+
+export function isResidentForcedOff(
+  constraints: CallBuilderConstraint[],
+  residentId: string,
+  date: string
+): boolean {
+  return constraints.some((constraint) =>
+    constraint.kind === "off"
+    && constraint.residentId === residentId
+    && getCallBuilderConstraintDates(constraint).includes(date)
+  );
+}
+
+function isRequiredBuilderAssignment(
+  constraints: CallBuilderConstraint[],
+  assignment: CallBuilderAssignment
+): boolean {
+  return constraints.some((constraint) =>
+    constraint.kind === "required-call"
+    && constraint.residentId === assignment.residentId
+    && constraint.date === assignment.date
+  );
+}
+
+function evaluateBuilderConstraints(
+  constraints: CallBuilderConstraint[],
+  assignments: CallBuilderAssignment[],
+  residentsById: Map<string, Resident>,
+  accumulator: EvaluationAccumulator
+) {
+  for (const constraint of constraints) {
+    const resident = residentsById.get(constraint.residentId);
+    const residentName = resident?.name ?? constraint.residentId;
+    if (constraint.kind === "off") {
+      const conflicting = assignments.find((assignment) =>
+        assignment.residentId === constraint.residentId
+        && getCallBuilderConstraintDates(constraint).includes(assignment.date)
+      );
+      if (!conflicting) continue;
+      addIssue(
+        accumulator,
+        "error",
+        "builder-constraint",
+        `${residentName} is assigned on ${conflicting.date}, which conflicts with the builder's required time off.`,
+        HARD_VIOLATION_PENALTY,
+        conflicting.date,
+        [constraint.residentId],
+        `builder-off:${constraint.id}:${conflicting.date}`
+      );
+      continue;
+    }
+
+    const required = assignments.some((assignment) =>
+      assignment.residentId === constraint.residentId && assignment.date === constraint.date
+    );
+    if (required) continue;
+    addIssue(
+      accumulator,
+      "error",
+      "builder-constraint",
+      `${residentName} must be on call on ${constraint.date} for this build.`,
+      HARD_VIOLATION_PENALTY,
+      constraint.date,
+      [constraint.residentId],
+      `builder-required:${constraint.id}`
+    );
+  }
+}
+
 function optimizeAssignments(
   state: PlannerState,
   blockNumber: number,
-  initialAssignments: CallBuilderAssignment[]
+  initialAssignments: CallBuilderAssignment[],
+  builderConstraints: CallBuilderConstraint[] = []
 ): CallBuilderAssignment[] {
   let assignments = initialAssignments;
-  let evaluation = evaluateCallSchedule(state, blockNumber, assignments);
+  let evaluation = evaluateCallSchedule(state, blockNumber, assignments, builderConstraints);
 
   for (let pass = 0; pass < 2; pass += 1) {
     let bestAssignments: CallBuilderAssignment[] | undefined;
@@ -357,11 +448,13 @@ function optimizeAssignments(
 
     for (let index = 0; index < assignments.length; index += 1) {
       const assignment = assignments[index];
+      if (isRequiredBuilderAssignment(builderConstraints, assignment)) continue;
       for (const resident of getCallBuilderResidentsForPosition(state, assignment.callPosition)) {
         if (resident.id === assignment.residentId || !isHardEligibleForCallAssignment(resident, assignment.date).eligible) continue;
+        if (isResidentForcedOff(builderConstraints, resident.id, assignment.date)) continue;
         if (assignments.some((item, itemIndex) => itemIndex !== index && item.date === assignment.date && item.residentId === resident.id)) continue;
         const candidate = assignments.map((item, itemIndex) => itemIndex === index ? { ...item, residentId: resident.id } : item);
-        const candidateEvaluation = evaluateCallSchedule(state, blockNumber, candidate);
+        const candidateEvaluation = evaluateCallSchedule(state, blockNumber, candidate, builderConstraints);
         if (candidateEvaluation.penalty < bestEvaluation.penalty) {
           bestAssignments = candidate;
           bestEvaluation = candidateEvaluation;
@@ -373,17 +466,19 @@ function optimizeAssignments(
       for (let rightIndex = leftIndex + 1; rightIndex < assignments.length; rightIndex += 1) {
         const left = assignments[leftIndex];
         const right = assignments[rightIndex];
+        if (isRequiredBuilderAssignment(builderConstraints, left) || isRequiredBuilderAssignment(builderConstraints, right)) continue;
         if (left.callPosition !== right.callPosition || left.residentId === right.residentId) continue;
         const leftResident = state.residents.find((resident) => resident.id === left.residentId);
         const rightResident = state.residents.find((resident) => resident.id === right.residentId);
         if (!leftResident || !rightResident) continue;
         if (!isHardEligibleForCallAssignment(leftResident, right.date).eligible || !isHardEligibleForCallAssignment(rightResident, left.date).eligible) continue;
+        if (isResidentForcedOff(builderConstraints, leftResident.id, right.date) || isResidentForcedOff(builderConstraints, rightResident.id, left.date)) continue;
         const candidate = assignments.map((item, itemIndex) => {
           if (itemIndex === leftIndex) return { ...item, residentId: right.residentId };
           if (itemIndex === rightIndex) return { ...item, residentId: left.residentId };
           return item;
         });
-        const candidateEvaluation = evaluateCallSchedule(state, blockNumber, candidate);
+        const candidateEvaluation = evaluateCallSchedule(state, blockNumber, candidate, builderConstraints);
         if (candidateEvaluation.penalty < bestEvaluation.penalty) {
           bestAssignments = candidate;
           bestEvaluation = candidateEvaluation;
@@ -941,6 +1036,7 @@ function sortIssues(issues: CallBuilderIssue[]): CallBuilderIssue[] {
   const severityRank: Record<CallBuilderIssueSeverity, number> = { error: 0, warning: 1, info: 2 };
   const ruleRank: Record<CallBuilderRule, number> = {
     coverage: 0,
+    "builder-constraint": 0,
     fairness: 1,
     "consecutive-days": 1,
     "egs-chief": 2,

@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileClock, Lock, RefreshCw, Save, Send, ShieldCheck, Trash2, Unlock, Users, Wand2, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileClock, Lock, Plus, RefreshCw, Save, Send, ShieldCheck, Trash2, Unlock, Users, Wand2, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -17,6 +17,7 @@ import {
   getCallBuilderDates,
   getCallBuilderResidentsForPosition,
   getCallBuilderWeekendAnchor,
+  getCallPositionForResident,
 } from "../shared/callBuilder";
 import { addDays, displayDate, parseLocalDate } from "../shared/date";
 import { comparePersonNames } from "../shared/names";
@@ -30,6 +31,7 @@ import {
 import {
   CALL_POSITIONS,
   CallBuilderAssignment,
+  CallBuilderConstraint,
   CallBuilderSolverSummary,
   CallBuilderSuggestion,
   CallOffRequest,
@@ -164,6 +166,7 @@ export function CallBuilderTab({
   const defaultDraft = getMainCallScheduleDraft(state, getDefaultBlockNumber());
   const [blockNumber, setBlockNumber] = useState(() => getDefaultBlockNumber());
   const [assignments, setAssignments] = useState<CallBuilderAssignment[] | undefined>(() => defaultDraft?.assignments);
+  const [builderConstraints, setBuilderConstraints] = useState<CallBuilderConstraint[]>(() => defaultDraft?.builderConstraints ?? []);
   const [solverSummary, setSolverSummary] = useState<CallBuilderSolverSummary | undefined>(() => defaultDraft?.solverSummary);
   const [lockedSlotKeys, setLockedSlotKeys] = useState<Set<string>>(() => new Set());
   const [suggestions, setSuggestions] = useState<CallBuilderSuggestion[]>([]);
@@ -174,8 +177,8 @@ export function CallBuilderTab({
   const block = getCallBuilderBlock(blockNumber)!;
   const offCallResidentCount = new Set(getBlockCallOffRequests(state.callOffRequests, block).map((request) => request.residentId)).size;
   const evaluation = useMemo(
-    () => assignments ? evaluateCallSchedule(state, blockNumber, assignments) : undefined,
-    [assignments, blockNumber, state]
+    () => assignments ? evaluateCallSchedule(state, blockNumber, assignments, builderConstraints) : undefined,
+    [assignments, blockNumber, builderConstraints, state]
   );
   const weekendAnchors = [...new Set(getCallBuilderDates(blockNumber).map(getCallBuilderWeekendAnchor))];
 
@@ -185,7 +188,7 @@ export function CallBuilderTab({
       setError(undefined);
       const baselineAssignments = assignments ?? [];
       const lockedAssignments = baselineAssignments.filter((assignment) => lockedSlotKeys.has(callSlotKey(assignment)));
-      const result = await generateCallScheduleDraft(token, blockNumber, { baselineAssignments, lockedAssignments });
+      const result = await generateCallScheduleDraft(token, blockNumber, { baselineAssignments, lockedAssignments, builderConstraints });
       setAssignments(result.assignments);
       setSolverSummary(result.solverSummary);
       setSuggestions([]);
@@ -202,7 +205,7 @@ export function CallBuilderTab({
       setSuggestionsBusy(true);
       setError(undefined);
       const lockedAssignments = evaluation.assignments.filter((assignment) => lockedSlotKeys.has(callSlotKey(assignment)));
-      setSuggestions(await suggestOptimizedCallSchedule(token, blockNumber, evaluation.assignments, lockedAssignments));
+      setSuggestions(await suggestOptimizedCallSchedule(token, blockNumber, evaluation.assignments, lockedAssignments, builderConstraints));
     } catch (suggestionError) {
       setError(suggestionError instanceof Error ? suggestionError.message : "Suggested moves could not be calculated");
     } finally {
@@ -230,6 +233,7 @@ export function CallBuilderTab({
       message: "Loaded from the published CALL calendar."
     });
     setLockedSlotKeys(new Set());
+    setBuilderConstraints([]);
     setSuggestions([]);
   }
 
@@ -260,6 +264,7 @@ export function CallBuilderTab({
                 setBlockNumber(nextBlockNumber);
                 const nextDraft = getMainCallScheduleDraft(state, nextBlockNumber);
                 setAssignments(nextDraft?.assignments);
+                setBuilderConstraints(nextDraft?.builderConstraints ?? []);
                 setSolverSummary(nextDraft?.solverSummary);
                 setLockedSlotKeys(new Set());
                 setSuggestions([]);
@@ -294,13 +299,25 @@ export function CallBuilderTab({
         blockNumber={blockNumber}
         token={token}
         username={username}
-        onLoad={(nextAssignments, nextSummary) => {
+        onLoad={(nextAssignments, nextSummary, nextConstraints) => {
           setAssignments(nextAssignments);
           setSolverSummary(nextSummary);
+          setBuilderConstraints(nextConstraints);
           setLockedSlotKeys(new Set());
           setSuggestions([]);
         }}
         onMutate={onMutate}
+      />
+
+      <CallBuilderRequirements
+        state={state}
+        blockNumber={blockNumber}
+        constraints={builderConstraints}
+        onChange={(nextConstraints) => {
+          setBuilderConstraints(nextConstraints);
+          setSolverSummary(undefined);
+          setSuggestions([]);
+        }}
       />
 
       {error && <div className="alert danger">{error}</div>}
@@ -345,7 +362,7 @@ export function CallBuilderTab({
                     type="button"
                     className="primary-button"
                     onClick={() => onMutate(
-                      () => saveCallScheduleDraft(token, blockNumber, evaluation.assignments, solverSummary),
+                      () => saveCallScheduleDraft(token, blockNumber, evaluation.assignments, solverSummary, builderConstraints),
                       `Block ${blockNumber} call schedule draft saved`
                     )}
                   >
@@ -390,6 +407,116 @@ export function CallBuilderTab({
   );
 }
 
+function CallBuilderRequirements({
+  state,
+  blockNumber,
+  constraints,
+  onChange
+}: {
+  state: PlannerState;
+  blockNumber: number;
+  constraints: CallBuilderConstraint[];
+  onChange: (constraints: CallBuilderConstraint[]) => void;
+}) {
+  const residents = CALL_POSITIONS
+    .flatMap((position) => getCallBuilderResidentsForPosition(state, position))
+    .sort((left, right) => comparePersonNames(left.name, right.name));
+  const callDates = getCallBuilderDates(blockNumber);
+  const [residentId, setResidentId] = useState(residents[0]?.id ?? "");
+  const [kind, setKind] = useState<CallBuilderConstraint["kind"]>("off");
+  const [scope, setScope] = useState<CallOffRequestScope>("weekend");
+  const [date, setDate] = useState(callDates[0] ?? "");
+  const [message, setMessage] = useState<string>();
+
+  useEffect(() => {
+    setDate(getCallBuilderDates(blockNumber)[0] ?? "");
+    setMessage(undefined);
+  }, [blockNumber]);
+
+  function addRequirement(event: FormEvent) {
+    event.preventDefault();
+    if (!residentId || !date) return;
+    const nextScope = kind === "required-call" ? "day" : scope;
+    const duplicate = constraints.some((constraint) =>
+      constraint.kind === kind
+      && constraint.residentId === residentId
+      && constraint.date === date
+      && constraint.scope === nextScope
+    );
+    if (duplicate) {
+      setMessage("That build requirement is already listed.");
+      return;
+    }
+    const id = `builder_requirement_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    onChange([...constraints, { id, kind, residentId, date, scope: nextScope }]);
+    setMessage(undefined);
+  }
+
+  return (
+    <section className="call-builder-requirements" aria-label="Build-specific call requirements">
+      <header>
+        <div><ShieldCheck size={18} /><span><strong>Build requirements</strong><small>Hard rules for this draft only</small></span></div>
+        <b>{constraints.length}</b>
+      </header>
+      <p>Set required time off or pre-select a resident's call day. The solver must honor these rules in addition to the standard hierarchy.</p>
+      <form onSubmit={addRequirement}>
+        <label>
+          Resident
+          <select value={residentId} onChange={(event) => setResidentId(event.target.value)} required>
+            {residents.map((resident) => (
+              <option key={resident.id} value={resident.id}>{resident.name} · {formatPosition(getCallPositionForResident(resident)!)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Requirement
+          <select value={kind} onChange={(event) => setKind(event.target.value as CallBuilderConstraint["kind"])}>
+            <option value="off">Must be off</option>
+            <option value="required-call">Must be on call</option>
+          </select>
+        </label>
+        <label>
+          Call date
+          <select value={date} onChange={(event) => setDate(event.target.value)} required>
+            {callDates.map((callDate) => <option key={callDate} value={callDate}>{formatLongDate(callDate)}</option>)}
+          </select>
+        </label>
+        {kind === "off" && (
+          <label>
+            Applies to
+            <select value={scope} onChange={(event) => setScope(event.target.value as CallOffRequestScope)}>
+              <option value="weekend">Entire Fri–Sun weekend</option>
+              <option value="day">Only this day</option>
+            </select>
+          </label>
+        )}
+        <button type="submit" className="secondary-button"><Plus size={16} />Add requirement</button>
+      </form>
+      {message && <span className="call-builder-requirement-error">{message}</span>}
+      {constraints.length > 0 && (
+        <div className="call-builder-requirement-list">
+          {constraints.map((constraint) => {
+            const resident = state.residents.find((candidate) => candidate.id === constraint.residentId);
+            const anchor = getCallBuilderWeekendAnchor(constraint.date);
+            const dateLabel = constraint.kind === "off" && constraint.scope === "weekend"
+              ? `${formatCompactDate(anchor)}–${formatCompactDate(addDays(anchor, 2))}`
+              : formatLongDate(constraint.date);
+            return (
+              <div key={constraint.id}>
+                <span className={`call-builder-requirement-kind ${constraint.kind}`}>{constraint.kind === "off" ? "Must be off" : "Must call"}</span>
+                <span><strong>{resident?.name ?? constraint.residentId}</strong><small>{dateLabel}</small></span>
+                <button type="button" className="icon-button danger" aria-label={`Remove requirement for ${resident?.name ?? constraint.residentId}`} onClick={() => onChange(constraints.filter((item) => item.id !== constraint.id))}>
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CallScheduleDraftPanel({
   state,
   blockNumber,
@@ -402,7 +529,11 @@ function CallScheduleDraftPanel({
   blockNumber: number;
   token: string;
   username: string;
-  onLoad: (assignments: CallBuilderAssignment[], solverSummary?: CallBuilderSolverSummary) => void;
+  onLoad: (
+    assignments: CallBuilderAssignment[],
+    solverSummary: CallBuilderSolverSummary | undefined,
+    builderConstraints: CallBuilderConstraint[]
+  ) => void;
   onMutate: Mutate;
 }) {
   const drafts = state.callScheduleDrafts
@@ -425,7 +556,7 @@ function CallScheduleDraftPanel({
               <article key={draft.id} className={`call-schedule-draft${draft.isMain ? " main" : ""}`}>
                 <div className="call-schedule-draft-meta">
                   <strong>{formatDraftTimestamp(draft.createdAt)}</strong>
-                  <span>Saved by {draft.createdByName} · {draft.assignments.length} assignments · {formatSolverStatus(draft.solverSummary)}</span>
+                  <span>Saved by {draft.createdByName} · {draft.assignments.length} assignments · {(draft.builderConstraints ?? []).length} build requirements · {formatSolverStatus(draft.solverSummary)}</span>
                 </div>
                 <label className="call-schedule-main-toggle">
                   <input
@@ -433,7 +564,7 @@ function CallScheduleDraftPanel({
                     checked={draft.isMain}
                     onChange={(event) => {
                       const isMain = event.target.checked;
-                      if (isMain) onLoad(draft.assignments, draft.solverSummary);
+                      if (isMain) onLoad(draft.assignments, draft.solverSummary, draft.builderConstraints ?? []);
                       void onMutate(
                         () => setCallScheduleDraftMain(token, draft.id, isMain),
                         isMain ? `Block ${blockNumber} main draft updated` : `Block ${blockNumber} main draft cleared`
@@ -442,7 +573,7 @@ function CallScheduleDraftPanel({
                   />
                   <span>{draft.isMain ? "Main draft" : "Make main"}</span>
                 </label>
-                <button type="button" className="secondary-button" onClick={() => onLoad(draft.assignments, draft.solverSummary)}>Load</button>
+                <button type="button" className="secondary-button" onClick={() => onLoad(draft.assignments, draft.solverSummary, draft.builderConstraints ?? [])}>Load</button>
                 {isOwner && (
                   <button
                     type="button"

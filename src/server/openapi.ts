@@ -135,6 +135,17 @@ export function getOpenApiDocument() {
             residentId: { type: "string" }
           }
         },
+        CallBuilderConstraint: {
+          type: "object",
+          required: ["id", "kind", "residentId", "date", "scope"],
+          properties: {
+            id: { type: "string" },
+            kind: { type: "string", enum: ["off", "required-call"] },
+            residentId: { type: "string" },
+            date: { type: "string", format: "date", description: "A Friday, Saturday, or Sunday in the selected rotation block." },
+            scope: { type: "string", enum: ["day", "weekend"], description: "Required-call constraints always use day; off constraints may cover the full Friday-Sunday weekend." }
+          }
+        },
         CallScheduleDraft: {
           type: "object",
           required: ["id", "blockNumber", "assignments", "createdByUsername", "createdByName", "createdAt", "isMain"],
@@ -142,6 +153,7 @@ export function getOpenApiDocument() {
             id: { type: "string" },
             blockNumber: { type: "integer", minimum: 1, maximum: 13 },
             assignments: { type: "array", items: { $ref: "#/components/schemas/CallBuilderAssignment" } },
+            builderConstraints: { type: "array", items: { $ref: "#/components/schemas/CallBuilderConstraint" } },
             createdByUsername: { type: "string" },
             createdByName: { type: "string" },
             createdAt: { type: "string", format: "date-time" },
@@ -1157,7 +1169,7 @@ export function getOpenApiDocument() {
       "/api/call-builder/generate": {
         post: {
           summary: "Optimize a resident call schedule",
-          description: "Requires Call Builder access. Runs the local CP-SAT constraint solver using the configured hard rules and lexicographic goal hierarchy. Optional locked assignments are preserved. If the solver runtime is unavailable, the response is explicitly marked as a heuristic fallback.",
+          description: "Requires Call Builder access. Runs the local CP-SAT constraint solver using the configured hard rules and lexicographic goal hierarchy. Optional locked assignments and draft-specific required-off or required-call constraints are preserved. If the solver runtime is unavailable, the response is explicitly marked as a heuristic fallback.",
           requestBody: {
             required: true,
             content: {
@@ -1168,7 +1180,8 @@ export function getOpenApiDocument() {
                   properties: {
                     blockNumber: { type: "integer", minimum: 1, maximum: 13 },
                     lockedAssignments: { type: "array", items: { $ref: "#/components/schemas/CallBuilderAssignment" } },
-                    baselineAssignments: { type: "array", items: { $ref: "#/components/schemas/CallBuilderAssignment" } }
+                    baselineAssignments: { type: "array", items: { $ref: "#/components/schemas/CallBuilderAssignment" } },
+                    builderConstraints: { type: "array", items: { $ref: "#/components/schemas/CallBuilderConstraint" } }
                   }
                 }
               }
@@ -1184,7 +1197,7 @@ export function getOpenApiDocument() {
       "/api/call-builder/suggest": {
         post: {
           summary: "Find coordinated improvements to a Call Builder draft",
-          description: "Requires Call Builder access. Re-optimizes the full hierarchy, preserves optional locks, and minimizes changes from the submitted draft after higher-priority goals are fixed.",
+          description: "Requires Call Builder access. Re-optimizes the full hierarchy, preserves optional locks and draft-specific constraints, and minimizes changes from the submitted draft after higher-priority goals are fixed.",
           responses: {
             "200": { description: "Zero or one coordinated minimum-change suggestion" },
             "403": { description: "Call Builder privilege required" },
@@ -1195,7 +1208,7 @@ export function getOpenApiDocument() {
       "/api/call-builder/drafts": {
         post: {
           summary: "Save a shared Call Builder draft",
-          description: "Requires Call Builder access. Saves a timestamped snapshot without changing CALL coverage; work-in-progress drafts with validity blockers are allowed.",
+          description: "Requires Call Builder access. Saves a timestamped snapshot, including draft-specific required-off and required-call constraints, without changing CALL coverage; work-in-progress drafts with validity blockers are allowed.",
           requestBody: {
             required: true,
             content: {
@@ -1206,6 +1219,7 @@ export function getOpenApiDocument() {
                   properties: {
                     blockNumber: { type: "integer", minimum: 1, maximum: 13 },
                     assignments: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/CallBuilderAssignment" } },
+                    builderConstraints: { type: "array", items: { $ref: "#/components/schemas/CallBuilderConstraint" } },
                     solverSummary: { type: "object", description: "Optional generation status and lexicographic objective audit stored with the snapshot" }
                   }
                 }

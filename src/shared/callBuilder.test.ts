@@ -107,6 +107,28 @@ describe("resident call builder", () => {
     expect(evaluation.issues.some((issue) => issue.rule === "coverage" && issue.message.includes("missing"))).toBe(true);
   });
 
+  it("flags manual edits that violate build-specific requirements", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const generated = generateCallSchedule(state, 3);
+    const assignment = generated.assignments.find((item) => item.residentId === "res_chief")!;
+    const requiredDate = "2026-09-19";
+    const assignedIntern = generated.assignments.find((item) => item.date === requiredDate && item.callPosition === "intern")!;
+    const requiredResident = state.residents.find((resident) =>
+      getCallPositionForResident(resident) === "intern" && resident.id !== assignedIntern.residentId
+    )!;
+    const constraints = [
+      { id: "off", kind: "off" as const, residentId: assignment.residentId, date: assignment.date, scope: "day" as const },
+      { id: "required", kind: "required-call" as const, residentId: requiredResident.id, date: requiredDate, scope: "day" as const }
+    ];
+
+    const evaluation = evaluateCallSchedule(state, 3, generated.assignments, constraints);
+
+    expect(evaluation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "error", rule: "builder-constraint", residentIds: [assignment.residentId] }),
+      expect.objectContaining({ severity: "error", rule: "builder-constraint", residentIds: [requiredResident.id] })
+    ]));
+  });
+
   it("blocks consecutive-day call and warns about a Friday-Sunday repeat", () => {
     const state = createInitialState(new Date("2026-08-30T12:00:00"));
     const generated = generateCallSchedule(state, 3);

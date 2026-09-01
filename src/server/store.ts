@@ -466,6 +466,14 @@ function normalizeCallScheduleDrafts(drafts: CallScheduleDraft[]): CallScheduleD
             && Boolean(assignment.residentId)
           )
         : [],
+      builderConstraints: Array.isArray(draft.builderConstraints)
+        ? draft.builderConstraints.filter((constraint) =>
+            Boolean(constraint?.id && constraint.residentId)
+            && isIsoDate(constraint.date)
+            && (constraint.kind === "off" || constraint.kind === "required-call")
+            && (constraint.scope === "day" || constraint.scope === "weekend")
+          )
+        : [],
       createdByName: normalizeOptionalString(draft.createdByName) ?? draft.createdByUsername,
       createdAt: normalizeOptionalString(draft.createdAt) ?? new Date().toISOString(),
       isMain: draft.isMain === true
@@ -935,7 +943,8 @@ function removeDanglingReferences(state: PlannerState): PlannerState {
     callScheduleDrafts: state.callScheduleDrafts
       .map((draft) => ({
         ...draft,
-        assignments: draft.assignments.filter((assignment) => residentIds.has(assignment.residentId))
+        assignments: draft.assignments.filter((assignment) => residentIds.has(assignment.residentId)),
+        builderConstraints: (draft.builderConstraints ?? []).filter((constraint) => residentIds.has(constraint.residentId))
       }))
       .filter((draft) => draft.assignments.length > 0),
     coverageRequests: state.coverageRequests.filter((request) => {

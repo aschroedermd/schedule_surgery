@@ -71,4 +71,33 @@ describe.runIf(solverAvailable)("CP-SAT call builder", () => {
       ]
     })).rejects.toBeInstanceOf(CallBuilderInfeasibleError);
   }, 10_000);
+
+  it("enforces build-specific weekends off and required call dates", async () => {
+    process.env.CALL_BUILDER_SOLVER_TIME_SECONDS = "2";
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const result = await solveCallSchedule(state, 3, {
+      builderConstraints: [
+        { id: "andrew_off", kind: "off", residentId: "res_chief", date: "2026-09-12", scope: "weekend" },
+        { id: "nathan_required", kind: "required-call", residentId: "res_shigley", date: "2026-09-19", scope: "day" }
+      ]
+    });
+
+    expect(result.hardViolationCount).toBe(0);
+    expect(result.assignments).toContainEqual({ date: "2026-09-19", callPosition: "intern", residentId: "res_shigley" });
+    expect(result.assignments.some((assignment) =>
+      assignment.residentId === "res_chief"
+      && assignment.date >= "2026-09-11"
+      && assignment.date <= "2026-09-13"
+    )).toBe(false);
+  }, 10_000);
+
+  it("explains contradictory build-specific requirements", async () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    await expect(solveCallSchedule(state, 3, {
+      builderConstraints: [
+        { id: "off", kind: "off", residentId: "res_shigley", date: "2026-09-19", scope: "day" },
+        { id: "required", kind: "required-call", residentId: "res_shigley", date: "2026-09-19", scope: "day" }
+      ]
+    })).rejects.toThrow("both required on call and required off");
+  });
 });

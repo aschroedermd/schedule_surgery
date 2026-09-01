@@ -49,10 +49,21 @@ export interface CallBuilderAssignment {
   residentId: string;
 }
 
+export type CallBuilderConstraintKind = "off" | "required-call";
+
+export interface CallBuilderConstraint {
+  id: string;
+  kind: CallBuilderConstraintKind;
+  residentId: string;
+  date: string;
+  scope: CallOffRequestScope;
+}
+
 export interface CallScheduleDraft {
   id: string;
   blockNumber: number;
   assignments: CallBuilderAssignment[];
+  builderConstraints?: CallBuilderConstraint[];
   createdByUsername: string;
   createdByName: string;
   createdAt: string;
@@ -91,6 +102,7 @@ export type CallBuilderIssueSeverity = "error" | "warning" | "info";
 
 export type CallBuilderRule =
   | "coverage"
+  | "builder-constraint"
   | "fairness"
   | "consecutive-days"
   | "egs-chief"
