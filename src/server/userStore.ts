@@ -71,7 +71,7 @@ export class FileUserStore implements UserStore {
 
   async authenticate(username: string, password: string): Promise<UserSummary | undefined> {
     const data = await this.load();
-    const user = findStoredUser(data, username);
+    const user = findAuthenticationUser(data, username);
     if (!user || !verifySecret(password, user.passwordHash)) return undefined;
     return toSummary(user);
   }
@@ -394,6 +394,18 @@ function normalizePrivileges(input: ServicePrivileges | undefined): ServicePrivi
 function findStoredUser(data: UserStoreData, username: string): StoredUser | undefined {
   const normalized = normalizeUsername(username);
   return data.users.find((user) => user.username === normalized);
+}
+
+function findAuthenticationUser(data: UserStoreData, username: string): StoredUser | undefined {
+  const normalized = normalizeUsername(username);
+  const exactUser = data.users.find((user) => user.username === normalized);
+  if (exactUser) return exactUser;
+
+  // People commonly enter a middle initial after their first initial. Limit the
+  // correction to that one pattern so login never performs broad fuzzy matching.
+  if (!/^[a-z]{3,40}$/.test(normalized)) return undefined;
+  const withoutMiddleInitial = normalized[0] + normalized.slice(2);
+  return data.users.find((user) => user.username === withoutMiddleInitial);
 }
 
 function requireStoredUser(data: UserStoreData, username: string): StoredUser {

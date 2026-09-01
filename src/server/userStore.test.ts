@@ -18,6 +18,39 @@ async function makeStore(): Promise<{ filePath: string; store: FileUserStore }> 
 }
 
 describe("file user store", () => {
+  it("authenticates a username with one extra alphabetic middle initial", async () => {
+    const { store } = await makeStore();
+    await store.createUser({ username: "jrudderow", password: "correct-password" });
+
+    await expect(store.authenticate("jsrudderow", "correct-password")).resolves.toEqual(
+      expect.objectContaining({ username: "jrudderow" })
+    );
+    await expect(store.authenticate("JSRUDDEROW", "correct-password")).resolves.toEqual(
+      expect.objectContaining({ username: "jrudderow" })
+    );
+  });
+
+  it("does not broaden middle-initial login matching beyond one alphabetic character in the second position", async () => {
+    const { store } = await makeStore();
+    await store.createUser({ username: "jrudderow", password: "correct-password" });
+
+    await expect(store.authenticate("jssrudderow", "correct-password")).resolves.toBeUndefined();
+    await expect(store.authenticate("jruxdderow", "correct-password")).resolves.toBeUndefined();
+    await expect(store.authenticate("j1rudderow", "correct-password")).resolves.toBeUndefined();
+    await expect(store.authenticate("jsrudderow", "wrong-password")).resolves.toBeUndefined();
+  });
+
+  it("keeps an exact username authoritative over a possible middle-initial correction", async () => {
+    const { store } = await makeStore();
+    await store.createUser({ username: "jrudderow", password: "base-password" });
+    await store.createUser({ username: "jsrudderow", password: "exact-password" });
+
+    await expect(store.authenticate("jsrudderow", "exact-password")).resolves.toEqual(
+      expect.objectContaining({ username: "jsrudderow" })
+    );
+    await expect(store.authenticate("jsrudderow", "base-password")).resolves.toBeUndefined();
+  });
+
   it("does not rewrite the user file during authenticated reads", async () => {
     const { filePath, store } = await makeStore();
     await store.getUser("admin");
