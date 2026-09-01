@@ -5,8 +5,14 @@ import {
   evaluateCallSchedule,
   generateCallSchedule,
   getCallBuilderDates,
+  getCallBuilderShiftsForDate,
+  getCallHolidayName,
   getCallBuilderWeekendAnchor,
-  getCallPositionForResident
+  getCallPositionForResident,
+  getCallUnits,
+  isCallRestrictedRotation,
+  isHardEligibleForCallAssignment,
+  isHardEligibleForDate
 } from "./callBuilder";
 import { parseLocalDate } from "./date";
 import { getRotationForBlock } from "./rotations";
@@ -41,12 +47,50 @@ describe("resident call builder", () => {
   });
 
   it("publishes the revised hierarchy in the requested order", () => {
-    expect(CALL_BUILDER_GOALS).toHaveLength(11);
+    expect(CALL_BUILDER_GOALS).toHaveLength(12);
     expect(CALL_BUILDER_GOALS[0]).toContain("absolutely no call on consecutive days");
-    expect(CALL_BUILDER_GOALS[5]).toContain("Priority");
-    expect(CALL_BUILDER_GOALS[6]).toContain("twice in the same weekend");
-    expect(CALL_BUILDER_GOALS[7]).toContain("vacation");
-    expect(CALL_BUILDER_GOALS[10]).toContain("Secondary");
+    expect(CALL_BUILDER_GOALS[1]).toContain("NRV");
+    expect(CALL_BUILDER_GOALS[6]).toContain("Priority");
+    expect(CALL_BUILDER_GOALS[7]).toContain("twice in the same weekend");
+    expect(CALL_BUILDER_GOALS[8]).toContain("vacation");
+    expect(CALL_BUILDER_GOALS[11]).toContain("Secondary");
+  });
+
+  it("adds weekday holidays as separate 12-hour day shifts without changing weekend call", () => {
+    expect(getCallBuilderDates(1)).toContain("2026-07-04");
+    expect(getCallBuilderDates(3)).toContain("2026-09-07");
+    expect(getCallBuilderDates(6)).toContain("2026-11-26");
+    expect(getCallBuilderDates(12)).toContain("2027-05-31");
+    expect(getCallHolidayName("2026-07-04")).toBe("Fourth of July");
+    expect(getCallHolidayName("2026-09-07")).toBe("Labor Day");
+    expect(getCallHolidayName("2026-11-26")).toBe("Thanksgiving");
+    expect(getCallHolidayName("2027-05-31")).toBe("Memorial Day");
+    expect(getCallBuilderShiftsForDate("2026-07-04")).toEqual(["regular"]);
+    expect(getCallUnits("2026-07-04")).toBe(2);
+    expect(getCallUnits("2026-07-11")).toBe(2);
+    expect(getCallBuilderShiftsForDate("2026-09-07")).toEqual(["holiday-day"]);
+    expect(getCallUnits("2026-09-07", "holiday-day")).toBe(1);
+    expect(getCallBuilderShiftsForDate("2025-07-04")).toEqual(["holiday-day", "regular"]);
+    expect(getCallUnits("2025-07-04", "holiday-day")).toBe(1);
+    expect(getCallUnits("2025-07-04", "regular")).toBe(1);
+  });
+
+  it("limits every NRV resident to Sunday and protects listed outside rotations", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const nrvResident = state.residents.find((resident) => getRotationForBlock(resident, 3)?.service === "NRV")!;
+    expect(isHardEligibleForCallAssignment(nrvResident, "2026-09-06").eligible).toBe(true);
+    expect(isHardEligibleForCallAssignment(nrvResident, "2026-09-07")).toEqual(expect.objectContaining({
+      eligible: false,
+      rule: "nrv-pool"
+    }));
+
+    const plasticsResident = state.residents.find((resident) => getRotationForBlock(resident, 2)?.service === "Plastic Surgery")!;
+    expect(isCallRestrictedRotation("ICU/SCC")).toBe(true);
+    expect(isCallRestrictedRotation("Plastic Surgery")).toBe(true);
+    expect(isHardEligibleForDate(plasticsResident, "2026-08-07")).toEqual(expect.objectContaining({
+      eligible: false,
+      rule: "approved-unavailable"
+    }));
   });
 
   it("puts EGS chiefs on Sundays and Trauma chiefs on two separated Fridays", () => {

@@ -17,6 +17,7 @@ import {
   evaluateCallSchedule,
   getCallBuilderBlock,
   getCallBuilderDates,
+  getCallBuilderShiftsForDate,
   getCallBuilderWeekendAnchor
 } from "../shared/callBuilder";
 import {
@@ -1039,6 +1040,7 @@ export function createApp(
         return candidate
           && candidate.date === assignment.date
           && candidate.callPosition === assignment.callPosition
+          && (candidate.shift ?? "regular") === (assignment.shift ?? "regular")
           && candidate.residentId === assignment.residentId;
       })) {
         res.json([]);
@@ -4535,7 +4537,9 @@ function readCallBuilderAssignments(value: unknown): CallBuilderAssignment[] {
     }
     const residentId = readOptionalString(input.residentId);
     if (!residentId) throw new HttpError(400, `Assignment ${index + 1} requires a residentId`);
-    return { date, callPosition, residentId };
+    const shift = input.shift ?? "regular";
+    if (shift !== "regular" && shift !== "holiday-day") throw new HttpError(400, `Assignment ${index + 1} has an invalid shift`);
+    return { date, callPosition, residentId, ...(shift === "holiday-day" ? { shift } : {}) };
   });
 }
 
@@ -4553,7 +4557,7 @@ function readCallBuilderConstraints(value: unknown, blockNumber: number): CallBu
     const id = readRequiredString(input.id, `builderConstraints[${index}].id`);
     const residentId = readRequiredString(input.residentId, `builderConstraints[${index}].residentId`);
     const date = assertDate(input.date);
-    if (!validDates.has(date)) throw new HttpError(400, `Builder requirement ${index + 1} must use a Friday, Saturday, or Sunday in this block`);
+    if (!validDates.has(date)) throw new HttpError(400, `Builder requirement ${index + 1} must use a configured weekend or holiday call day in this block`);
     const kind = input.kind;
     if (kind !== "off" && kind !== "required-call") {
       throw new HttpError(400, `Builder requirement ${index + 1} has an invalid kind`);
@@ -4562,10 +4566,18 @@ function readCallBuilderConstraints(value: unknown, blockNumber: number): CallBu
     if (scope !== "day" && scope !== "weekend") {
       throw new HttpError(400, `Builder requirement ${index + 1} has an invalid scope`);
     }
-    const uniqueKey = `${kind}:${residentId}:${date}:${scope}`;
+    const requestedShift = input.shift ?? "regular";
+    if (requestedShift !== "regular" && requestedShift !== "holiday-day") {
+      throw new HttpError(400, `Builder requirement ${index + 1} has an invalid shift`);
+    }
+    const shift = kind === "required-call" ? requestedShift : "regular";
+    if (kind === "required-call" && !getCallBuilderShiftsForDate(date).includes(shift)) {
+      throw new HttpError(400, `Builder requirement ${index + 1} uses a shift that is not scheduled on that date`);
+    }
+    const uniqueKey = `${kind}:${residentId}:${date}:${scope}:${shift}`;
     if (seen.has(uniqueKey)) throw new HttpError(400, `Builder requirement ${index + 1} is duplicated`);
     seen.add(uniqueKey);
-    return { id, residentId, date, kind, scope };
+    return { id, residentId, date, kind, scope, ...(shift === "holiday-day" ? { shift } : {}) };
   });
 }
 

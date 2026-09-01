@@ -15,9 +15,14 @@ import {
   evaluateCallSchedule,
   getCallBuilderBlock,
   getCallBuilderDates,
+  getCallBuilderShiftsForDate,
+  getCallBuilderSlots,
+  getCallHolidayName,
   getCallBuilderResidentsForPosition,
   getCallBuilderWeekendAnchor,
   getCallPositionForResident,
+  getCallUnits,
+  isCallRestrictedRotation,
 } from "../shared/callBuilder";
 import { addDays, displayDate, parseLocalDate } from "../shared/date";
 import { comparePersonNames } from "../shared/names";
@@ -180,7 +185,7 @@ export function CallBuilderTab({
     () => assignments ? evaluateCallSchedule(state, blockNumber, assignments, builderConstraints) : undefined,
     [assignments, blockNumber, builderConstraints, state]
   );
-  const weekendAnchors = [...new Set(getCallBuilderDates(blockNumber).map(getCallBuilderWeekendAnchor))];
+  const callDateGroups = getCallDateGroups(blockNumber);
 
   async function buildSchedule() {
     try {
@@ -237,10 +242,10 @@ export function CallBuilderTab({
     setSuggestions([]);
   }
 
-  function updateAssignment(date: string, callPosition: CallBuilderAssignment["callPosition"], residentId: string) {
+  function updateAssignment(date: string, callPosition: CallBuilderAssignment["callPosition"], residentId: string, shift?: CallBuilderAssignment["shift"]) {
     setAssignments((current) => {
-      const withoutSlot = (current ?? []).filter((assignment) => assignment.date !== date || assignment.callPosition !== callPosition);
-      return residentId ? [...withoutSlot, { date, callPosition, residentId }] : withoutSlot;
+      const withoutSlot = (current ?? []).filter((assignment) => callSlotKey(assignment) !== callSlotKey({ date, callPosition, shift }));
+      return residentId ? [...withoutSlot, { date, callPosition, residentId, ...(shift === "holiday-day" ? { shift } : {}) }] : withoutSlot;
     });
     setSolverSummary(undefined);
     setSuggestions([]);
@@ -309,6 +314,8 @@ export function CallBuilderTab({
         onMutate={onMutate}
       />
 
+      <CallBuilderInputs state={state} blockNumber={blockNumber} />
+
       <CallBuilderRequirements
         state={state}
         blockNumber={blockNumber}
@@ -330,16 +337,17 @@ export function CallBuilderTab({
           <div className="call-builder-workspace">
             <div className="call-builder-main">
               <div className="call-builder-weekends">
-                {weekendAnchors.map((anchor) => (
+                {callDateGroups.map((group) => (
                   <CallBuilderWeekend
-                    key={anchor}
+                    key={group.key}
                     state={state}
-                    anchor={anchor}
+                    title={group.title}
+                    dates={group.dates}
                     assignments={evaluation.assignments}
                     onChange={updateAssignment}
                     lockedSlotKeys={lockedSlotKeys}
-                    onToggleLock={(date, callPosition) => {
-                      const key = callSlotKey({ date, callPosition });
+                    onToggleLock={(date, callPosition, shift) => {
+                      const key = callSlotKey({ date, callPosition, shift });
                       setLockedSlotKeys((current) => {
                         const next = new Set(current);
                         if (next.has(key)) next.delete(key);
@@ -397,7 +405,6 @@ export function CallBuilderTab({
                   setSuggestions([]);
                 }}
               />
-              <CallBuilderInputs state={state} blockNumber={blockNumber} />
               <CallBuilderFairness state={state} evaluation={evaluation} />
             </aside>
           </div>
@@ -426,39 +433,44 @@ function CallBuilderRequirements({
   const [kind, setKind] = useState<CallBuilderConstraint["kind"]>("off");
   const [scope, setScope] = useState<CallOffRequestScope>("weekend");
   const [date, setDate] = useState(callDates[0] ?? "");
+  const [shift, setShift] = useState<CallBuilderAssignment["shift"]>(() => getCallBuilderShiftsForDate(callDates[0] ?? "")[0]);
   const [message, setMessage] = useState<string>();
 
   useEffect(() => {
-    setDate(getCallBuilderDates(blockNumber)[0] ?? "");
+    const firstDate = getCallBuilderDates(blockNumber)[0] ?? "";
+    setDate(firstDate);
+    setShift(getCallBuilderShiftsForDate(firstDate)[0]);
     setMessage(undefined);
   }, [blockNumber]);
 
   function addRequirement(event: FormEvent) {
     event.preventDefault();
     if (!residentId || !date) return;
-    const nextScope = kind === "required-call" ? "day" : scope;
+    const nextScope = kind === "required-call" || !isWeekendDate(date) ? "day" : scope;
+    const nextShift = kind === "required-call" ? shift : undefined;
     const duplicate = constraints.some((constraint) =>
       constraint.kind === kind
       && constraint.residentId === residentId
       && constraint.date === date
       && constraint.scope === nextScope
+      && (constraint.shift ?? "regular") === (nextShift ?? "regular")
     );
     if (duplicate) {
       setMessage("That build requirement is already listed.");
       return;
     }
     const id = `builder_requirement_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    onChange([...constraints, { id, kind, residentId, date, scope: nextScope }]);
+    onChange([...constraints, { id, kind, residentId, date, scope: nextScope, ...(nextShift === "holiday-day" ? { shift: nextShift } : {}) }]);
     setMessage(undefined);
   }
 
   return (
-    <section className="call-builder-requirements" aria-label="Build-specific call requirements">
+    <section className="call-builder-requirements" aria-label="Resident-specific call rules">
       <header>
-        <div><ShieldCheck size={18} /><span><strong>Build requirements</strong><small>Hard rules for this draft only</small></span></div>
+        <div><ShieldCheck size={18} /><span><strong>Resident-specific rules</strong><small>Hard on/off rules for this draft only</small></span></div>
         <b>{constraints.length}</b>
       </header>
-      <p>Set required time off or pre-select a resident's call day. The solver must honor these rules in addition to the standard hierarchy.</p>
+      <p>Choose a resident and require a specific weekday, weekend day, or whole weekend on or off. The solver must honor these rules in addition to the standard hierarchy.</p>
       <form onSubmit={addRequirement}>
         <label>
           Resident
@@ -476,12 +488,26 @@ function CallBuilderRequirements({
           </select>
         </label>
         <label>
-          Call date
-          <select value={date} onChange={(event) => setDate(event.target.value)} required>
-            {callDates.map((callDate) => <option key={callDate} value={callDate}>{formatLongDate(callDate)}</option>)}
+          Call day
+          <select value={date} onChange={(event) => {
+            const nextDate = event.target.value;
+            setDate(nextDate);
+            setShift(getCallBuilderShiftsForDate(nextDate)[0]);
+          }} required>
+            {callDates.map((callDate) => <option key={callDate} value={callDate}>{formatCallDateOption(callDate)}</option>)}
           </select>
         </label>
-        {kind === "off" && (
+        {kind === "required-call" && (
+          <label>
+            Shift
+            <select value={shift ?? "regular"} onChange={(event) => setShift(event.target.value as CallBuilderAssignment["shift"])}>
+              {getCallBuilderShiftsForDate(date).map((callShift) => (
+                <option key={callShift} value={callShift}>{callShift === "holiday-day" ? "Holiday daytime · 12h" : "Regular call"}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {kind === "off" && isWeekendDate(date) && (
           <label>
             Applies to
             <select value={scope} onChange={(event) => setScope(event.target.value as CallOffRequestScope)}>
@@ -498,9 +524,9 @@ function CallBuilderRequirements({
           {constraints.map((constraint) => {
             const resident = state.residents.find((candidate) => candidate.id === constraint.residentId);
             const anchor = getCallBuilderWeekendAnchor(constraint.date);
-            const dateLabel = constraint.kind === "off" && constraint.scope === "weekend"
+            const dateLabel = constraint.kind === "off" && constraint.scope === "weekend" && isWeekendDate(constraint.date)
               ? `${formatCompactDate(anchor)}–${formatCompactDate(addDays(anchor, 2))}`
-              : formatLongDate(constraint.date);
+              : `${formatLongDate(constraint.date)}${constraint.kind === "required-call" ? ` · ${constraint.shift === "holiday-day" ? "holiday daytime" : "regular call"}` : ""}`;
             return (
               <div key={constraint.id}>
                 <span className={`call-builder-requirement-kind ${constraint.kind}`}>{constraint.kind === "off" ? "Must be off" : "Must call"}</span>
@@ -738,57 +764,70 @@ function OffCallRequestsModal({
 
 function CallBuilderWeekend({
   state,
-  anchor,
+  title,
+  dates,
   assignments,
   onChange,
   lockedSlotKeys,
   onToggleLock
 }: {
   state: PlannerState;
-  anchor: string;
+  title: string;
+  dates: string[];
   assignments: CallBuilderAssignment[];
-  onChange: (date: string, callPosition: CallBuilderAssignment["callPosition"], residentId: string) => void;
+  onChange: (date: string, callPosition: CallBuilderAssignment["callPosition"], residentId: string, shift?: CallBuilderAssignment["shift"]) => void;
   lockedSlotKeys: Set<string>;
-  onToggleLock: (date: string, callPosition: CallBuilderAssignment["callPosition"]) => void;
+  onToggleLock: (date: string, callPosition: CallBuilderAssignment["callPosition"], shift?: CallBuilderAssignment["shift"]) => void;
 }) {
-  const dates = [anchor, addDays(anchor, 1), addDays(anchor, 2)];
   return (
     <article className="call-builder-weekend">
-      <header><strong>Weekend of {displayDate(anchor)}</strong><span>Fri/Sun 12h · Sat 24h</span></header>
-      <div className="call-builder-day-grid">
+      <header><strong>{title}</strong><span>{dates.flatMap((date) => getCallBuilderShiftsForDate(date).map((shift) => formatCallDuration(date, shift))).join(" · ")}</span></header>
+      <div className="call-builder-day-grid" style={{ gridTemplateColumns: `repeat(${dates.length}, minmax(0, 1fr))` }}>
         {dates.map((date) => (
           <section key={date} className="call-builder-day">
-            <div className="call-builder-day-heading"><strong>{parseLocalDate(date).toLocaleDateString(undefined, { weekday: "long" })}</strong><span>{displayDate(date).replace(/^\w+,?\s*/, "")}</span></div>
-            {CALL_POSITIONS.map((callPosition) => {
-              const assignment = assignments.find((item) => item.date === date && item.callPosition === callPosition);
-              const residents = getCallBuilderResidentsForPosition(state, callPosition);
-              const locked = lockedSlotKeys.has(callSlotKey({ date, callPosition }));
-              return (
-                <div key={callPosition} className={`call-builder-assignment-control${locked ? " locked" : ""}`}>
-                  <label>
-                    <span>{formatPosition(callPosition)}</span>
-                    <select value={assignment?.residentId ?? ""} onChange={(event) => onChange(date, callPosition, event.target.value)}>
-                      <option value="">Unassigned</option>
-                      {residents.map((resident) => (
-                        <option key={resident.id} value={resident.id}>
-                          {resident.name} · {getRotationForDate(resident, date)?.service ?? "no rotation"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="call-builder-lock-button"
-                    disabled={!assignment}
-                    aria-label={`${locked ? "Unlock" : "Lock"} ${formatPosition(callPosition)} assignment on ${date}`}
-                    title={locked ? "Allow optimizer to change this assignment" : "Keep this assignment during optimization"}
-                    onClick={() => onToggleLock(date, callPosition)}
-                  >
-                    {locked ? <Lock size={13} /> : <Unlock size={13} />}
-                  </button>
-                </div>
-              );
-            })}
+            <div className="call-builder-day-heading">
+              <strong>{parseLocalDate(date).toLocaleDateString(undefined, { weekday: "long" })}</strong>
+              <span>{displayDate(date).replace(/^\w+,?\s*/, "")}</span>
+              {getCallBuilderShiftsForDate(date).includes("holiday-day") && <em>{getCallHolidayName(date)}</em>}
+            </div>
+            {getCallBuilderShiftsForDate(date).map((shift) => (
+              <div key={shift} className={`call-builder-shift-group ${shift}`}>
+                {getCallBuilderShiftsForDate(date).length > 1 && <strong>{shift === "holiday-day" ? "Holiday daytime · 12h" : "Regular evening call · 12h"}</strong>}
+                {CALL_POSITIONS.map((callPosition) => {
+                  const assignment = assignments.find((item) => item.date === date
+                    && (item.shift ?? "regular") === shift
+                    && item.callPosition === callPosition);
+                  const residents = getCallBuilderResidentsForPosition(state, callPosition);
+                  const slot = { date, callPosition, ...(shift === "holiday-day" ? { shift } : {}) };
+                  const locked = lockedSlotKeys.has(callSlotKey(slot));
+                  return (
+                    <div key={callPosition} className={`call-builder-assignment-control${locked ? " locked" : ""}`}>
+                      <label>
+                        <span>{formatPosition(callPosition)}</span>
+                        <select value={assignment?.residentId ?? ""} onChange={(event) => onChange(date, callPosition, event.target.value, shift)}>
+                          <option value="">Unassigned</option>
+                          {residents.map((resident) => (
+                            <option key={resident.id} value={resident.id}>
+                              {resident.name} · {getRotationForDate(resident, date)?.service ?? "no rotation"}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="call-builder-lock-button"
+                        disabled={!assignment}
+                        aria-label={`${locked ? "Unlock" : "Lock"} ${formatPosition(callPosition)} ${shift === "holiday-day" ? "holiday day" : "regular call"} assignment on ${date}`}
+                        title={locked ? "Allow optimizer to change this assignment" : "Keep this assignment during optimization"}
+                        onClick={() => onToggleLock(date, callPosition, shift)}
+                      >
+                        {locked ? <Lock size={13} /> : <Unlock size={13} />}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </section>
         ))}
       </div>
@@ -864,9 +903,16 @@ function CallBuilderInputs({ state, blockNumber }: { state: PlannerState; blockN
   const unavailable = state.residents.flatMap((resident) => resident.unavailable
     .filter((item) => (item.endDate ?? item.date) >= block.startDate && item.date <= block.endDate)
     .map((item) => ({ resident, item })));
+  const rotationUnavailable = state.residents.flatMap((resident) => (resident.rotationSchedule ?? [])
+    .filter((rotation) => rotation.endDate >= block.startDate && rotation.startDate <= block.endDate && isCallRestrictedRotation(rotation.service))
+    .map((rotation) => ({ resident, rotation })))
+    .sort((left, right) => comparePersonNames(left.resident.name, right.resident.name));
+  const holidays = getCallBuilderDates(blockNumber)
+    .map((date) => ({ date, name: getCallHolidayName(date) }))
+    .filter((holiday): holiday is { date: string; name: string } => Boolean(holiday.name) && getCallBuilderShiftsForDate(holiday.date).includes("holiday-day"));
   return (
-    <section className="call-builder-side-panel">
-      <header><CalendarDays size={17} /><div><strong>Scheduling inputs</strong><span>Requests and protected time</span></div></header>
+    <section className="call-builder-side-panel call-builder-inputs-panel">
+      <header><CalendarDays size={17} /><div><strong>Scheduling inputs</strong><span>Visible before building · requests, protected time, and rotation exclusions</span></div></header>
       <InputGroup label={`Call-off requests · ${requests.length}`}>
         {requests.length === 0 ? <span className="muted-copy">None for this block</span> : requests.map((request) => {
           const resident = state.residents.find((candidate) => candidate.id === request.residentId);
@@ -878,6 +924,12 @@ function CallBuilderInputs({ state, blockNumber }: { state: PlannerState; blockN
       </InputGroup>
       <InputGroup label={`Approved unavailable · ${unavailable.length}`}>
         {unavailable.length === 0 ? <span className="muted-copy">None for this block</span> : unavailable.map(({ resident, item }) => <span key={`${resident.id}:${item.id}`}><b>{resident.name}</b> · {item.date}{item.endDate ? `–${item.endDate}` : ""} · {item.label}</span>)}
+      </InputGroup>
+      <InputGroup label={`Rotation unavailable · ${rotationUnavailable.length}`}>
+        {rotationUnavailable.length === 0 ? <span className="muted-copy">None for this block</span> : rotationUnavailable.map(({ resident, rotation }) => <span key={`${resident.id}:${rotation.id}`}><b>{resident.name}</b> · {rotation.service} · unavailable for general surgery call</span>)}
+      </InputGroup>
+      <InputGroup label={`Weekday holiday day shifts · ${holidays.length}`}>
+        {holidays.length === 0 ? <span className="muted-copy">None for this block</span> : holidays.map((holiday) => <span key={holiday.date}><b>{holiday.name}</b> · {formatLongDate(holiday.date)}</span>)}
       </InputGroup>
     </section>
   );
@@ -895,7 +947,7 @@ function CallBuilderFairness({
 }) {
   return (
     <section className="call-builder-side-panel">
-      <header><ShieldCheck size={17} /><div><strong>Fairness ledger</strong><span>Saturday = 2 units</span></div></header>
+      <header><ShieldCheck size={17} /><div><strong>Fairness ledger</strong><span>12h = 1 unit · 24h = 2 units</span></div></header>
       <div className="call-builder-ledger">
         {CALL_POSITIONS.map((position) => (
           <div key={position} className="call-builder-ledger-group">
@@ -918,10 +970,48 @@ function CallBuilderStartState({ state, blockNumber }: { state: PlannerState; bl
   return (
     <div className="call-builder-start">
       <div className="call-builder-start-icon"><Wand2 size={26} /></div>
-      <div><h3>Ready to build Block {blockNumber}</h3><p>The engine will fill {getCallBuilderDates(blockNumber).length * 3} positions using rotations, PGY level, vacation, approved unavailable time, and {requestCount} resident request{requestCount === 1 ? "" : "s"}.</p></div>
+      <div><h3>Ready to build Block {blockNumber}</h3><p>The engine will fill {getCallBuilderSlots(blockNumber).length} positions using rotations, PGY level, vacation, approved unavailable time, resident-specific rules, weekday holiday shifts, and {requestCount} resident request{requestCount === 1 ? "" : "s"}.</p></div>
       <ol>{CALL_BUILDER_GOALS.map((goal) => <li key={goal}>{goal}</li>)}</ol>
     </div>
   );
+}
+
+function getCallDateGroups(blockNumber: number): Array<{ key: string; title: string; dates: string[] }> {
+  const callDates = getCallBuilderDates(blockNumber);
+  const callDateSet = new Set(callDates);
+  const weekendAnchors = [...new Set(callDates.filter(isWeekendDate).map(getCallBuilderWeekendAnchor))];
+  const groups = weekendAnchors.map((anchor) => ({
+    key: `weekend:${anchor}`,
+    title: `Weekend of ${displayDate(anchor)}`,
+    dates: [anchor, addDays(anchor, 1), addDays(anchor, 2)].filter((date) => callDateSet.has(date))
+  }));
+  for (const date of callDates.filter((candidate) => !isWeekendDate(candidate))) {
+    groups.push({
+      key: `holiday:${date}`,
+      title: `${getCallHolidayName(date) ?? "Holiday"} call · ${displayDate(date)}`,
+      dates: [date]
+    });
+  }
+  return groups.sort((left, right) => left.dates[0].localeCompare(right.dates[0]));
+}
+
+function isWeekendDate(date: string): boolean {
+  const weekday = parseLocalDate(date).getDay();
+  return weekday === 5 || weekday === 6 || weekday === 0;
+}
+
+function formatCallDuration(date: string, shift: CallBuilderAssignment["shift"]): string {
+  const weekday = parseLocalDate(date).toLocaleDateString(undefined, { weekday: "short" });
+  if (shift === "holiday-day") return `${weekday} holiday day 12h`;
+  return `${weekday} ${getCallUnits(date, shift) * 12}h${getCallBuilderShiftsForDate(date).length > 1 ? " evening" : ""}`;
+}
+
+function formatCallDateOption(date: string): string {
+  const holiday = getCallHolidayName(date);
+  const shifts = getCallBuilderShiftsForDate(date);
+  if (shifts.length > 1) return `${formatLongDate(date)} · ${holiday} daytime + regular evening call`;
+  if (shifts[0] === "holiday-day") return `${formatLongDate(date)} · ${holiday} daytime (12h)`;
+  return `${formatLongDate(date)} · ${getCallUnits(date) * 12}h`;
 }
 
 function getDatesInRange(startDate: string, endDate: string): string[] {
@@ -983,8 +1073,8 @@ function formatPosition(position: CallBuilderAssignment["callPosition"]): string
   return position.charAt(0).toUpperCase() + position.slice(1);
 }
 
-function callSlotKey(assignment: Pick<CallBuilderAssignment, "date" | "callPosition">): string {
-  return `${assignment.date}:${assignment.callPosition}`;
+function callSlotKey(assignment: Pick<CallBuilderAssignment, "date" | "callPosition" | "shift">): string {
+  return `${assignment.date}:${assignment.shift ?? "regular"}:${assignment.callPosition}`;
 }
 
 function formatTargetRange(min: number, max: number): string {

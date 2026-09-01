@@ -132,7 +132,8 @@ export function getOpenApiDocument() {
           properties: {
             date: { type: "string", format: "date" },
             callPosition: { type: "string", enum: ["senior", "mid-level", "intern"] },
-            residentId: { type: "string" }
+            residentId: { type: "string" },
+            shift: { type: "string", enum: ["regular", "holiday-day"], description: "Omitted or regular for normal call; holiday-day identifies the separate weekday holiday daytime shift." }
           }
         },
         CallBuilderConstraint: {
@@ -142,8 +143,9 @@ export function getOpenApiDocument() {
             id: { type: "string" },
             kind: { type: "string", enum: ["off", "required-call"] },
             residentId: { type: "string" },
-            date: { type: "string", format: "date", description: "A Friday, Saturday, or Sunday in the selected rotation block." },
-            scope: { type: "string", enum: ["day", "weekend"], description: "Required-call constraints always use day; off constraints may cover the full Friday-Sunday weekend." }
+            date: { type: "string", format: "date", description: "A configured Friday, Saturday, Sunday, or holiday call day in the selected rotation block." },
+            scope: { type: "string", enum: ["day", "weekend"], description: "Required-call constraints always use day; off constraints may cover the full Friday-Sunday weekend." },
+            shift: { type: "string", enum: ["regular", "holiday-day"], description: "Selects the shift for required-call rules. Off rules apply to every shift on the selected day." }
           }
         },
         CallScheduleDraft: {

@@ -36,6 +36,7 @@ interface HardEligibility {
 
 export const CALL_BUILDER_GOALS = [
   "Fairness: each available regular call-pool resident should receive one Saturday or two Friday/Sunday shifts, with absolutely no call on consecutive days.",
+  "Residents rotating at NRV take Sunday call only.",
   "EGS chiefs take Sunday call only.",
   "EGS mid-level residents do not take Saturdays or share a call weekend with the EGS chief.",
   "Trauma chiefs take Friday call only, with a goal of two nonconsecutive Fridays.",
@@ -58,9 +59,29 @@ export function getCallBuilderDates(blockNumber: number): string[] {
   const dates: string[] = [];
   for (let date: string = block.startDate; date <= block.endDate; date = addDays(date, 1)) {
     const weekday = parseLocalDate(date).getDay();
-    if (weekday === 5 || weekday === 6 || weekday === 0) dates.push(date);
+    if (weekday === 5 || weekday === 6 || weekday === 0 || getCallHolidayName(date)) dates.push(date);
   }
   return dates;
+}
+
+export function getCallBuilderShiftsForDate(date: string): Array<"regular" | "holiday-day"> {
+  const weekday = parseLocalDate(date).getDay();
+  const shifts: Array<"regular" | "holiday-day"> = [];
+  if (weekday === 5 || weekday === 6 || weekday === 0) shifts.push("regular");
+  if (getCallHolidayName(date) && weekday >= 1 && weekday <= 5) shifts.unshift("holiday-day");
+  return shifts;
+}
+
+export function getCallBuilderSlots(blockNumber: number): Array<Omit<CallBuilderAssignment, "residentId">> {
+  return getCallBuilderDates(blockNumber).flatMap((date) =>
+    getCallBuilderShiftsForDate(date).flatMap((shift) =>
+      CALL_POSITIONS.map((callPosition) => ({
+        date,
+        callPosition,
+        ...(shift === "holiday-day" ? { shift } : {})
+      }))
+    )
+  );
 }
 
 export function getCallBuilderWeekendAnchor(date: string): string {
@@ -94,15 +115,19 @@ export function generateCallSchedule(
     .flatMap((constraint) => {
       const resident = state.residents.find((candidate) => candidate.id === constraint.residentId);
       const callPosition = resident && getCallPositionForResident(resident);
-      return callPosition ? [{ date: constraint.date, callPosition, residentId: constraint.residentId }] : [];
+      return callPosition ? [{
+        date: constraint.date,
+        callPosition,
+        residentId: constraint.residentId,
+        ...(constraint.shift === "holiday-day" ? { shift: constraint.shift } : {})
+      }] : [];
     });
 
   for (const slot of slots) {
-    if (assignments.some((assignment) => assignment.date === slot.date && assignment.callPosition === slot.callPosition)) continue;
+    if (assignments.some((assignment) => assignmentSlotKey(assignment) === assignmentSlotKey(slot))) continue;
     const candidates = getCallBuilderResidentsForPosition(state, slot.callPosition)
       .filter((resident) => isHardEligibleForCallAssignment(resident, slot.date).eligible)
       .filter((resident) => !isResidentForcedOff(builderConstraints, resident.id, slot.date))
-      .filter((resident) => !assignments.some((assignment) => assignment.date === slot.date && assignment.residentId === resident.id))
       .map((resident) => ({ resident, cost: getCandidateCost(state, blockNumber, assignments, slot, resident) }))
       .sort((left, right) => left.cost - right.cost || comparePersonNames(left.resident.name, right.resident.name));
     const resident = candidates[0]?.resident;
@@ -149,7 +174,7 @@ export function evaluateCallSchedule(
         accumulator,
         "error",
         "coverage",
-        `${assignment.date} ${formatPosition(assignment.callPosition)} is outside this block's call slots.`,
+        `${assignment.date} ${formatCallShift(assignment.shift)} ${formatPosition(assignment.callPosition)} is outside this block's call slots.`,
         HARD_VIOLATION_PENALTY,
         assignment.date,
         [assignment.residentId],
@@ -209,7 +234,7 @@ export function evaluateCallSchedule(
         accumulator,
         "error",
         "coverage",
-        `${slot.date} is missing its ${formatPosition(slot.callPosition)} resident.`,
+        `${slot.date} is missing its ${formatCallShift(slot.shift)} ${formatPosition(slot.callPosition)} resident.`,
         HARD_VIOLATION_PENALTY,
         slot.date,
         undefined,
@@ -220,7 +245,7 @@ export function evaluateCallSchedule(
         accumulator,
         "error",
         "coverage",
-        `${slot.date} has ${count} residents in the ${formatPosition(slot.callPosition)} position.`,
+        `${slot.date} has ${count} residents in the ${formatCallShift(slot.shift)} ${formatPosition(slot.callPosition)} position.`,
         HARD_VIOLATION_PENALTY,
         slot.date,
         undefined,
@@ -233,10 +258,12 @@ export function evaluateCallSchedule(
     const dateAssignments = assignments.filter((assignment) => assignment.date === date);
     const residentCounts = new Map<string, number>();
     for (const assignment of dateAssignments) {
-      residentCounts.set(assignment.residentId, (residentCounts.get(assignment.residentId) ?? 0) + 1);
+      const key = `${assignment.residentId}:${normalizeCallShift(assignment.shift)}`;
+      residentCounts.set(key, (residentCounts.get(key) ?? 0) + 1);
     }
-    for (const [residentId, count] of residentCounts) {
+    for (const [residentShift, count] of residentCounts) {
       if (count <= 1) continue;
+      const [residentId] = residentShift.split(":");
       const resident = residentsById.get(residentId);
       addIssue(
         accumulator,
@@ -246,7 +273,7 @@ export function evaluateCallSchedule(
         HARD_VIOLATION_PENALTY,
         date,
         [residentId],
-        `duplicate-resident:${date}:${residentId}`
+        `duplicate-resident:${date}:${residentShift}`
       );
     }
   }
@@ -318,7 +345,10 @@ export function suggestCallScheduleMoves(
     const currentResident = state.residents.find((resident) => resident.id === assignment.residentId);
     for (const resident of getCallBuilderResidentsForPosition(state, assignment.callPosition)) {
       if (resident.id === assignment.residentId || !isHardEligibleForCallAssignment(resident, assignment.date).eligible) continue;
-      if (assignments.some((item, itemIndex) => itemIndex !== index && item.date === assignment.date && item.residentId === resident.id)) continue;
+      if (assignments.some((item, itemIndex) => itemIndex !== index
+        && item.date === assignment.date
+        && normalizeCallShift(item.shift) === normalizeCallShift(assignment.shift)
+        && item.residentId === resident.id)) continue;
       const next = assignments.map((item, itemIndex) => itemIndex === index ? { ...item, residentId: resident.id } : item);
       addSuggestion(
         candidates,
@@ -361,6 +391,8 @@ export function suggestCallScheduleMoves(
 
 export function getCallBuilderConstraintDates(constraint: Pick<CallBuilderConstraint, "date" | "scope">): string[] {
   if (constraint.scope === "day") return [constraint.date];
+  const weekday = parseLocalDate(constraint.date).getDay();
+  if (weekday !== 5 && weekday !== 6 && weekday !== 0) return [constraint.date];
   const anchor = getCallBuilderWeekendAnchor(constraint.date);
   return [anchor, addDays(anchor, 1), addDays(anchor, 2)];
 }
@@ -385,6 +417,7 @@ function isRequiredBuilderAssignment(
     constraint.kind === "required-call"
     && constraint.residentId === assignment.residentId
     && constraint.date === assignment.date
+    && normalizeCallShift(constraint.shift) === normalizeCallShift(assignment.shift)
   );
 }
 
@@ -417,7 +450,9 @@ function evaluateBuilderConstraints(
     }
 
     const required = assignments.some((assignment) =>
-      assignment.residentId === constraint.residentId && assignment.date === constraint.date
+      assignment.residentId === constraint.residentId
+      && assignment.date === constraint.date
+      && normalizeCallShift(assignment.shift) === normalizeCallShift(constraint.shift)
     );
     if (required) continue;
     addIssue(
@@ -452,7 +487,10 @@ function optimizeAssignments(
       for (const resident of getCallBuilderResidentsForPosition(state, assignment.callPosition)) {
         if (resident.id === assignment.residentId || !isHardEligibleForCallAssignment(resident, assignment.date).eligible) continue;
         if (isResidentForcedOff(builderConstraints, resident.id, assignment.date)) continue;
-        if (assignments.some((item, itemIndex) => itemIndex !== index && item.date === assignment.date && item.residentId === resident.id)) continue;
+        if (assignments.some((item, itemIndex) => itemIndex !== index
+          && item.date === assignment.date
+          && normalizeCallShift(item.shift) === normalizeCallShift(assignment.shift)
+          && item.residentId === resident.id)) continue;
         const candidate = assignments.map((item, itemIndex) => itemIndex === index ? { ...item, residentId: resident.id } : item);
         const candidateEvaluation = evaluateCallSchedule(state, blockNumber, candidate, builderConstraints);
         if (candidateEvaluation.penalty < bestEvaluation.penalty) {
@@ -495,9 +533,7 @@ function optimizeAssignments(
 }
 
 function getExpectedSlots(blockNumber: number): Array<Omit<CallBuilderAssignment, "residentId">> {
-  return getCallBuilderDates(blockNumber).flatMap((date) =>
-    CALL_POSITIONS.map((callPosition) => ({ date, callPosition }))
-  );
+  return getCallBuilderSlots(blockNumber);
 }
 
 function compareBuildSlotPriority(
@@ -514,7 +550,10 @@ function compareBuildSlotPriority(
     if (weekday === 6) return 5;
     return 6;
   };
-  return priority(left) - priority(right) || left.date.localeCompare(right.date) || CALL_POSITIONS.indexOf(left.callPosition) - CALL_POSITIONS.indexOf(right.callPosition);
+  return priority(left) - priority(right)
+    || left.date.localeCompare(right.date)
+    || normalizeCallShift(left.shift).localeCompare(normalizeCallShift(right.shift))
+    || CALL_POSITIONS.indexOf(left.callPosition) - CALL_POSITIONS.indexOf(right.callPosition);
 }
 
 function getCandidateCost(
@@ -526,8 +565,8 @@ function getCandidateCost(
 ): number {
   const unitsBefore = assignments
     .filter((assignment) => assignment.residentId === resident.id)
-    .reduce((total, assignment) => total + getCallUnits(assignment.date), 0);
-  const unitsAfter = unitsBefore + getCallUnits(slot.date);
+    .reduce((total, assignment) => total + getCallUnits(assignment.date, assignment.shift), 0);
+  const unitsAfter = unitsBefore + getCallUnits(slot.date, slot.shift);
   let cost = (Math.abs(unitsAfter - TARGET_CALL_UNITS) - Math.abs(unitsBefore - TARGET_CALL_UNITS)) * 12_000;
   if (unitsBefore === 0 && unitsAfter > 0) cost -= NO_CALL_FAIRNESS_PENALTY;
   if (unitsAfter > TARGET_CALL_UNITS) cost += (unitsAfter - TARGET_CALL_UNITS) * 20_000;
@@ -537,6 +576,9 @@ function getCandidateCost(
   const weekday = parseLocalDate(slot.date).getDay();
   const sameWeekend = assignments.filter((assignment) => getCallBuilderWeekendAnchor(assignment.date) === weekendAnchor);
   const residentWeekendAssignments = sameWeekend.filter((assignment) => assignment.residentId === resident.id);
+  if (residentWeekendAssignments.some((assignment) => assignment.date === slot.date && normalizeCallShift(assignment.shift) !== normalizeCallShift(slot.shift))) {
+    cost += 9_000;
+  }
   if (residentWeekendAssignments.some((assignment) => Math.abs(daysBetween(assignment.date, slot.date)) === 1)) {
     cost += HARD_VIOLATION_PENALTY;
   } else if (residentWeekendAssignments.length > 0) {
@@ -593,6 +635,22 @@ function evaluateResidentSpacing(
   for (const [residentId, residentAssignments] of assignmentsByResident) {
     const resident = residentsById.get(residentId);
     const uniqueDates = [...new Set(residentAssignments.map((assignment) => assignment.date))].sort();
+    for (const date of uniqueDates) {
+      const shifts = new Set(residentAssignments
+        .filter((assignment) => assignment.date === date)
+        .map((assignment) => normalizeCallShift(assignment.shift)));
+      if (shifts.size <= 1) continue;
+      addIssue(
+        accumulator,
+        "warning",
+        "same-day-split",
+        `${resident?.name ?? residentId} covers both the holiday day shift and regular evening call on ${date}; use different residents when possible.`,
+        9_000,
+        date,
+        [residentId],
+        `same-day-split:${residentId}:${date}`
+      );
+    }
     for (let index = 1; index < uniqueDates.length; index += 1) {
       if (daysBetween(uniqueDates[index - 1], uniqueDates[index]) !== 1) continue;
       addIssue(
@@ -744,7 +802,9 @@ function evaluateTraumaChiefTargets(
   });
   for (const resident of traumaChiefs) {
     const fridayDates = assignments
-      .filter((assignment) => assignment.residentId === resident.id && parseLocalDate(assignment.date).getDay() === 5)
+      .filter((assignment) => assignment.residentId === resident.id
+        && normalizeCallShift(assignment.shift) === "regular"
+        && parseLocalDate(assignment.date).getDay() === 5)
       .map((assignment) => assignment.date)
       .sort();
     if (fridayDates.length !== 2) {
@@ -793,7 +853,7 @@ function buildResidentLoads(
         residentName: resident.name,
         callPosition,
         service,
-        units: residentAssignments.reduce((total, assignment) => total + getCallUnits(assignment.date), 0),
+        units: residentAssignments.reduce((total, assignment) => total + getCallUnits(assignment.date, assignment.shift), 0),
         shiftCount: residentAssignments.length,
         targetUnits: regularPool ? TARGET_CALL_UNITS : 0,
         targetMinUnits: regularPool ? target.min : 0,
@@ -822,7 +882,9 @@ export function isRegularPoolResidentForState(state: PlannerState, resident: Res
   const position = getCallPositionForResident(resident);
   if (position === "mid-level" && isNrvService(rotation.service)) return false;
   if (position === "senior" && isNrvService(rotation.service)) {
-    const requiredUnits = getCallBuilderDates(blockNumber).reduce((total, date) => total + getCallUnits(date), 0);
+    const requiredUnits = getCallBuilderSlots(blockNumber)
+      .filter((slot) => slot.callPosition === "senior")
+      .reduce((total, slot) => total + getCallUnits(slot.date, slot.shift), 0);
     const nonNrvSeniorCount = getAvailablePoolResidents(state, blockNumber, "senior")
       .filter((candidate) => !isNrvService(getRotationForBlock(candidate, blockNumber)?.service ?? ""))
       .length;
@@ -837,7 +899,9 @@ function regularPoolCapacityCoversBlock(
   callPosition: CallPosition,
   excludedResidentId?: string
 ): boolean {
-  const requiredUnits = getCallBuilderDates(blockNumber).reduce((total, date) => total + getCallUnits(date), 0);
+  const requiredUnits = getCallBuilderSlots(blockNumber)
+    .filter((slot) => slot.callPosition === callPosition)
+    .reduce((total, slot) => total + getCallUnits(slot.date, slot.shift), 0);
   const regularResidents = getRegularPoolResidents(state, blockNumber, callPosition)
     .filter((resident) => resident.id !== excludedResidentId);
   return regularResidents.length * TARGET_CALL_UNITS >= requiredUnits;
@@ -852,7 +916,9 @@ export function getFairnessTargetRange(
   if (regularResidents.length === 0) return { min: 0, max: 0, desiredRegularUnits: 0 };
   const availableResidents = getAvailablePoolResidents(state, blockNumber, callPosition);
   const hasReserve = availableResidents.some((resident) => !regularResidents.some((regular) => regular.id === resident.id));
-  const requiredUnits = getCallBuilderDates(blockNumber).reduce((total, date) => total + getCallUnits(date), 0);
+  const requiredUnits = getCallBuilderSlots(blockNumber)
+    .filter((slot) => slot.callPosition === callPosition)
+    .reduce((total, slot) => total + getCallUnits(slot.date, slot.shift), 0);
   const desiredRegularUnits = hasReserve
     ? Math.min(requiredUnits, regularResidents.length * TARGET_CALL_UNITS)
     : requiredUnits;
@@ -889,6 +955,9 @@ export function isHardEligibleForCallAssignment(resident: Resident, date: string
   const base = isHardEligibleForDate(resident, date);
   if (!base.eligible) return base;
   const weekday = parseLocalDate(date).getDay();
+  if (isNrvService(getResidentService(resident, date)) && weekday !== 0) {
+    return { eligible: false, reason: "residents rotating at NRV take Sunday call only", rule: "nrv-pool" };
+  }
   if (isEgsChief(resident, date) && weekday !== 0) {
     return { eligible: false, reason: "EGS chiefs take Sunday call only", rule: "egs-chief" };
   }
@@ -901,9 +970,21 @@ export function isHardEligibleForCallAssignment(resident: Resident, date: string
   return { eligible: true };
 }
 
-function isRestrictedRotation(service: string): boolean {
+export function isCallRestrictedRotation(service: string): boolean {
   const normalized = normalizeService(service);
-  return normalized.includes("scc") || normalized.includes("critical care") || normalized.includes("transplant") || normalized.includes("burn") || normalized.includes("nfloat") || normalized.includes("night float");
+  return normalized.includes("scc")
+    || /\bicu\b/.test(normalized)
+    || normalized.includes("critical care")
+    || normalized.includes("transplant")
+    || normalized.includes("plastic surgery")
+    || normalized.includes("plastics")
+    || normalized.includes("burn")
+    || normalized.includes("nfloat")
+    || normalized.includes("night float");
+}
+
+function isRestrictedRotation(service: string): boolean {
+  return isCallRestrictedRotation(service);
 }
 
 function getResidentService(resident: Resident, date: string): string {
@@ -979,16 +1060,47 @@ export function isCrossBlockSaturday(
     || state.coverageEntries.some((entry) => entry.kind === "call" && entry.date === priorSaturday && entry.residentId === residentId);
 }
 
-export function getCallUnits(date: string): number {
+export function getCallUnits(date: string, shift?: CallBuilderAssignment["shift"]): number {
+  if (normalizeCallShift(shift) === "holiday-day") return 1;
   return parseLocalDate(date).getDay() === 6 ? 2 : 1;
+}
+
+export function getCallHolidayName(date: string): string | undefined {
+  const parsed = parseLocalDate(date);
+  const year = parsed.getFullYear();
+  if (date === `${year}-07-04`) return "Fourth of July";
+  if (date === nthWeekdayOfMonth(year, 10, 4, 4)) return "Thanksgiving";
+  if (date === nthWeekdayOfMonth(year, 8, 1, 1)) return "Labor Day";
+  if (date === lastWeekdayOfMonth(year, 4, 1)) return "Memorial Day";
+  return undefined;
+}
+
+function nthWeekdayOfMonth(year: number, monthIndex: number, weekday: number, occurrence: number): string {
+  const first = new Date(year, monthIndex, 1);
+  const day = 1 + ((weekday - first.getDay() + 7) % 7) + (occurrence - 1) * 7;
+  return formatLocalDate(year, monthIndex + 1, day);
+}
+
+function lastWeekdayOfMonth(year: number, monthIndex: number, weekday: number): string {
+  const last = new Date(year, monthIndex + 1, 0);
+  const day = last.getDate() - ((last.getDay() - weekday + 7) % 7);
+  return formatLocalDate(year, monthIndex + 1, day);
+}
+
+function formatLocalDate(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 function daysBetween(left: string, right: string): number {
   return Math.round((parseLocalDate(right).getTime() - parseLocalDate(left).getTime()) / (24 * 60 * 60 * 1000));
 }
 
-function assignmentSlotKey(assignment: Pick<CallBuilderAssignment, "date" | "callPosition">): string {
-  return `${assignment.date}:${assignment.callPosition}`;
+function normalizeCallShift(shift: CallBuilderAssignment["shift"]): "regular" | "holiday-day" {
+  return shift === "holiday-day" ? "holiday-day" : "regular";
+}
+
+function assignmentSlotKey(assignment: Pick<CallBuilderAssignment, "date" | "callPosition" | "shift">): string {
+  return `${assignment.date}:${normalizeCallShift(assignment.shift)}:${assignment.callPosition}`;
 }
 
 function addIssue(
@@ -1029,7 +1141,9 @@ function addSuggestion(
 }
 
 function sortAssignments(assignments: CallBuilderAssignment[]): CallBuilderAssignment[] {
-  return [...assignments].sort((left, right) => left.date.localeCompare(right.date) || CALL_POSITIONS.indexOf(left.callPosition) - CALL_POSITIONS.indexOf(right.callPosition));
+  return [...assignments].sort((left, right) => left.date.localeCompare(right.date)
+    || normalizeCallShift(left.shift).localeCompare(normalizeCallShift(right.shift))
+    || CALL_POSITIONS.indexOf(left.callPosition) - CALL_POSITIONS.indexOf(right.callPosition));
 }
 
 function sortIssues(issues: CallBuilderIssue[]): CallBuilderIssue[] {
@@ -1045,9 +1159,10 @@ function sortIssues(issues: CallBuilderIssue[]): CallBuilderIssue[] {
     "approved-unavailable": 5,
     "priority-request": 6,
     "same-weekend": 7,
-    vacation: 8,
-    "same-service": 9,
-    "cross-block-saturday": 10,
+    "same-day-split": 8,
+    vacation: 9,
+    "same-service": 10,
+    "cross-block-saturday": 11,
     "secondary-request": 11,
     "nrv-pool": 12
   };
@@ -1061,6 +1176,10 @@ function sortIssues(issues: CallBuilderIssue[]): CallBuilderIssue[] {
 
 function formatPosition(position: CallPosition): string {
   return position === "mid-level" ? "mid-level" : position;
+}
+
+function formatCallShift(shift: CallBuilderAssignment["shift"]): string {
+  return shift === "holiday-day" ? "holiday daytime" : "regular call";
 }
 
 function formatTargetRange(min: number, max: number): string {

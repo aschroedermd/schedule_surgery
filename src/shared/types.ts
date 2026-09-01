@@ -47,7 +47,10 @@ export interface CallBuilderAssignment {
   date: string;
   callPosition: CallPosition;
   residentId: string;
+  shift?: CallBuilderShift;
 }
+
+export type CallBuilderShift = "regular" | "holiday-day";
 
 export type CallBuilderConstraintKind = "off" | "required-call";
 
@@ -57,6 +60,7 @@ export interface CallBuilderConstraint {
   residentId: string;
   date: string;
   scope: CallOffRequestScope;
+  shift?: CallBuilderShift;
 }
 
 export interface CallScheduleDraft {
@@ -111,6 +115,7 @@ export type CallBuilderRule =
   | "approved-unavailable"
   | "priority-request"
   | "same-weekend"
+  | "same-day-split"
   | "vacation"
   | "same-service"
   | "cross-block-saturday"

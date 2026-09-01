@@ -463,6 +463,7 @@ function normalizeCallScheduleDrafts(drafts: CallScheduleDraft[]): CallScheduleD
         ? draft.assignments.filter((assignment) =>
             isIsoDate(assignment?.date)
             && CALL_POSITIONS.includes(assignment.callPosition)
+            && (assignment.shift === undefined || assignment.shift === "regular" || assignment.shift === "holiday-day")
             && Boolean(assignment.residentId)
           )
         : [],
@@ -472,6 +473,7 @@ function normalizeCallScheduleDrafts(drafts: CallScheduleDraft[]): CallScheduleD
             && isIsoDate(constraint.date)
             && (constraint.kind === "off" || constraint.kind === "required-call")
             && (constraint.scope === "day" || constraint.scope === "weekend")
+            && (constraint.shift === undefined || constraint.shift === "regular" || constraint.shift === "holiday-day")
           )
         : [],
       createdByName: normalizeOptionalString(draft.createdByName) ?? draft.createdByUsername,

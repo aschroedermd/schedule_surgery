@@ -956,6 +956,28 @@ h2 {
   font-weight: 850;
 }
 
+.call-builder-shift-group {
+  display: grid;
+  gap: 10px;
+}
+
+.call-builder-shift-group + .call-builder-shift-group {
+  border-top: 1px dashed var(--border-color);
+  padding-top: 11px;
+}
+
+.call-builder-shift-group > strong {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+}
+
+.call-builder-shift-group.holiday-day {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-warning-light) 55%, transparent);
+  padding: 9px;
+}
+
 .call-request-form input,
 .call-request-form select,
 .call-builder-actions select,
@@ -1291,6 +1313,16 @@ h2 {
   font-weight: 750;
 }
 
+.call-builder-day-heading em {
+  border-radius: 999px;
+  background: var(--color-warning-light);
+  padding: 2px 6px;
+  color: var(--color-warning-hover);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .call-builder-day label {
   grid-template-columns: 58px minmax(0, 1fr);
   align-items: center;
@@ -1517,6 +1549,15 @@ h2 {
   color: var(--text-muted);
   font-size: 0.7rem;
   line-height: 1.35;
+}
+
+.call-builder-inputs-panel {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+}
+
+.call-builder-inputs-panel > header {
+  grid-column: 1 / -1;
 }
 
 .priority-text {
@@ -2002,6 +2043,10 @@ h2 {
   .call-builder-requirements > form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .call-builder-inputs-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -2021,6 +2066,10 @@ h2 {
 
   .call-builder-requirements > form,
   .call-builder-requirement-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .call-builder-inputs-panel {
     grid-template-columns: minmax(0, 1fr);
   }
 

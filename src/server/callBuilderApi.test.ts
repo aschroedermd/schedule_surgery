@@ -51,7 +51,7 @@ describe("call builder API", () => {
       .send({ blockNumber: 3 })
       .expect(200);
     expect(generated.body).toEqual(expect.objectContaining({ hardViolationCount: 0, blockNumber: 3 }));
-    expect(generated.body.assignments).toHaveLength(36);
+    expect(generated.body.assignments).toHaveLength(39);
     expect(generated.body.solverSummary).toEqual(expect.objectContaining({
       engine: expect.stringMatching(/cp-sat|heuristic/),
       status: expect.stringMatching(/optimal|feasible|fallback/)
@@ -91,7 +91,7 @@ describe("call builder API", () => {
       .send({ blockNumber: 3, assignments: generated.body.assignments.slice(1) })
       .expect(201);
     const secondDraft = secondSaved.body.callScheduleDrafts.find((draft: { id: string }) => draft.id !== firstDraft.id);
-    expect(secondDraft.assignments).toHaveLength(35);
+    expect(secondDraft.assignments).toHaveLength(38);
 
     await request(app)
       .patch(`/api/call-builder/drafts/${firstDraft.id}`)
@@ -167,7 +167,8 @@ describe("call builder API", () => {
     const adminToken = await login(app, "admin", "call-builder-admin-password");
     const builderConstraints = [
       { id: "andrew_off", kind: "off", residentId: "res_chief", date: "2026-09-12", scope: "weekend" },
-      { id: "nathan_required", kind: "required-call", residentId: "res_shigley", date: "2026-09-19", scope: "day" }
+      { id: "nathan_required", kind: "required-call", residentId: "res_shigley", date: "2026-09-19", scope: "day" },
+      { id: "labor_day_off", kind: "off", residentId: "res_chief", date: "2026-09-07", scope: "day" }
     ];
     const generated = await request(app)
       .post("/api/call-builder/generate")
