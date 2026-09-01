@@ -7,8 +7,49 @@ import {
   buildSolverProblem,
   solveCallSchedule
 } from "./callBuilderSolver";
-import { getCallBuilderSlots, getCallBuilderWeekendAnchor } from "../shared/callBuilder";
+import { getCallBuilderSlots, getCallBuilderWeekendAnchor, getCallPositionForResident } from "../shared/callBuilder";
 import { parseLocalDate } from "../shared/date";
+
+describe("call-off request solver hierarchy", () => {
+  it("ranks seniority groups before timestamps and earlier requests within a group", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const callResidents = state.residents.filter((resident) => getCallPositionForResident(resident));
+    const senior = callResidents.find((resident) => resident.trainingLevel === "PGY4" || resident.trainingLevel === "PGY5")!;
+    const midlevels = callResidents.filter((resident) => resident.trainingLevel === "PGY2" || resident.trainingLevel === "PGY3").slice(0, 2);
+    const intern = callResidents.find((resident) => resident.trainingLevel === "PGY1")!;
+    expect(senior).toBeTruthy();
+    expect(midlevels).toHaveLength(2);
+    expect(intern).toBeTruthy();
+    state.callOffRequests = [
+      makeCallOffRequest("intern-early", intern.id, "2026-07-01T00:00:00.000Z"),
+      makeCallOffRequest("mid-late", midlevels[1].id, "2026-07-03T00:00:00.000Z"),
+      makeCallOffRequest("senior-late", senior.id, "2026-07-04T00:00:00.000Z"),
+      makeCallOffRequest("mid-early", midlevels[0].id, "2026-07-02T00:00:00.000Z")
+    ];
+
+    const hierarchy = buildSolverProblem(state, 3).callOffRequestHierarchy.priority;
+
+    expect(hierarchy.map((tier) => tier.key)).toEqual(["senior", "midlevel", "intern"]);
+    expect(hierarchy[1].requests.map((request) => ({ residentId: request.residentId, timestampWeight: request.timestampWeight }))).toEqual([
+      { residentId: midlevels[0].id, timestampWeight: 2 },
+      { residentId: midlevels[1].id, timestampWeight: 1 }
+    ]);
+  });
+});
+
+function makeCallOffRequest(id: string, residentId: string, createdAt: string) {
+  return {
+    id,
+    residentId,
+    requesterUsername: residentId,
+    requesterName: residentId,
+    date: "2026-09-05",
+    scope: "weekend" as const,
+    priority: "priority" as const,
+    createdAt,
+    updatedAt: createdAt
+  };
+}
 
 const localPython = path.resolve(process.cwd(), ".local/call-builder-venv/bin/python");
 const solverAvailable = fs.existsSync(localPython);

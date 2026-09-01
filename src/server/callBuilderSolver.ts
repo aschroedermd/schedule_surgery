@@ -28,6 +28,7 @@ import {
   normalizeService
 } from "../shared/callBuilder";
 import { parseLocalDate } from "../shared/date";
+import { compareCallOffRequestPrecedence, getCallOffRequestSeniority } from "../shared/callOffRequests";
 import { getRotationForDate, normalizeRotationServiceToServiceLine } from "../shared/rotations";
 import {
   CALL_POSITIONS,
@@ -165,8 +166,6 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
         egsMidlevelSlotIds: slots.filter((slot) => isEgsMidlevel(resident, slot.date)).map((slot) => slot.id),
         traumaChiefSlotIds: slots.filter((slot) => slot.shift === "regular" && isTraumaChief(resident, slot.date)).map((slot) => slot.id),
         nrv: dateValues.some((date) => isNrvChief(resident, date) || isNrvMidlevel(resident, date)),
-        priorityDates: dateValues.filter((date) => getCallOffRequest(state, resident.id, date)?.priority === "priority"),
-        secondaryDates: dateValues.filter((date) => getCallOffRequest(state, resident.id, date)?.priority === "secondary"),
         vacationAdjacentDates: dateValues.filter((date) => isVacationAdjacent(resident, date)),
         crossBlockSaturdayDates: dateValues.filter((date) => isCrossBlockSaturday(state, blockNumber, resident.id, date)),
         serviceByDate: Object.fromEntries(dateValues.map((date) => {
@@ -178,6 +177,13 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
       };
     });
   });
+  const callOffRequestHierarchy = buildCallOffRequestHierarchy(
+    state,
+    block.startDate,
+    block.endDate,
+    slots.map((slot) => slot.date),
+    new Set(residents.map((resident) => resident.id))
+  );
   return {
     version: 1,
     blockNumber,
@@ -185,6 +191,7 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
     randomSeed: 37,
     slots,
     residents,
+    callOffRequestHierarchy,
     lockedAssignments: sanitizeAssignments(options.lockedAssignments, blockNumber),
     baselineAssignments: sanitizeAssignments(options.baselineAssignments, blockNumber),
     requiredAssignments: builderConstraints
@@ -200,6 +207,50 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
         }] : [];
       })
   };
+}
+
+function buildCallOffRequestHierarchy(
+  state: PlannerState,
+  blockStart: string,
+  blockEnd: string,
+  slotDates: string[],
+  eligibleResidentIds: ReadonlySet<string>
+) {
+  const residentsById = new Map(state.residents.map((resident) => [resident.id, resident]));
+  const uniqueSlotDates = [...new Set(slotDates)];
+  const rankedRequests = state.callOffRequests
+    .filter((request) => request.date >= blockStart && request.date <= blockEnd)
+    .filter((request) => eligibleResidentIds.has(request.residentId))
+    .sort((left, right) => compareCallOffRequestPrecedence(left, right, residentsById));
+
+  return Object.fromEntries((["priority", "secondary"] as const).map((priority) => {
+    const tiers = new Map<string, {
+      key: string;
+      label: string;
+      rank: number;
+      requests: Array<{ residentId: string; dates: string[]; createdAt: string; timestampWeight: number }>;
+    }>();
+    const requests = rankedRequests.filter((request) => request.priority === priority);
+    for (const request of requests) {
+      const resident = residentsById.get(request.residentId);
+      if (!resident) continue;
+      const seniority = getCallOffRequestSeniority(resident.trainingLevel);
+      const dates = uniqueSlotDates.filter((date) => request.scope === "day"
+        ? date === request.date
+        : getCallBuilderWeekendAnchor(date) === getCallBuilderWeekendAnchor(request.date));
+      if (dates.length === 0) continue;
+      const tier = tiers.get(seniority.key) ?? { ...seniority, requests: [] };
+      tier.requests.push({ residentId: request.residentId, dates, createdAt: request.createdAt, timestampWeight: 0 });
+      tiers.set(seniority.key, tier);
+    }
+    const orderedTiers = [...tiers.values()].sort((left, right) => left.rank - right.rank);
+    for (const tier of orderedTiers) {
+      tier.requests.forEach((request, index) => {
+        request.timestampWeight = tier.requests.length - index;
+      });
+    }
+    return [priority, orderedTiers];
+  }));
 }
 
 function sanitizeBuilderConstraints(

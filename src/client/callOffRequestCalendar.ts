@@ -1,6 +1,6 @@
 import { getCallBuilderWeekendAnchor } from "../shared/callBuilder";
 import { addDays } from "../shared/date";
-import { comparePersonNames } from "../shared/names";
+import { compareCallOffRequestPrecedence } from "../shared/callOffRequests";
 import type { CallOffRequest, Resident } from "../shared/types";
 
 export interface CallOffRequestBlockRange {
@@ -11,6 +11,7 @@ export interface CallOffRequestBlockRange {
 export interface ResidentCallOffRequests {
   residentId: string;
   residentName: string;
+  trainingLevel: Resident["trainingLevel"];
   requests: CallOffRequest[];
 }
 
@@ -44,7 +45,7 @@ export function getCallOffRequestResidentIdsByDate(
 
 export function groupCallOffRequestsByResident(
   requests: CallOffRequest[],
-  residents: Array<Pick<Resident, "id" | "name">>,
+  residents: Array<Pick<Resident, "id" | "name"> & Partial<Pick<Resident, "trainingLevel">>>,
   block: CallOffRequestBlockRange
 ): ResidentCallOffRequests[] {
   const residentsById = new Map(residents.map((resident) => [resident.id, resident]));
@@ -58,10 +59,11 @@ export function groupCallOffRequestsByResident(
     .map(([residentId, residentRequests]) => ({
       residentId,
       residentName: residentsById.get(residentId)?.name ?? residentId,
+      trainingLevel: residentsById.get(residentId)?.trainingLevel ?? "Medical Student",
       requests: [...residentRequests].sort((left, right) =>
-        left.date.localeCompare(right.date)
-        || Number(left.priority === "secondary") - Number(right.priority === "secondary")
+        compareCallOffRequestPrecedence(left, right, residentsById)
+        || left.date.localeCompare(right.date)
       )
     }))
-    .sort((left, right) => comparePersonNames(left.residentName, right.residentName));
+    .sort((left, right) => compareCallOffRequestPrecedence(left.requests[0], right.requests[0], residentsById));
 }

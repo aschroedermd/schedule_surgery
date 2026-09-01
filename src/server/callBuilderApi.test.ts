@@ -39,6 +39,47 @@ describe("call builder API", () => {
     ]);
 
     await request(app)
+      .post("/api/call-off-requests")
+      .set("authorization", `Bearer ${residentToken}`)
+      .send({ date: "2026-09-12", scope: "weekend", priority: "priority" })
+      .expect(409)
+      .expect(({ body }) => expect(body.error).toContain("Confirm that you want to override"));
+
+    const overriddenRequest = await request(app)
+      .post("/api/call-off-requests")
+      .set("authorization", `Bearer ${residentToken}`)
+      .send({ date: "2026-09-12", scope: "weekend", priority: "priority", overrideExistingPriority: true })
+      .expect(200);
+    expect(overriddenRequest.body.callOffRequests.filter((item: { residentId: string; priority: string }) =>
+      item.residentId === "res_blue" && item.priority === "priority"
+    )).toEqual([
+      expect.objectContaining({ date: "2026-09-12", createdAt: expect.any(String), updatedAt: expect.any(String) })
+    ]);
+
+    const nextBlockRequest = await request(app)
+      .post("/api/call-off-requests")
+      .set("authorization", `Bearer ${residentToken}`)
+      .send({ date: "2026-10-03", scope: "weekend", priority: "priority" })
+      .expect(201);
+    expect(nextBlockRequest.body.callOffRequests.filter((item: { residentId: string; priority: string }) =>
+      item.residentId === "res_blue" && item.priority === "priority"
+    )).toHaveLength(2);
+
+    await request(app)
+      .post("/api/call-off-requests")
+      .set("authorization", `Bearer ${residentToken}`)
+      .send({ date: "2026-09-05", scope: "day", priority: "secondary" })
+      .expect(201);
+    const replacedSecondary = await request(app)
+      .post("/api/call-off-requests")
+      .set("authorization", `Bearer ${residentToken}`)
+      .send({ date: "2026-09-19", scope: "day", priority: "secondary" })
+      .expect(200);
+    expect(replacedSecondary.body.callOffRequests.filter((item: { residentId: string; priority: string; date: string }) =>
+      item.residentId === "res_blue" && item.priority === "secondary" && item.date < "2026-09-28"
+    )).toEqual([expect.objectContaining({ date: "2026-09-19" })]);
+
+    await request(app)
       .patch("/api/users/cblue")
       .set("authorization", `Bearer ${adminToken}`)
       .send({ canBuildCall: true })

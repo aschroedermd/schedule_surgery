@@ -1,5 +1,6 @@
 import { isResidentCallEligible } from "./coverage";
 import { addDays, parseLocalDate } from "./date";
+import { getCallOffRequestSeniority } from "./callOffRequests";
 import { comparePersonNames } from "./names";
 import { getRotationForBlock, getRotationForDate, ROTATION_BLOCK_DATES } from "./rotations";
 import { normalizeRotationServiceToServiceLine } from "./rotations";
@@ -41,12 +42,12 @@ export const CALL_BUILDER_GOALS = [
   "EGS mid-level residents do not take Saturdays or share a call weekend with the EGS chief.",
   "Trauma chiefs take Friday call only, with a goal of two nonconsecutive Fridays.",
   "Approved unavailable time is protected.",
-  "Priority call-off requests are protected when possible.",
+  "Priority call-off requests are protected by seniority group (PGY-4/5, then PGY-2/3, then PGY-1), then submission time.",
   "A resident should not call twice in the same weekend.",
   "Avoid the weekends before and immediately after vacation weeks.",
   "Separate residents on the same service across weekends when possible.",
   "Avoid Saturdays at both a prior block's end and the new block's start.",
-  "Secondary call-off requests are protected when possible."
+  "Secondary call-off requests are protected by the same seniority-then-submission-time hierarchy."
 ] as const;
 
 export function getCallBuilderBlock(blockNumber: number) {
@@ -610,8 +611,7 @@ function getCandidateCost(
   }
 
   const request = getCallOffRequest(state, resident.id, slot.date);
-  if (request?.priority === "priority") cost += 3_500;
-  if (request?.priority === "secondary") cost += 300;
+  if (request) cost += getCallOffRequestPenalty(state, blockNumber, request);
   if (isVacationAdjacent(resident, slot.date)) cost += 1_400;
   if (isCrossBlockSaturday(state, blockNumber, resident.id, slot.date)) cost += 500;
 
@@ -700,10 +700,10 @@ function evaluateAssignmentPreferences(
     if (!resident) continue;
     const request = getCallOffRequest(state, resident.id, assignment.date);
     if (request?.priority === "priority") {
-      addIssue(accumulator, "warning", "priority-request", `${resident.name}'s priority ${request.scope === "weekend" ? "weekend" : "day"} off request is not honored.`, 3_500, assignment.date, [resident.id]);
+      addIssue(accumulator, "warning", "priority-request", `${resident.name}'s priority ${request.scope === "weekend" ? "weekend" : "day"} off request is not honored.`, getCallOffRequestPenalty(state, blockNumber, request), assignment.date, [resident.id]);
     }
     if (request?.priority === "secondary") {
-      addIssue(accumulator, "info", "secondary-request", `${resident.name}'s secondary ${request.scope === "weekend" ? "weekend" : "day"} off request is not honored.`, 300, assignment.date, [resident.id]);
+      addIssue(accumulator, "info", "secondary-request", `${resident.name}'s secondary ${request.scope === "weekend" ? "weekend" : "day"} off request is not honored.`, getCallOffRequestPenalty(state, blockNumber, request), assignment.date, [resident.id]);
     }
     if (isVacationAdjacent(resident, assignment.date)) {
       addIssue(accumulator, "warning", "vacation", `${resident.name} is assigned on the weekend immediately before or after vacation.`, 1_400, assignment.date, [resident.id]);
@@ -1034,6 +1034,27 @@ export function getCallOffRequest(state: PlannerState, residentId: string, date:
     .filter((request) => request.scope === "day" ? request.date === date : getCallBuilderWeekendAnchor(request.date) === getCallBuilderWeekendAnchor(date))
     .sort((left, right) => Number(left.priority === "priority") - Number(right.priority === "priority"))
     .at(-1);
+}
+
+function getCallOffRequestPenalty(state: PlannerState, blockNumber: number, request: PlannerState["callOffRequests"][number]): number {
+  const resident = state.residents.find((candidate) => candidate.id === request.residentId);
+  const seniorityRank = resident ? getCallOffRequestSeniority(resident.trainingLevel).rank : 3;
+  const basePenalties = request.priority === "priority" ? [4_500, 3_500, 2_500, 2_000] : [450, 350, 250, 200];
+  const maximumTimestampBonus = request.priority === "priority" ? 500 : 50;
+  const block = getCallBuilderBlock(blockNumber);
+  if (!block || !resident) return basePenalties[seniorityRank] ?? basePenalties.at(-1)!;
+  const sameTier = state.callOffRequests
+    .filter((candidate) => candidate.priority === request.priority && candidate.date >= block.startDate && candidate.date <= block.endDate)
+    .filter((candidate) => {
+      const candidateResident = state.residents.find((item) => item.id === candidate.residentId);
+      return candidateResident && getCallOffRequestSeniority(candidateResident.trainingLevel).rank === seniorityRank;
+    })
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const timestampIndex = sameTier.findIndex((candidate) => candidate.id === request.id);
+  const timestampBonus = sameTier.length > 1 && timestampIndex >= 0
+    ? Math.round(maximumTimestampBonus * (sameTier.length - timestampIndex - 1) / (sameTier.length - 1))
+    : 0;
+  return (basePenalties[seniorityRank] ?? basePenalties.at(-1)!) + timestampBonus;
 }
 
 export function isVacationAdjacent(resident: Resident, date: string): boolean {

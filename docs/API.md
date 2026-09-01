@@ -65,6 +65,8 @@ Call Builder users generate schedules through `POST /api/call-builder/generate` 
 
 Call Builder users save shared schedule snapshots through `POST /api/call-builder/drafts` with `{ "blockNumber": 3, "assignments": [...], "solverSummary": {...} }`. Saving a draft does not change `coverageEntries` or the CALL tab. The server stores a validation snapshot alongside the optional solver audit. `PATCH /api/call-builder/drafts/:id` with `{ "isMain": true }` makes that snapshot the sole default draft for its block; `false` clears it. All Call Builder users may select the main draft, but `DELETE /api/call-builder/drafts/:id` succeeds only for the username that originally saved that draft. Non-Call-Builder users receive no `callScheduleDrafts` in their filtered planner state.
 
+Residents submit call preferences through `POST /api/call-off-requests`. Each resident may have one `priority` and one `secondary` request per rotation block, while requests in other blocks remain intact. Replacing an existing priority request requires `overrideExistingPriority: true`; the replacement receives a fresh `createdAt` timestamp. Scheduling protects priority requests before secondary requests. Within either tier it favors PGY-4/5, then PGY-2/3, then PGY-1, with earlier `createdAt` timestamps favored within the same seniority group.
+
 Create a regular user with the admin API key:
 
 ```bash

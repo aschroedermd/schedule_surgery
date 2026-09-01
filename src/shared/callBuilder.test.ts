@@ -50,10 +50,10 @@ describe("resident call builder", () => {
     expect(CALL_BUILDER_GOALS).toHaveLength(12);
     expect(CALL_BUILDER_GOALS[0]).toContain("absolutely no call on consecutive days");
     expect(CALL_BUILDER_GOALS[1]).toContain("NRV");
-    expect(CALL_BUILDER_GOALS[6]).toContain("Priority");
+    expect(CALL_BUILDER_GOALS[6]).toContain("PGY-4/5");
     expect(CALL_BUILDER_GOALS[7]).toContain("twice in the same weekend");
     expect(CALL_BUILDER_GOALS[8]).toContain("vacation");
-    expect(CALL_BUILDER_GOALS[11]).toContain("Secondary");
+    expect(CALL_BUILDER_GOALS[11]).toContain("same seniority-then-submission-time hierarchy");
   });
 
   it("adds weekday holidays as separate 12-hour day shifts without changing weekend call", () => {

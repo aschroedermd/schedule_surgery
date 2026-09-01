@@ -216,6 +216,7 @@ export async function submitCallOffRequest(
     scope: CallOffRequestScope;
     priority: CallOffRequestPriority;
     reason?: string;
+    overrideExistingPriority?: boolean;
   }
 ): Promise<PlannerState> {
   return request<PlannerState>("/api/call-off-requests", {

@@ -937,8 +937,20 @@ export function createApp(
         const requestBlock = getCallBuilderBlockForDate(request.date);
         return request.residentId === resident.id && request.priority === priority && requestBlock?.blockNumber === block.blockNumber;
       });
+      if (existing && priority === "priority" && req.body?.overrideExistingPriority !== true) {
+        throw new HttpError(409, "A priority request already exists for this block. Confirm that you want to override it.");
+      }
       const request: CallOffRequest = existing
-        ? { ...existing, date, scope, reason, updatedAt: now }
+        ? {
+            ...existing,
+            requesterUsername: req.user!.username,
+            requesterName: req.user!.displayName || req.user!.username,
+            date,
+            scope,
+            reason,
+            createdAt: now,
+            updatedAt: now
+          }
         : {
             id: createId("call_off_request"),
             residentId: resident.id,

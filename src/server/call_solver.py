@@ -17,7 +17,7 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 
-ENGINE_VERSION = "cp-sat-call-builder-v2"
+ENGINE_VERSION = "cp-sat-call-builder-v3"
 
 
 def debug(message: str) -> None:
@@ -202,8 +202,13 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
     objectives.append(("trauma-chief", "Trauma-chief Friday target violations", sum(trauma_terms)))
     objectives.append(("approved-unavailable", "Approved unavailable violations", 0))
 
-    priority_terms = assignment_terms(residents, variables, "priorityDates")
-    objectives.append(("priority-request", "Priority call-off requests not honored", sum(priority_terms)))
+    append_call_off_request_objectives(
+        objectives,
+        "priority",
+        problem.get("callOffRequestHierarchy", {}).get("priority", []),
+        variables,
+        slot_by_id,
+    )
 
     same_day_split_terms: list[Any] = []
     for resident in residents:
@@ -261,8 +266,13 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
 
     cross_block_terms = assignment_terms(residents, variables, "crossBlockSaturdayDates")
     objectives.append(("cross-block-saturday", "Back-to-back cross-block Saturdays", sum(cross_block_terms)))
-    secondary_terms = assignment_terms(residents, variables, "secondaryDates")
-    objectives.append(("secondary-request", "Secondary call-off requests not honored", sum(secondary_terms)))
+    append_call_off_request_objectives(
+        objectives,
+        "secondary",
+        problem.get("callOffRequestHierarchy", {}).get("secondary", []),
+        variables,
+        slot_by_id,
+    )
 
     baseline_by_slot = {
         (assignment_slot_id(item), item["callPosition"]): item["residentId"]
@@ -358,6 +368,32 @@ def assignment_terms(
         for (resident_id, slot_id), variable in variables.items()
         if resident_id == resident["id"] and slot_id.split(":", 1)[0] in resident[field]
     ]
+
+
+def append_call_off_request_objectives(
+    objectives: list[tuple[str, str, Any]],
+    priority: str,
+    tiers: list[dict[str, Any]],
+    variables: dict[tuple[str, str], cp_model.IntVar],
+    slot_by_id: dict[str, dict[str, Any]],
+) -> None:
+    if not tiers:
+        objectives.append((f"{priority}-request", f"{priority.title()} call-off requests not honored", 0))
+        return
+
+    for tier in tiers:
+        request_terms: list[tuple[Any, int]] = []
+        for request in tier["requests"]:
+            dates = set(request["dates"])
+            expression = sum(
+                variable
+                for (resident_id, slot_id), variable in variables.items()
+                if resident_id == request["residentId"] and slot_by_id[slot_id]["date"] in dates
+            )
+            request_terms.append((expression, int(request["timestampWeight"])))
+        key = f"{priority}-request-{tier['key']}"
+        label = f"{priority.title()} {tier['label']} call-off conflicts, weighted by submission time"
+        objectives.append((key, label, sum(expression * weight for expression, weight in request_terms)))
 
 
 def assignment_slot_id(assignment: dict[str, Any]) -> str:

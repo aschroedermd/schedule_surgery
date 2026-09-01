@@ -69,4 +69,33 @@ describe("off-call request calendar", () => {
 
     expect(grouped.map((group) => group.residentName)).toEqual(["Jamie Adams", "Taylor Zebra"]);
   });
+
+  it("orders residents by seniority and then request timestamp", () => {
+    const early = request("early-mid", "resident-mid-early", "2026-09-04");
+    const late = request("late-mid", "resident-mid-late", "2026-09-04");
+    early.createdAt = "2026-07-01T12:00:00.000Z";
+    late.createdAt = "2026-07-02T12:00:00.000Z";
+    const grouped = groupCallOffRequestsByResident(
+      [
+        request("intern", "resident-intern", "2026-09-04"),
+        late,
+        request("senior", "resident-senior", "2026-09-04"),
+        early
+      ],
+      [
+        { id: "resident-intern", name: "Intern", trainingLevel: "PGY1" },
+        { id: "resident-mid-late", name: "Later Mid", trainingLevel: "PGY3" },
+        { id: "resident-senior", name: "Senior", trainingLevel: "PGY4" },
+        { id: "resident-mid-early", name: "Earlier Mid", trainingLevel: "PGY2" }
+      ],
+      block
+    );
+
+    expect(grouped.map((group) => group.residentId)).toEqual([
+      "resident-senior",
+      "resident-mid-early",
+      "resident-mid-late",
+      "resident-intern"
+    ]);
+  });
 });

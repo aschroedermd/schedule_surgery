@@ -25,8 +25,9 @@ import {
   isCallRestrictedRotation,
 } from "../shared/callBuilder";
 import { addDays, displayDate, parseLocalDate } from "../shared/date";
+import { getCallOffRequestSeniority } from "../shared/callOffRequests";
 import { comparePersonNames } from "../shared/names";
-import { getRotationForDate, ROTATION_BLOCK_DATES, getTodayDate } from "../shared/rotations";
+import { getRotationBlockForDate, getRotationForDate, ROTATION_BLOCK_DATES, getTodayDate } from "../shared/rotations";
 import {
   getBlockCallOffRequests,
   getCallOffRequestDates,
@@ -77,8 +78,24 @@ export function CallOffRequestForm({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!residentId) return;
+    const block = getRotationBlockForDate(date);
+    const existingPriority = priority === "priority" && block
+      ? state.callOffRequests.find((request) =>
+          request.residentId === residentId
+          && request.priority === "priority"
+          && getRotationBlockForDate(request.date)?.blockNumber === block.blockNumber
+        )
+      : undefined;
+    if (existingPriority && !window.confirm("Do you want to override your previous priority request?")) return;
     await onMutate(
-      () => submitCallOffRequest(token, { residentId, date, scope, priority, reason: reason.trim() || undefined }),
+      () => submitCallOffRequest(token, {
+        residentId,
+        date,
+        scope,
+        priority,
+        reason: reason.trim() || undefined,
+        overrideExistingPriority: Boolean(existingPriority)
+      }),
       `${priority === "priority" ? "Priority" : "Secondary"} call-off request saved`
     );
   }
@@ -89,7 +106,7 @@ export function CallOffRequestForm({
         <div>
           <p className="eyebrow">Resident preference</p>
           <h3>Request call time off</h3>
-          <p>Choose one priority and one secondary preference per block. Saving again updates that preference.</p>
+          <p>Choose one priority and one secondary preference per block. Replacing a priority request requires confirmation.</p>
         </div>
         <button type="button" className="icon-button" aria-label="Close call-off request" onClick={onClose}>×</button>
       </header>
@@ -653,9 +670,10 @@ function OffCallRequestsModal({
     () => new Map(state.residents.map((resident) => [resident.id, resident.name])),
     [state.residents]
   );
+  const residentRequestRank = new Map(residentGroups.map((group, index) => [group.residentId, index]));
   const selectedResidentNames = (selectedDate ? residentsByDate[selectedDate] ?? [] : [])
-    .map((residentId) => residentNames.get(residentId) ?? residentId)
-    .sort(comparePersonNames);
+    .sort((left, right) => (residentRequestRank.get(left) ?? Number.MAX_SAFE_INTEGER) - (residentRequestRank.get(right) ?? Number.MAX_SAFE_INTEGER))
+    .map((residentId) => residentNames.get(residentId) ?? residentId);
   const dates = getDatesInRange(block.startDate, block.endDate);
   const leadingBlanks = (parseLocalDate(block.startDate).getDay() + 6) % 7;
   const calendarCells: Array<string | undefined> = [
@@ -737,19 +755,19 @@ function OffCallRequestsModal({
         </div>
 
         <section className="off-call-resident-section" aria-label="Residents with off-call requests">
-          <header><strong>Requests by resident</strong><span>Alphabetical · {blockRequests.length} preference{blockRequests.length === 1 ? "" : "s"}</span></header>
+          <header><strong>Requests by resident</strong><span>Preference, seniority, then submission time · {blockRequests.length} preference{blockRequests.length === 1 ? "" : "s"}</span></header>
           <div className="off-call-resident-scroll">
             {residentGroups.length === 0 ? (
               <div className="off-call-empty"><CalendarDays size={20} /><span>No off-call requests for this block.</span></div>
             ) : residentGroups.map((group) => (
               <article key={group.residentId} className="off-call-resident-card">
-                <strong>{group.residentName}</strong>
+                <strong>{group.residentName} · {getCallOffRequestSeniority(group.trainingLevel).label}</strong>
                 <div>
                   {group.requests.map((request) => (
                     <span key={request.id}>
                       <i className={`call-request-priority ${request.priority}`}>{request.priority}</i>
                       <b>{formatRequestDates(request, block)}</b>
-                      <small>{request.scope === "weekend" ? "Entire weekend" : "Requested day"}{request.reason ? ` · ${request.reason}` : ""}</small>
+                      <small>{request.scope === "weekend" ? "Entire weekend" : "Requested day"} · Submitted {formatDraftTimestamp(request.createdAt)}{request.reason ? ` · ${request.reason}` : ""}</small>
                     </span>
                   ))}
                 </div>
