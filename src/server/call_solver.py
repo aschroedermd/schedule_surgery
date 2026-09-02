@@ -17,7 +17,7 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 
-ENGINE_VERSION = "cp-sat-call-builder-v3"
+ENGINE_VERSION = "cp-sat-call-builder-v4"
 
 
 def debug(message: str) -> None:
@@ -33,11 +33,14 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
     residents = problem["residents"]
     slot_by_id = {item["id"]: item for item in slots}
     resident_by_id = {item["id"]: item for item in residents}
-    variables: dict[tuple[str, str], cp_model.IntVar] = {}
+    variables: dict[tuple[str, str, str], cp_model.IntVar] = {}
 
     for resident in residents:
         for slot_id in resident["eligibleSlotIds"]:
-            variables[(resident["id"], slot_id)] = model.new_bool_var(f"x_{resident['id']}_{safe(slot_id)}")
+            for position in resident.get("eligiblePositions", [resident["position"]]):
+                variables[(resident["id"], slot_id, position)] = model.new_bool_var(
+                    f"x_{resident['id']}_{safe(slot_id)}_{safe(position)}"
+                )
     debug(f"variables={len(variables)}")
 
     conflicts: list[str] = []
@@ -45,14 +48,23 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
         slot_id = slot["id"]
         for position in ("senior", "mid-level", "intern"):
             slot_vars = [
-                variables[(resident["id"], slot_id)]
+                variables[(resident["id"], slot_id, position)]
                 for resident in residents
-                if resident["position"] == position and (resident["id"], slot_id) in variables
+                if (resident["id"], slot_id, position) in variables
             ]
             if not slot_vars:
                 conflicts.append(f"No eligible {position} resident is available for {slot['date']} {slot['shift']}.")
             else:
                 model.add_exactly_one(slot_vars)
+
+        for resident in residents:
+            resident_slot_vars = [
+                variable
+                for (resident_id, variable_slot_id, _), variable in variables.items()
+                if resident_id == resident["id"] and variable_slot_id == slot_id
+            ]
+            if len(resident_slot_vars) > 1:
+                model.add(sum(resident_slot_vars) <= 1)
 
     if conflicts:
         return infeasible_response(started, conflicts)
@@ -69,8 +81,16 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             for right_date in ordered_dates[left_index + 1 :]:
                 if abs(days_ordinal(slot_by_id[slots_by_date[left_date][0]]) - days_ordinal(slot_by_id[slots_by_date[right_date][0]])) != 1:
                     continue
-                left_vars = [variables[(resident_id, slot_id)] for slot_id in slots_by_date[left_date] if (resident_id, slot_id) in variables]
-                right_vars = [variables[(resident_id, slot_id)] for slot_id in slots_by_date[right_date] if (resident_id, slot_id) in variables]
+                left_vars = [
+                    variable
+                    for (variable_resident_id, slot_id, _), variable in variables.items()
+                    if variable_resident_id == resident_id and slot_id in slots_by_date[left_date]
+                ]
+                right_vars = [
+                    variable
+                    for (variable_resident_id, slot_id, _), variable in variables.items()
+                    if variable_resident_id == resident_id and slot_id in slots_by_date[right_date]
+                ]
                 for left in left_vars:
                     for right in right_vars:
                         model.add(left + right <= 1)
@@ -81,16 +101,16 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
         slots_by_weekend[item["weekend"]].append(item["id"])
     for weekend_slots in slots_by_weekend.values():
         chief_vars = [
-            variables[(resident["id"], slot_id)]
+            variable
             for resident in residents
-            for slot_id in weekend_slots
-            if slot_id in resident["egsChiefSlotIds"] and (resident["id"], slot_id) in variables
+            for (resident_id, slot_id, _), variable in variables.items()
+            if resident_id == resident["id"] and slot_id in weekend_slots and slot_id in resident["egsChiefSlotIds"]
         ]
         midlevel_vars = [
-            variables[(resident["id"], slot_id)]
+            variable
             for resident in residents
-            for slot_id in weekend_slots
-            if slot_id in resident["egsMidlevelSlotIds"] and (resident["id"], slot_id) in variables
+            for (resident_id, slot_id, _), variable in variables.items()
+            if resident_id == resident["id"] and slot_id in weekend_slots and slot_id in resident["egsMidlevelSlotIds"]
         ]
         for chief in chief_vars:
             for midlevel in midlevel_vars:
@@ -98,9 +118,9 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
 
     for locked in problem.get("lockedAssignments", []):
         slot_id = assignment_slot_id(locked)
-        variable = variables.get((locked["residentId"], slot_id))
+        variable = variables.get((locked["residentId"], slot_id, locked["callPosition"]))
         resident = resident_by_id.get(locked["residentId"])
-        if variable is None or resident is None or resident["position"] != locked["callPosition"]:
+        if variable is None or resident is None:
             conflicts.append(
                 f"Locked assignment {locked['date']} {locked['callPosition']} is not eligible."
             )
@@ -108,9 +128,9 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             model.add(variable == 1)
     for required in problem.get("requiredAssignments", []):
         slot_id = assignment_slot_id(required)
-        variable = variables.get((required["residentId"], slot_id))
+        variable = variables.get((required["residentId"], slot_id, required["callPosition"]))
         resident = resident_by_id.get(required["residentId"])
-        if variable is None or resident is None or resident["position"] != required["callPosition"]:
+        if variable is None or resident is None:
             conflicts.append(
                 f"Required call assignment {required['date']} {required['callPosition']} is not eligible."
             )
@@ -124,15 +144,17 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
     used: dict[str, cp_model.IntVar] = {}
     fairness_unassigned: list[Any] = []
     fairness_deviation: list[Any] = []
+    three_unit_overload: list[Any] = []
     reserve_units: list[Any] = []
 
     max_block_units = sum(item["units"] for item in slots)
     for resident in residents:
         resident_id = resident["id"]
         resident_vars = [
-            (variables[(resident_id, item["id"])], item["units"])
+            (variable, item["units"])
             for item in slots
-            if (resident_id, item["id"]) in variables
+            for (variable_resident_id, slot_id, _), variable in variables.items()
+            if variable_resident_id == resident_id and slot_id == item["id"]
         ]
         load = model.new_int_var(0, max_block_units, f"load_{resident_id}")
         model.add(load == sum(variable * units for variable, units in resident_vars))
@@ -145,6 +167,10 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             model.add(resident_used == 0)
         used[resident_id] = resident_used
 
+        over_two = model.new_int_var(0, max_block_units, f"over_two_{resident_id}")
+        model.add(over_two >= load - 2)
+        three_unit_overload.append(over_two)
+
         if resident["regularPool"]:
             fairness_unassigned.append(1 - resident_used)
             under = model.new_int_var(0, max_block_units, f"under_{resident_id}")
@@ -156,6 +182,18 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             reserve_units.append(load)
 
     objectives.append(("fairness-participation", "Regular-pool residents without call", sum(fairness_unassigned)))
+    objectives.append(("fairness-max-two-units", "Call equivalents beyond two per resident", sum(three_unit_overload)))
+
+    senior_midlevel_terms = [
+        variable
+        for (resident_id, _, position), variable in variables.items()
+        if position == "mid-level" and resident_by_id[resident_id]["position"] == "senior"
+    ]
+    objectives.append((
+        "senior-midlevel-coverage",
+        "PGY-4/5 assignments covering mid-level call",
+        sum(senior_midlevel_terms),
+    ))
     objectives.append(("fairness-block-load", "Call units outside the achievable block range", sum(fairness_deviation)))
 
     historical_ranges: list[Any] = []
@@ -182,11 +220,21 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
     trauma_terms: list[Any] = []
     for resident in residents:
         trauma_slots = [
-            slot_id for slot_id in resident["traumaChiefSlotIds"] if (resident["id"], slot_id) in variables
+            slot_id
+            for slot_id in resident["traumaChiefSlotIds"]
+            if any(resident_id == resident["id"] and variable_slot_id == slot_id for resident_id, variable_slot_id, _ in variables)
         ]
         if not trauma_slots:
             continue
-        count = sum(variables[(resident["id"], slot_id)] for slot_id in trauma_slots)
+        trauma_vars_by_slot = {
+            slot_id: [
+                variable
+                for (resident_id, variable_slot_id, _), variable in variables.items()
+                if resident_id == resident["id"] and variable_slot_id == slot_id
+            ]
+            for slot_id in trauma_slots
+        }
+        count = sum(variable for slot_vars in trauma_vars_by_slot.values() for variable in slot_vars)
         delta = model.new_int_var(0, len(trauma_slots) + 2, f"trauma_count_delta_{resident['id']}")
         model.add_abs_equality(delta, count - 2)
         trauma_terms.append(delta)
@@ -195,9 +243,11 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             if abs(days_ordinal(slot_by_id[left]) - days_ordinal(slot_by_id[right])) != 7:
                 continue
             both = model.new_bool_var(f"trauma_back_to_back_{resident['id']}_{right}")
-            model.add(both <= variables[(resident["id"], left)])
-            model.add(both <= variables[(resident["id"], right)])
-            model.add(both >= variables[(resident["id"], left)] + variables[(resident["id"], right)] - 1)
+            left_assigned = sum(trauma_vars_by_slot[left])
+            right_assigned = sum(trauma_vars_by_slot[right])
+            model.add(both <= left_assigned)
+            model.add(both <= right_assigned)
+            model.add(both >= left_assigned + right_assigned - 1)
             trauma_terms.append(both)
     objectives.append(("trauma-chief", "Trauma-chief Friday target violations", sum(trauma_terms)))
     objectives.append(("approved-unavailable", "Approved unavailable violations", 0))
@@ -214,7 +264,11 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
     for resident in residents:
         resident_id = resident["id"]
         for date, date_slot_ids in slots_by_date.items():
-            date_vars = [variables[(resident_id, slot_id)] for slot_id in date_slot_ids if (resident_id, slot_id) in variables]
+            date_vars = [
+                variable
+                for (variable_resident_id, slot_id, _), variable in variables.items()
+                if variable_resident_id == resident_id and slot_id in date_slot_ids
+            ]
             if len(date_vars) < 2:
                 continue
             excess = model.new_int_var(0, len(date_vars) - 1, f"same_day_split_{resident_id}_{date}")
@@ -226,9 +280,9 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
     for resident in residents:
         for weekend, weekend_slot_ids in slots_by_weekend.items():
             weekend_vars = [
-                variables[(resident["id"], slot_id)]
-                for slot_id in weekend_slot_ids
-                if (resident["id"], slot_id) in variables
+                variable
+                for (resident_id, slot_id, _), variable in variables.items()
+                if resident_id == resident["id"] and slot_id in weekend_slot_ids
             ]
             if len(weekend_vars) < 2:
                 continue
@@ -248,11 +302,18 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             for slot_id in weekend_slot_ids:
                 date = slot_by_id[slot_id]["date"]
                 service = resident["serviceByDate"].get(date, "")
-                if service and (resident["id"], slot_id) in variables:
+                if service and any(
+                    resident_id == resident["id"] and variable_slot_id == slot_id
+                    for resident_id, variable_slot_id, _ in variables
+                ):
                     slots_by_service[service].append(slot_id)
             for service, service_slot_ids in slots_by_service.items():
                 service_used = model.new_bool_var(f"service_{safe(service)}_{resident['id']}_{weekend}")
-                service_vars = [variables[(resident["id"], slot_id)] for slot_id in service_slot_ids]
+                service_vars = [
+                    variable
+                    for (resident_id, slot_id, _), variable in variables.items()
+                    if resident_id == resident["id"] and slot_id in service_slot_ids
+                ]
                 model.add(sum(service_vars) >= service_used)
                 model.add(sum(service_vars) <= len(service_vars) * service_used)
                 service_resident_vars[service].append(service_used)
@@ -284,13 +345,13 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
             slot_id = slot["id"]
             for position in ("senior", "mid-level", "intern"):
                 baseline_resident = baseline_by_slot.get((slot_id, position))
-                baseline_var = variables.get((baseline_resident, slot_id)) if baseline_resident else None
+                baseline_var = variables.get((baseline_resident, slot_id, position)) if baseline_resident else None
                 change_terms.append(1 - baseline_var if baseline_var is not None else 1)
         objectives.append(("minimum-change", "Assignments changed from the current draft", sum(change_terms)))
 
     tie_break_terms = [
         variable * int(resident_by_id[resident_id]["tieBreakBySlot"][slot_id])
-        for (resident_id, slot_id), variable in variables.items()
+        for (resident_id, slot_id, _), variable in variables.items()
     ]
     objectives.append(("stable-tie-break", "Stable equal-score tie break", sum(tie_break_terms)))
     debug(f"objectives built={len(objectives)}")
@@ -299,7 +360,7 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = int(problem.get("randomSeed", 37))
     objective_results: list[dict[str, Any]] = []
-    best_values: dict[tuple[str, str], int] | None = None
+    best_values: dict[tuple[str, str, str], int] | None = None
     all_optimal = True
 
     for key, label, expression in objectives:
@@ -334,13 +395,13 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
         return infeasible_response(started, ["The solver did not find a feasible schedule within the time limit."], "unknown")
 
     assignments = []
-    for (resident_id, slot_id), value in best_values.items():
+    for (resident_id, slot_id, position), value in best_values.items():
         if value != 1:
             continue
         slot = slot_by_id[slot_id]
         assignments.append({
             "date": slot["date"],
-            "callPosition": resident_by_id[resident_id]["position"],
+            "callPosition": position,
             "residentId": resident_id,
             **({"shift": "holiday-day"} if slot["shift"] == "holiday-day" else {}),
         })
@@ -359,13 +420,13 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
 
 def assignment_terms(
     residents: list[dict[str, Any]],
-    variables: dict[tuple[str, str], cp_model.IntVar],
+    variables: dict[tuple[str, str, str], cp_model.IntVar],
     field: str,
 ) -> list[cp_model.IntVar]:
     return [
         variable
         for resident in residents
-        for (resident_id, slot_id), variable in variables.items()
+        for (resident_id, slot_id, _), variable in variables.items()
         if resident_id == resident["id"] and slot_id.split(":", 1)[0] in resident[field]
     ]
 
@@ -374,7 +435,7 @@ def append_call_off_request_objectives(
     objectives: list[tuple[str, str, Any]],
     priority: str,
     tiers: list[dict[str, Any]],
-    variables: dict[tuple[str, str], cp_model.IntVar],
+    variables: dict[tuple[str, str, str], cp_model.IntVar],
     slot_by_id: dict[str, dict[str, Any]],
 ) -> None:
     if not tiers:
@@ -387,7 +448,7 @@ def append_call_off_request_objectives(
             dates = set(request["dates"])
             expression = sum(
                 variable
-                for (resident_id, slot_id), variable in variables.items()
+                for (resident_id, slot_id, _), variable in variables.items()
                 if resident_id == request["residentId"] and slot_by_id[slot_id]["date"] in dates
             )
             request_terms.append((expression, int(request["timestampWeight"])))

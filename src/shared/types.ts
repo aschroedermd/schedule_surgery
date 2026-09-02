@@ -108,6 +108,7 @@ export type CallBuilderRule =
   | "coverage"
   | "builder-constraint"
   | "fairness"
+  | "senior-midlevel-coverage"
   | "consecutive-days"
   | "egs-chief"
   | "egs-midlevel"

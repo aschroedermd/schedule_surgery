@@ -36,7 +36,10 @@ interface HardEligibility {
 }
 
 export const CALL_BUILDER_GOALS = [
-  "Fairness: each available regular call-pool resident should receive one Saturday or two Friday/Sunday shifts, with absolutely no call on consecutive days.",
+  "Every available regular call-pool resident should participate, with absolutely no call on consecutive days.",
+  "Avoid assigning any resident 36 hours of call (three call equivalents) in the block.",
+  "PGY-4/5 residents stay in senior call unless mid-level coverage is needed to avoid an unfair three-unit-or-greater call burden.",
+  "Balance the remaining block load toward one Saturday or two Friday/Sunday shifts per regular call-pool resident.",
   "Residents rotating at NRV take Sunday call only.",
   "EGS chiefs take Sunday call only.",
   "EGS mid-level residents do not take Saturdays or share a call weekend with the EGS chief.",
@@ -105,6 +108,21 @@ export function getCallBuilderResidentsForPosition(state: PlannerState, callPosi
     .sort((left, right) => comparePersonNames(left.name, right.name));
 }
 
+export function canResidentFillCallPosition(resident: Pick<Resident, "trainingLevel">, callPosition: CallPosition): boolean {
+  const residentPosition = getCallPositionForResident(resident);
+  return residentPosition === callPosition || (residentPosition === "senior" && callPosition === "mid-level");
+}
+
+export function getCallBuilderEligibleResidentsForPosition(state: PlannerState, callPosition: CallPosition): Resident[] {
+  return state.residents
+    .filter((resident) => isBaseCallPoolResident(resident) && canResidentFillCallPosition(resident, callPosition))
+    .sort((left, right) => {
+      const leftCrossCover = Number(getCallPositionForResident(left) !== callPosition);
+      const rightCrossCover = Number(getCallPositionForResident(right) !== callPosition);
+      return leftCrossCover - rightCrossCover || comparePersonNames(left.name, right.name);
+    });
+}
+
 export function generateCallSchedule(
   state: PlannerState,
   blockNumber: number,
@@ -126,7 +144,7 @@ export function generateCallSchedule(
 
   for (const slot of slots) {
     if (assignments.some((assignment) => assignmentSlotKey(assignment) === assignmentSlotKey(slot))) continue;
-    const candidates = getCallBuilderResidentsForPosition(state, slot.callPosition)
+    const candidates = getCallBuilderEligibleResidentsForPosition(state, slot.callPosition)
       .filter((resident) => isHardEligibleForCallAssignment(resident, slot.date).eligible)
       .filter((resident) => !isResidentForcedOff(builderConstraints, resident.id, slot.date))
       .map((resident) => ({ resident, cost: getCandidateCost(state, blockNumber, assignments, slot, resident) }))
@@ -198,7 +216,7 @@ export function evaluateCallSchedule(
     }
 
     const expectedPosition = getCallPositionForResident(resident);
-    if (expectedPosition !== assignment.callPosition) {
+    if (!canResidentFillCallPosition(resident, assignment.callPosition)) {
       addIssue(
         accumulator,
         "error",
@@ -208,6 +226,17 @@ export function evaluateCallSchedule(
         assignment.date,
         [resident.id],
         `position:${key}:${resident.id}`
+      );
+    } else if (expectedPosition === "senior" && assignment.callPosition === "mid-level") {
+      addIssue(
+        accumulator,
+        "warning",
+        "senior-midlevel-coverage",
+        `${resident.name} is providing exceptional chief cross-coverage for the mid-level call position.`,
+        6_000,
+        assignment.date,
+        [resident.id],
+        `senior-midlevel:${key}:${resident.id}`
       );
     }
 
@@ -344,7 +373,7 @@ export function suggestCallScheduleMoves(
   for (let index = 0; index < assignments.length; index += 1) {
     const assignment = assignments[index];
     const currentResident = state.residents.find((resident) => resident.id === assignment.residentId);
-    for (const resident of getCallBuilderResidentsForPosition(state, assignment.callPosition)) {
+    for (const resident of getCallBuilderEligibleResidentsForPosition(state, assignment.callPosition)) {
       if (resident.id === assignment.residentId || !isHardEligibleForCallAssignment(resident, assignment.date).eligible) continue;
       if (assignments.some((item, itemIndex) => itemIndex !== index
         && item.date === assignment.date
@@ -485,7 +514,7 @@ function optimizeAssignments(
     for (let index = 0; index < assignments.length; index += 1) {
       const assignment = assignments[index];
       if (isRequiredBuilderAssignment(builderConstraints, assignment)) continue;
-      for (const resident of getCallBuilderResidentsForPosition(state, assignment.callPosition)) {
+      for (const resident of getCallBuilderEligibleResidentsForPosition(state, assignment.callPosition)) {
         if (resident.id === assignment.residentId || !isHardEligibleForCallAssignment(resident, assignment.date).eligible) continue;
         if (isResidentForcedOff(builderConstraints, resident.id, assignment.date)) continue;
         if (assignments.some((item, itemIndex) => itemIndex !== index
@@ -571,6 +600,7 @@ function getCandidateCost(
   let cost = (Math.abs(unitsAfter - TARGET_CALL_UNITS) - Math.abs(unitsBefore - TARGET_CALL_UNITS)) * 12_000;
   if (unitsBefore === 0 && unitsAfter > 0) cost -= NO_CALL_FAIRNESS_PENALTY;
   if (unitsAfter > TARGET_CALL_UNITS) cost += (unitsAfter - TARGET_CALL_UNITS) * 20_000;
+  if (getCallPositionForResident(resident) === "senior" && slot.callPosition === "mid-level") cost += 6_000;
 
   const service = getResidentService(resident, slot.date);
   const weekendAnchor = getCallBuilderWeekendAnchor(slot.date);
@@ -1173,6 +1203,7 @@ function sortIssues(issues: CallBuilderIssue[]): CallBuilderIssue[] {
     coverage: 0,
     "builder-constraint": 0,
     fairness: 1,
+    "senior-midlevel-coverage": 1,
     "consecutive-days": 1,
     "egs-chief": 2,
     "egs-midlevel": 3,

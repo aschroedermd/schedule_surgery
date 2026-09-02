@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../server/sampleData";
 import {
   CALL_BUILDER_GOALS,
+  canResidentFillCallPosition,
   evaluateCallSchedule,
   generateCallSchedule,
+  getCallBuilderEligibleResidentsForPosition,
   getCallBuilderDates,
   getCallBuilderShiftsForDate,
   getCallHolidayName,
@@ -30,7 +32,7 @@ describe("resident call builder", () => {
     for (const assignment of result.assignments) {
       const resident = state.residents.find((candidate) => candidate.id === assignment.residentId)!;
       const service = getRotationForBlock(resident, 3)?.service.toLowerCase() ?? "";
-      expect(getCallPositionForResident(resident)).toBe(assignment.callPosition);
+      expect(canResidentFillCallPosition(resident, assignment.callPosition)).toBe(true);
       expect(service).not.toMatch(/scc|transplant|burn|nfloat|night float/);
     }
 
@@ -47,13 +49,43 @@ describe("resident call builder", () => {
   });
 
   it("publishes the revised hierarchy in the requested order", () => {
-    expect(CALL_BUILDER_GOALS).toHaveLength(12);
+    expect(CALL_BUILDER_GOALS).toHaveLength(15);
     expect(CALL_BUILDER_GOALS[0]).toContain("absolutely no call on consecutive days");
-    expect(CALL_BUILDER_GOALS[1]).toContain("NRV");
-    expect(CALL_BUILDER_GOALS[6]).toContain("PGY-4/5");
-    expect(CALL_BUILDER_GOALS[7]).toContain("twice in the same weekend");
-    expect(CALL_BUILDER_GOALS[8]).toContain("vacation");
-    expect(CALL_BUILDER_GOALS[11]).toContain("same seniority-then-submission-time hierarchy");
+    expect(CALL_BUILDER_GOALS[1]).toContain("36 hours");
+    expect(CALL_BUILDER_GOALS[2]).toContain("PGY-4/5 residents stay in senior call");
+    expect(CALL_BUILDER_GOALS[3]).toContain("Balance the remaining block load");
+    expect(CALL_BUILDER_GOALS[4]).toContain("NRV");
+    expect(CALL_BUILDER_GOALS[9]).toContain("PGY-4/5");
+    expect(CALL_BUILDER_GOALS[10]).toContain("twice in the same weekend");
+    expect(CALL_BUILDER_GOALS[11]).toContain("vacation");
+    expect(CALL_BUILDER_GOALS[14]).toContain("same seniority-then-submission-time hierarchy");
+  });
+
+  it("allows PGY-4/5 residents to provide exceptional mid-level cross-coverage", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const midlevelOptions = getCallBuilderEligibleResidentsForPosition(state, "mid-level");
+    const senior = midlevelOptions.find((resident) => getCallPositionForResident(resident) === "senior")!;
+    expect(senior).toBeTruthy();
+    expect(getCallBuilderEligibleResidentsForPosition(state, "senior").every((resident) =>
+      getCallPositionForResident(resident) === "senior"
+    )).toBe(true);
+
+    const generated = generateCallSchedule(state, 3);
+    const target = generated.assignments.find((assignment) =>
+      assignment.callPosition === "mid-level"
+      && !generated.assignments.some((other) =>
+        other.residentId === senior.id
+        && other.date === assignment.date
+        && (other.shift ?? "regular") === (assignment.shift ?? "regular")
+      )
+    )!;
+    const edited = generated.assignments.map((assignment) => assignment === target ? { ...assignment, residentId: senior.id } : assignment);
+    const evaluation = evaluateCallSchedule(state, 3, edited);
+
+    expect(evaluation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "warning", rule: "senior-midlevel-coverage", residentIds: [senior.id] })
+    ]));
+    expect(evaluation.issues.some((issue) => issue.severity === "error" && issue.message.includes("cannot fill the mid-level"))).toBe(false);
   });
 
   it("adds weekday holidays as separate 12-hour day shifts without changing weekend call", () => {

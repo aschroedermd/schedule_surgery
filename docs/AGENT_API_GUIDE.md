@@ -83,6 +83,8 @@ curl -X POST "$BASE_URL/api/call-builder/drafts" \
 
 Set or clear the block's default draft with `PATCH /api/call-builder/drafts/{id}` and `{ "isMain": true }` or `{ "isMain": false }`. Setting one draft as main automatically clears the prior main draft in that block. All Call Builder users can view, load, and select a main draft. Only the exact `createdByUsername` may call `DELETE /api/call-builder/drafts/{id}`; an admin or admin API key cannot delete another user's draft.
 
+PGY-4/5 residents are valid for both `senior` and `mid-level` Call Builder assignments. This is exceptional cross-coverage: the solver first minimizes burdens above two call equivalents, then minimizes chiefs used in mid-level slots. A builder may submit or lock a chief manually with `callPosition: "mid-level"`; PGY-1/2/3 residents cannot cross into another position.
+
 `POST /api/call-off-requests` stores at most one priority and one secondary preference per resident per rotation block. A resident may retain requests in multiple blocks. Replacing an existing priority request requires `overrideExistingPriority: true` and gives the replacement a new submission timestamp. Call scheduling ranks priority before secondary, then PGY-4/5 before PGY-2/3 before PGY-1, then earlier submissions within a seniority group.
 
 ### List users or change non-admin privileges

@@ -15,6 +15,7 @@ import {
   evaluateCallSchedule,
   getCallBuilderBlock,
   getCallBuilderDates,
+  getCallBuilderEligibleResidentsForPosition,
   getCallBuilderShiftsForDate,
   getCallBuilderSlots,
   getCallHolidayName,
@@ -815,7 +816,7 @@ function CallBuilderWeekend({
                   const assignment = assignments.find((item) => item.date === date
                     && (item.shift ?? "regular") === shift
                     && item.callPosition === callPosition);
-                  const residents = getCallBuilderResidentsForPosition(state, callPosition);
+                  const residents = getCallBuilderEligibleResidentsForPosition(state, callPosition);
                   const slot = { date, callPosition, ...(shift === "holiday-day" ? { shift } : {}) };
                   const locked = lockedSlotKeys.has(callSlotKey(slot));
                   return (
@@ -826,7 +827,7 @@ function CallBuilderWeekend({
                           <option value="">Unassigned</option>
                           {residents.map((resident) => (
                             <option key={resident.id} value={resident.id}>
-                              {resident.name} · {getRotationForDate(resident, date)?.service ?? "no rotation"}
+                              {resident.name} · {getRotationForDate(resident, date)?.service ?? "no rotation"}{callPosition === "mid-level" && getCallPositionForResident(resident) === "senior" ? " · chief cross-cover" : ""}
                             </option>
                           ))}
                         </select>

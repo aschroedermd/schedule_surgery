@@ -157,6 +157,7 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
       return {
         id: resident.id,
         position,
+        eligiblePositions: position === "senior" ? ["senior", "mid-level"] : [position],
         regularPool: isRegularPoolResidentForState(state, resident, blockNumber),
         targetMinUnits: target.min,
         targetMaxUnits: target.max,

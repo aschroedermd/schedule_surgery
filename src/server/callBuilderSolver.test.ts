@@ -11,6 +11,13 @@ import { getCallBuilderSlots, getCallBuilderWeekendAnchor, getCallPositionForRes
 import { parseLocalDate } from "../shared/date";
 
 describe("call-off request solver hierarchy", () => {
+  it("makes senior residents eligible for exceptional mid-level coverage", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const senior = buildSolverProblem(state, 3).residents.find((resident) => resident.position === "senior")!;
+
+    expect(senior.eligiblePositions).toEqual(["senior", "mid-level"]);
+  });
+
   it("ranks seniority groups before timestamps and earlier requests within a group", () => {
     const state = createInitialState(new Date("2026-08-30T12:00:00"));
     const callResidents = state.residents.filter((resident) => getCallPositionForResident(resident));
@@ -56,7 +63,7 @@ const solverAvailable = fs.existsSync(localPython);
 
 describe.runIf(solverAvailable)("CP-SAT call builder", () => {
   it("proves a fair, valid block-three schedule without arbitrary search passes", async () => {
-    process.env.CALL_BUILDER_SOLVER_TIME_SECONDS = "1.5";
+    process.env.CALL_BUILDER_SOLVER_TIME_SECONDS = "2.5";
     const state = createInitialState(new Date("2026-08-30T12:00:00"));
     const started = performance.now();
     const result = await solveCallSchedule(state, 3);
@@ -69,11 +76,34 @@ describe.runIf(solverAvailable)("CP-SAT call builder", () => {
     expect(result.assignments).toHaveLength(getCallBuilderSlots(3).length);
     expect(result.hardViolationCount).toBe(0);
     expect(result.fairnessPercent).toBeGreaterThanOrEqual(80);
-    expect(result.solverSummary?.objectives.slice(0, 2)).toEqual([
+    expect(result.solverSummary?.objectives.slice(0, 3)).toEqual([
       expect.objectContaining({ key: "fairness-participation", value: 0 }),
-      expect.objectContaining({ key: "fairness-block-load", value: 5 })
+      expect.objectContaining({ key: "fairness-max-two-units" }),
+      expect.objectContaining({ key: "senior-midlevel-coverage" })
     ]);
-    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(performance.now() - started).toBeLessThan(4_000);
+  }, 10_000);
+
+  it("accepts a locked PGY-4/5 resident in a mid-level call slot", async () => {
+    process.env.CALL_BUILDER_SOLVER_TIME_SECONDS = "2";
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const problem = buildSolverProblem(state, 3);
+    const senior = problem.residents.find((resident) => resident.position === "senior" && resident.eligibleSlotIds.length > 0)!;
+    const slot = problem.slots.find((candidate) => candidate.id === senior.eligibleSlotIds[0])!;
+    const locked = {
+      date: slot.date,
+      callPosition: "mid-level" as const,
+      residentId: senior.id,
+      ...(slot.shift === "holiday-day" ? { shift: slot.shift } : {})
+    };
+
+    const result = await solveCallSchedule(state, 3, { lockedAssignments: [locked] });
+
+    expect(result.hardViolationCount).toBe(0);
+    expect(result.assignments).toContainEqual(locked);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: "senior-midlevel-coverage", residentIds: [senior.id] })
+    ]));
   }, 10_000);
 
   it("handles a block spanning daylight-saving time and preserves manual locks", async () => {
