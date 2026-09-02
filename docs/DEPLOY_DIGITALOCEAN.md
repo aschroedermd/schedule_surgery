@@ -268,20 +268,24 @@ connection.
 
 To trigger a rebuild programmatically, call GitHub's workflow-dispatch API
 with a fine-grained personal access token that has **Actions: write** access to
-this repository:
+this repository. Supply a unique request id so an API caller can find and
+monitor the exact run it created:
 
 ```bash
 curl --fail-with-body -X POST \
   -H "Accept: application/vnd.github+json" \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
   https://api.github.com/repos/OWNER/REPO/actions/workflows/deploy-production.yml/dispatches \
-  -d '{"ref":"main"}'
+  -d '{"ref":"main","inputs":{"request_id":"agent-20260902T120000Z"}}'
 ```
 
-The request returns `204 No Content` when GitHub accepts the deployment. Its
-progress and rebuild output are available in the workflow run in GitHub
-Actions.
+The request returns `200 OK` with the workflow run id and URLs when GitHub
+accepts the deployment. That response does not mean the rebuild has succeeded;
+its progress and rebuild output are available in the workflow run in GitHub
+Actions. Agents should follow the correlation, polling, failure-handling, and
+health-verification procedure in
+[AGENT_API_GUIDE.md](AGENT_API_GUIDE.md#rebuild-and-deploy-the-production-server).
 
 ## Backups
 

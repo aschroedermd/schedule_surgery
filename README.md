@@ -93,6 +93,7 @@ The separate private Git workspace opens directly as an Obsidian vault and is th
 
 - DigitalOcean deployment guide: [docs/DEPLOY_DIGITALOCEAN.md](docs/DEPLOY_DIGITALOCEAN.md)
 - API/MCP guide: [docs/API.md](docs/API.md)
+- Agent API and remote rebuild guide: [docs/AGENT_API_GUIDE.md](docs/AGENT_API_GUIDE.md#rebuild-and-deploy-the-production-server)
 - Private wiki ingestion and synchronization: [docs/WIKI_INGESTION.md](docs/WIKI_INGESTION.md)
 - OpenAPI is served at `/api/openapi.json` when the app is running.
 - Configure the QGenda poller with `QGENDA_SYNC_ENABLED`, `QGENDA_PUBLIC_LINK_URL`, and the optional sync-window/time-zone variables documented in [docs/API.md](docs/API.md#attending-coverage-and-qgenda).

@@ -1,10 +1,17 @@
 name: Deploy production
+run-name: Deploy production (${{ inputs.request_id || github.sha }})
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: Correlation ID used by API callers to find this deployment run
+        required: true
+        default: manual
+        type: string
 
 concurrency:
   group: production-deployment

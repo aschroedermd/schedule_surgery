@@ -18,6 +18,67 @@ Contract sources: use the live `GET /api/openapi.json` response as the authorita
 - If API keys are configured, use the admin API key only for intentional writes and the viewer API key for read-only tools. Otherwise use browser-session bearer tokens.
 - After OR, clinic, resident-assignment, or rounding writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings. After attending-call writes, verify with a ranged `GET /api/attending-coverage` and inspect `effectiveCoverage`.
 
+## Rebuild And Deploy The Production Server
+
+Deployment uses the GitHub Actions API as a separate control plane. Do not look for or add a rebuild endpoint under the app's `/api` routes: the process being replaced cannot reliably supervise its own deployment, and exposing a shell-capable route would unnecessarily increase risk. The checked-in `.github/workflows/deploy-production.yml` workflow connects as a restricted `deploy` user and may run only the root-owned `/usr/local/bin/rebuild` command. It also runs automatically after a push to `main`.
+
+An agent may trigger a rebuild when the user explicitly asks it to deploy or rebuild. It needs these secrets/configuration from its private runtime, never from this repository or planner state:
+
+```text
+GITHUB_TOKEN=<fine-grained token with Actions: write for this repository>
+GITHUB_REPOSITORY=OWNER/REPO
+BASE_URL=https://schedule.yourdomain.com
+```
+
+First create a unique correlation id and dispatch the workflow. Keep the same id until the deployment reaches a terminal state:
+
+```bash
+DEPLOY_REQUEST_ID="agent-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+
+DISPATCH_RESPONSE="$(curl --fail-with-body -X POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/deploy-production.yml/dispatches" \
+  --data-binary "$(jq -nc --arg request_id "$DEPLOY_REQUEST_ID" \
+    '{ref:"main",inputs:{request_id:$request_id}}')")"
+
+RUN_ID="$(jq -er '.workflow_run_id' <<<"$DISPATCH_RESPONSE")"
+RUN_URL="$(jq -er '.html_url' <<<"$DISPATCH_RESPONSE")"
+```
+
+`200 OK` returns the new `workflow_run_id`, API `run_url`, and browser `html_url`; it does not mean the rebuild succeeded. A network timeout leaves the result unknown, so do not immediately dispatch again. Find the run with the existing correlation id first:
+
+```bash
+curl --fail-with-body \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/deploy-production.yml/runs?event=workflow_dispatch&branch=main&per_page=20"
+```
+
+From `workflow_runs[]`, select the entry whose `display_title` is exactly `Deploy production (<DEPLOY_REQUEST_ID>)` and retain its `id` as `RUN_ID`. GitHub may take several seconds to create the run; retry this read without sending another dispatch. The workflow serializes production deployments, so a run may remain `queued` while an earlier deploy finishes.
+
+Poll the selected run, with reasonable pauses, until `status` is `completed`:
+
+```bash
+curl --fail-with-body \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+```
+
+Treat the rebuild as successful only when `status` is `completed` and `conclusion` is `success`. On failure, report `conclusion` and `html_url`; inspect step-level results with `GET /repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs`. Do not expose the GitHub token, SSH material, environment secrets, or raw logs containing secrets.
+
+Finally, verify the newly served application independently through HTTPS:
+
+```bash
+curl --fail-with-body "$BASE_URL/api/healthz"
+```
+
+The expected body is `{ "ok": true }`. A successful workflow plus a failed health check is a failed verification, not a successful deployment. Report the correlated GitHub run URL and health-check result to the user. The one-time SSH key, pinned host key, GitHub environment, and restricted sudo setup are documented in [DEPLOY_DIGITALOCEAN.md](DEPLOY_DIGITALOCEAN.md#remote-deploys-with-github-actions).
+
 ## Authentication
 
 External tools can pass an API key when one is configured:
