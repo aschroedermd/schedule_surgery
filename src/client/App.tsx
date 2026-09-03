@@ -525,11 +525,17 @@ export function App() {
     const linkedResident = findResidentForSession(state, session);
     if (!linkedResident) return;
 
-    const newAwardIds = state.goldStarAwards
-      .filter((award) => award.recipientResidentId === linkedResident.id)
-      .map((award) => award.id)
-      .filter((awardId) => !hasSeenGoldStarAward(session.username, awardId));
+    const newAwardIds = getUnseenGoldStarAwardIds(
+      state.goldStarAwards
+        .filter((award) => award.recipientResidentId === linkedResident.id)
+        .map((award) => award.id),
+      getSeenGoldStarAwardIds(session.username)
+    );
     if (newAwardIds.length) {
+      // Record the complete delivery before showing it. This makes a delivery
+      // a once-per-login-boundary event, even if the user signs out or reloads
+      // before closing the celebration.
+      markGoldStarAwardsSeen(session.username, newAwardIds);
       setGoldStarCelebration({ kind: "received", awardIds: newAwardIds });
     }
   }, [session?.mustChangePassword, session?.token, session?.username, state]);
@@ -5647,8 +5653,9 @@ function getSelectedServiceStorageKey(username?: string): string {
   return username ? `plannerSelectedServiceLine:${normalizeUsername(username)}` : "plannerSelectedServiceLine";
 }
 
-function hasSeenGoldStarAward(username: string, awardId: string): boolean {
-  return getSeenGoldStarAwardIds(username).includes(awardId);
+export function getUnseenGoldStarAwardIds(awardIds: string[], seenAwardIds: string[]): string[] {
+  const seen = new Set(seenAwardIds);
+  return [...new Set(awardIds)].filter((awardId) => !seen.has(awardId));
 }
 
 function markGoldStarAwardsSeen(username: string, awardIds: string[]) {

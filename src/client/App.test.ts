@@ -5,6 +5,7 @@ import {
   getAttendingNightScheduleForDate,
   getAttendingWeeklyScheduleForDate,
   getAccountRoleLabel,
+  getUnseenGoldStarAwardIds,
   normalizeQuickCaseDuration,
   orderAssignmentResidents,
   shiftEndTime,
@@ -187,6 +188,16 @@ describe("schedule load coordination", () => {
   it("rejects an older response after a newer load starts", () => {
     expect(shouldApplyScheduleLoad(1, 2, "Berry", "Berry")).toBe(false);
     expect(shouldApplyScheduleLoad(2, 2, "Berry", "Berry")).toBe(true);
+  });
+});
+
+describe("gold-star delivery receipts", () => {
+  it("only returns awards that have not already been delivered to the account", () => {
+    expect(getUnseenGoldStarAwardIds(["star_1", "star_1", "star_2"], ["star_1"])).toEqual(["star_2"]);
+  });
+
+  it("returns a newly awarded star after the prior set was delivered", () => {
+    expect(getUnseenGoldStarAwardIds(["star_1", "star_2"], ["star_1"])).toEqual(["star_2"]);
   });
 });
 
