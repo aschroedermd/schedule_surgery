@@ -76,10 +76,14 @@ describe("planner navigation", () => {
     expect(tabIds(userTabs)).not.toContain("activity");
   });
 
-  it("shows Call Builder only to admins and specifically privileged users", () => {
-    expect(tabIds(getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true }))).toContain("call-builder");
-    expect(tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: true, pendingCoverageRequestCount: 0, isAdmin: false }))).toContain("call-builder");
-    expect(tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: false, pendingCoverageRequestCount: 0, isAdmin: false }))).not.toContain("call-builder");
+  it("shows the Call Builder and Schedule Editor only to admins and advanced editors", () => {
+    const adminTabs = tabIds(getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true }));
+    const advancedTabs = tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: true, pendingCoverageRequestCount: 0, isAdmin: false }));
+    const basicTabs = tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: false, pendingCoverageRequestCount: 0, isAdmin: false }));
+
+    expect(adminTabs).toEqual(expect.arrayContaining(["call-builder", "schedule"]));
+    expect(advancedTabs).toEqual(expect.arrayContaining(["call-builder", "schedule"]));
+    expect(basicTabs).not.toEqual(expect.arrayContaining(["call-builder", "schedule"]));
   });
 
   it("keeps the responsive navigation groups presentation-only", () => {
@@ -100,9 +104,9 @@ describe("planner navigation", () => {
 
 describe("resident identity and person ordering", () => {
   it("shows residents and medical students instead of the technical viewer role", () => {
-    expect(getAccountRoleLabel("viewer", { trainingLevel: "PGY3" })).toBe("Resident · PGY3");
-    expect(getAccountRoleLabel("viewer")).toBe("Resident");
-    expect(getAccountRoleLabel("medical-student", { trainingLevel: "Medical Student" })).toBe("Medical Student");
+    expect(getAccountRoleLabel("resident", { trainingLevel: "PGY3" })).toBe("Resident · PGY3");
+    expect(getAccountRoleLabel("resident")).toBe("Resident");
+    expect(getAccountRoleLabel("student", { trainingLevel: "Medical Student" })).toBe("Student");
   });
 
   it("puts the signed-in resident first, then the dated team, then other residents by last name", () => {

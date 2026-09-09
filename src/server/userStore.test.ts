@@ -18,6 +18,44 @@ async function makeStore(): Promise<{ filePath: string; store: FileUserStore }> 
 }
 
 describe("file user store", () => {
+  it("creates resident accounts with view-only defaults", async () => {
+    const { store } = await makeStore();
+
+    const created = await store.createUser({ username: "newresident", password: "safe-password" });
+
+    expect(created.user).toEqual(expect.objectContaining({
+      role: "resident",
+      canBuildCall: false,
+      servicePrivileges: expect.objectContaining({ ICU: "view", Davies: "view", Berry: "view" })
+    }));
+  });
+
+  it("limits advanced editor access to resident and attending accounts", async () => {
+    const { store } = await makeStore();
+
+    const resident = await store.createUser({ username: "advancedresident", role: "resident", password: "safe-password", canBuildCall: true });
+    const attending = await store.createUser({ username: "advancedattending", role: "attending", attendingId: "att_1", password: "safe-password", canBuildCall: true });
+    const student = await store.createUser({ username: "studentaccount", role: "student", password: "safe-password", canBuildCall: true });
+
+    expect(resident.user.canBuildCall).toBe(true);
+    expect(attending.user.canBuildCall).toBe(true);
+    expect(student.user.canBuildCall).toBe(false);
+  });
+
+  it("migrates legacy viewer and medical-student roles", async () => {
+    const { filePath, store } = await makeStore();
+    await store.createUser({ username: "legacyresident", password: "safe-password" });
+    await store.createUser({ username: "legacystudent", role: "student", password: "safe-password" });
+    const data = JSON.parse(await fs.readFile(filePath, "utf8")) as { users: Array<{ username: string; role: string }> };
+    data.users.find((user) => user.username === "legacyresident")!.role = "viewer";
+    data.users.find((user) => user.username === "legacystudent")!.role = "medical-student";
+    await fs.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
+
+    const migrated = new FileUserStore(filePath);
+    await expect(migrated.getUser("legacyresident")).resolves.toEqual(expect.objectContaining({ role: "resident" }));
+    await expect(migrated.getUser("legacystudent")).resolves.toEqual(expect.objectContaining({ role: "student" }));
+  });
+
   it("authenticates a username with one extra alphabetic middle initial", async () => {
     const { store } = await makeStore();
     await store.createUser({ username: "jrudderow", password: "correct-password" });

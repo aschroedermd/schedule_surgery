@@ -7,7 +7,7 @@ import { SessionUser } from "../shared/types";
 const user: SessionUser = {
   username: "cblue",
   displayName: "Christian Blue",
-  role: "viewer",
+  role: "resident",
   servicePrivileges: { Davies: "view" },
   canAddContacts: false,
   canBuildCall: false,

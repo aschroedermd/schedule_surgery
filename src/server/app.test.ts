@@ -114,6 +114,40 @@ describe("planner API", () => {
       .expect(403);
   });
 
+  it("allows advanced editors to update resident schedules but not resident profiles", async () => {
+    const initialState = createInitialState();
+    const target = initialState.residents[0];
+    const app = createApp(new MemoryStateStore(initialState));
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    await request(app)
+      .patch("/api/users/cblue")
+      .set("authorization", `Bearer ${adminToken}`)
+      .send({ canBuildCall: true })
+      .expect(200);
+    const advancedToken = await loginOnApp(app, "cblue");
+
+    const scheduleResponse = await request(app)
+      .patch(`/api/entities/residents/${target.id}`)
+      .set("authorization", `Bearer ${advancedToken}`)
+      .send({
+        vacation: [{ id: "vac_test", startDate: "2026-10-01", endDate: "2026-10-05" }],
+        unavailable: [{ id: "off_test", date: "2026-11-01", endDate: "2026-12-01", label: "Maternity leave" }]
+      })
+      .expect(200);
+
+    expect(scheduleResponse.body.residents.find((resident: { id: string }) => resident.id === target.id)).toEqual(
+      expect.objectContaining({
+        vacation: [{ id: "vac_test", startDate: "2026-10-01", endDate: "2026-10-05" }],
+        unavailable: [{ id: "off_test", date: "2026-11-01", endDate: "2026-12-01", label: "Maternity leave" }]
+      })
+    );
+    await request(app)
+      .patch(`/api/entities/residents/${target.id}`)
+      .set("authorization", `Bearer ${advancedToken}`)
+      .send({ name: "Unauthorized profile edit" })
+      .expect(403);
+  });
+
   it("supports API key auth for tools", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 
@@ -134,7 +168,7 @@ describe("planner API", () => {
       .set("x-api-key", "test-admin-api-key")
       .send({
         username: "apiuser",
-        accountType: "user",
+        accountType: "resident",
         servicePrivileges: { Berry: "edit" }
       })
       .expect(201);
@@ -143,7 +177,7 @@ describe("planner API", () => {
         temporaryPassword: "schroeder1",
         user: expect.objectContaining({
           username: "apiuser",
-          role: "viewer",
+          role: "resident",
           mustChangePassword: true,
           servicePrivileges: expect.objectContaining({ Berry: "edit" })
         })
@@ -791,7 +825,7 @@ describe("planner API", () => {
       expect.arrayContaining([
         expect.objectContaining({
           activityType: "login",
-          actorRole: "viewer",
+          actorRole: "resident",
           actorUsername: "cblue",
           actorName: "Christian Blue",
           action: "logged in"
@@ -812,12 +846,12 @@ describe("planner API", () => {
       .send({
         username: "medstudent1",
         displayName: "Avery Student",
-        accountType: "medical-student",
+        accountType: "student",
         temporaryPassword: "TempStudent-2026"
       })
       .expect(201);
 
-    expect(created.body.user).toEqual(expect.objectContaining({ username: "medstudent1", role: "medical-student" }));
+    expect(created.body.user).toEqual(expect.objectContaining({ username: "medstudent1", role: "student" }));
 
     const stateResponse = await request(app).get("/api/state").set("x-api-key", "test-admin-api-key").expect(200);
     const medicalStudent = stateResponse.body.residents.find((resident: { username?: string }) => resident.username === "medstudent1");
@@ -847,7 +881,7 @@ describe("planner API", () => {
       .post("/api/auth/login")
       .send({ username: "medstudent1", password: "TempStudent-2026" })
       .expect(200);
-    expect(login.body).toEqual(expect.objectContaining({ role: "medical-student" }));
+    expect(login.body).toEqual(expect.objectContaining({ role: "student" }));
   });
 
   it("creates or reuses a manually entered medical student for case and clinic assignments", async () => {
@@ -888,7 +922,7 @@ describe("planner API", () => {
       .send({
         username: "studentself",
         displayName: "Sam Student",
-        accountType: "medical-student",
+        accountType: "student",
         temporaryPassword: "TempStudent-2026"
       })
       .expect(201);
@@ -1049,11 +1083,11 @@ describe("planner API", () => {
 
     expect(usersResponse.body.users).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ username: "aadeleke", role: "viewer" }),
-        expect.objectContaining({ username: "cblue", role: "viewer" }),
-        expect.objectContaining({ username: "tcao", role: "viewer" }),
-        expect.objectContaining({ username: "hbrown", role: "viewer" }),
-        expect.objectContaining({ username: "aswaak", role: "viewer" }),
+        expect.objectContaining({ username: "aadeleke", role: "resident" }),
+        expect.objectContaining({ username: "cblue", role: "resident" }),
+        expect.objectContaining({ username: "tcao", role: "resident" }),
+        expect.objectContaining({ username: "hbrown", role: "resident" }),
+        expect.objectContaining({ username: "aswaak", role: "resident" }),
         expect.objectContaining({ username: "admin", role: "admin" })
       ])
     );
@@ -1066,7 +1100,7 @@ describe("planner API", () => {
       expect.objectContaining({
         username: "cblue",
         displayName: "Christian Blue",
-        role: "viewer",
+        role: "resident",
         mustChangePassword: true,
         servicePrivileges: expect.objectContaining({ Davies: "view", ICU: "view" })
       })
@@ -1275,7 +1309,7 @@ describe("planner API", () => {
           {
             username: "resident01",
             displayName: "Resident 01",
-            role: "viewer",
+            role: "resident",
             servicePrivileges: { Davies: "request" },
             passwordHash: { algorithm: "scrypt", salt: "legacy", key: "legacy" },
             createdAt: now,
@@ -2833,7 +2867,7 @@ describe("planner API", () => {
     );
     expect(claimResponse.body.activityEvents[0]).toEqual(
       expect.objectContaining({
-        actorRole: "viewer",
+        actorRole: "resident",
         action: "claimed coverage"
       })
     );

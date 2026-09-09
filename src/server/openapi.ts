@@ -62,14 +62,14 @@ export function getOpenApiDocument() {
             token: { type: "string" },
             username: { type: "string" },
             displayName: { type: "string" },
-            role: { type: "string", enum: ["admin", "attending", "viewer", "medical-student"] },
+            role: { type: "string", enum: ["resident", "attending", "student", "admin"] },
             attendingId: { type: "string", description: "Required for attending accounts; links the account to an attending record." },
             servicePrivileges: {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean", description: "Allows adding directory contacts without admin approval." },
-            canBuildCall: { type: "boolean", description: "Allows access to the resident Call Builder." },
+            canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and Schedule Editor. Available to residents and attendings." },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             passwordUpdatedAt: { type: "string", format: "date-time" },
             mustChangePassword: { type: "boolean" }
@@ -80,14 +80,14 @@ export function getOpenApiDocument() {
           properties: {
             username: { type: "string" },
             displayName: { type: "string" },
-            role: { type: "string", enum: ["admin", "attending", "viewer", "medical-student"] },
+            role: { type: "string", enum: ["resident", "attending", "student", "admin"] },
             attendingId: { type: "string" },
             servicePrivileges: {
               type: "object",
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean" },
-            canBuildCall: { type: "boolean", description: "Allows access to the resident Call Builder." },
+            canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and Schedule Editor. Available to residents and attendings." },
             voiceDailyLimit: { type: "integer", minimum: 0, maximum: 10000, default: 12 },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             createdAt: { type: "string", format: "date-time" },
@@ -104,13 +104,13 @@ export function getOpenApiDocument() {
             displayName: { type: "string" },
             accountType: {
               type: "string",
-              enum: ["user", "attending", "medical-student"],
-              description: "Use this for account creation, especially with X-API-Key. user is stored as the viewer role; medical-student accounts also create a case-assignable medical-student roster entry. Defaults to user."
+              enum: ["resident", "attending", "student"],
+              description: "Use this for account creation, especially with X-API-Key. Student accounts also create a case-assignable medical-student roster entry. Defaults to resident."
             },
             role: {
               type: "string",
-              enum: ["admin", "attending", "viewer", "medical-student"],
-              description: "Browser-admin compatibility field. X-API-Key callers can create user/viewer, attending, or medical-student accounts."
+              enum: ["resident", "attending", "student", "admin"],
+              description: "Browser-admin compatibility field. X-API-Key callers can create resident, attending, or student accounts."
             },
             attendingId: { type: "string", description: "Required when role is attending." },
             password: { type: "string", description: "Optional permanent password. Cannot be combined with temporaryPassword." },
@@ -123,7 +123,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean", description: "Grant direct contact publishing; otherwise submissions require approval." },
-            canBuildCall: { type: "boolean", description: "Grant access to the resident Call Builder." }
+            canBuildCall: { type: "boolean", description: "Grant Advanced editor access (Call Builder and Schedule Editor) to a resident or attending." }
           }
         },
         CallBuilderAssignment: {
@@ -1035,7 +1035,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create browser user",
           description:
-            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create user, attending, or medical-student accounts, set servicePrivileges, and set temporaryPassword. Use accountType user, attending, or medical-student; omit both password fields to use the schroeder1 temporary password. Temporary passwords force a password change on next login.",
+            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create resident, attending, or student accounts, set servicePrivileges, and set temporaryPassword. Omit both password fields to use the schroeder1 temporary password. Temporary passwords force a password change on next login.",
           requestBody: {
             required: true,
             content: {
@@ -1071,7 +1071,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create multiple browser users",
           description:
-            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create user, attending, or medical-student accounts, set servicePrivileges, and set temporaryPassword. Omit both password fields to use the schroeder1 temporary password.",
+            "Requires a logged-in admin browser session or the admin X-API-Key. API-key callers can create resident, attending, or student accounts, set servicePrivileges, and set temporaryPassword. Omit both password fields to use the schroeder1 temporary password.",
           requestBody: {
             required: true,
             content: {

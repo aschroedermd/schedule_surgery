@@ -970,7 +970,7 @@ export function createApp(
           : [request, ...state.callOffRequests]
       };
       const withActivity = addActivity(nextState, {
-        ...requestActivityActor(req, "viewer"),
+        ...requestActivityActor(req, "resident"),
         activityType: "calendar",
         action: existing ? "updated call-off request" : "submitted call-off request",
         details: `${resident.name} requested ${priority} ${scope} off on ${date}`,
@@ -998,7 +998,7 @@ export function createApp(
       const nextState = addActivity(
         { ...state, callOffRequests: state.callOffRequests.filter((candidate) => candidate.id !== id) },
         {
-          ...requestActivityActor(req, "viewer"),
+          ...requestActivityActor(req, "resident"),
           activityType: "calendar",
           action: "withdrew call-off request",
           details: `${resident?.name ?? request.requesterName} withdrew ${request.priority} ${request.scope} off on ${request.date}`,
@@ -1221,7 +1221,7 @@ export function createApp(
             ]
           };
       const saved = await commitState(req, addActivity(nextState, {
-        ...requestActivityActor(req, "viewer"),
+        ...requestActivityActor(req, "resident"),
         activityType: "account",
         action: canAddDirectly ? "added directory contact" : "requested directory contact",
         details: `${contact.name} · ${contact.phoneNumber} · ${contact.category}`,
@@ -1800,7 +1800,7 @@ export function createApp(
       const entity = req.body;
       if (!requireEntityWriteAccess(req, res, state, collection, entity)) return;
       assertNoPhiInEntity(collection, entity);
-      if (collection === "residents") assertResidentVacationInput(entity);
+      if (collection === "residents") assertResidentScheduleInput(entity);
       const nextState = {
         ...state,
         [collection]: [...state[collection], entity]
@@ -1828,7 +1828,7 @@ export function createApp(
       const nextEntity = existing ? { ...existing, ...req.body, id } : undefined;
       if (!requireEntityWriteAccess(req, res, state, collection, existing, nextEntity)) return;
       assertNoPhiInEntity(collection, req.body);
-      if (collection === "residents") assertResidentVacationInput(req.body);
+      if (collection === "residents") assertResidentScheduleInput(req.body);
       const nextState = {
         ...state,
         [collection]: state[collection].map((entity) => (entity.id === id ? { ...entity, ...req.body, id } : entity))
@@ -1872,7 +1872,7 @@ export function createApp(
     try {
       let state = await store.load();
       const serviceLine = getAssignmentTargetServiceLine(state, req.body.kind, req.body.targetId);
-      const isMedicalStudentSelfAssignment = req.user?.role === "medical-student";
+      const isMedicalStudentSelfAssignment = req.user?.role === "student" && !hasServicePrivilege(req.user, serviceLine, "edit");
       if (isMedicalStudentSelfAssignment) {
         assertMedicalStudentSelfAssignment(state, req.user, req.body);
       } else if (!requireServiceEdit(req, res, serviceLine)) {
@@ -2220,7 +2220,7 @@ export function createApp(
         coverageRequests: [coverageRequest, ...state.coverageRequests]
       };
       const withActivity = addActivity(nextState, {
-        ...requestActivityActor(req, "viewer"),
+        ...requestActivityActor(req, "resident"),
         activityType: isResidentProfile ? "account" : isResidentVacation ? "resident" : "calendar",
         action: isResidentTrade
           ? "submitted resident call trade"
@@ -2350,7 +2350,7 @@ export function createApp(
       requireResident(state, claim.residentId);
       assertMedicalStudentAssignmentKind(state, claim.scope, claim.residentId);
       assertResidentAvailableForAssignment(state, claim.scope, claim.targetId, claim.residentId);
-      const nextState = applyClaim(state, claim, requestActivityActor(req, "viewer"));
+      const nextState = applyClaim(state, claim, requestActivityActor(req, "resident"));
       res.status(201).json(await commitState(req, nextState));
     } catch (error) {
       next(error);
@@ -2366,7 +2366,7 @@ export function createApp(
         goldStarAwards: [award, ...state.goldStarAwards]
       };
       const withActivity = addActivity(nextState, {
-        ...requestActivityActor(req, "viewer"),
+        ...requestActivityActor(req, "resident"),
         activityType: "resident",
         action: "awarded gold star",
         details: `${giverName} awarded a star to ${recipient.name}`,
@@ -2823,10 +2823,10 @@ function normalizeUserCreationInput(req: AuthenticatedRequest, input: unknown): 
   let role = user.role;
 
   if (accountType !== undefined) {
-    if (accountType !== "user" && accountType !== "attending" && accountType !== "medical-student") {
-      throw new HttpError(400, "Account type must be user, attending, or medical-student");
+    if (accountType !== "resident" && accountType !== "attending" && accountType !== "student" && accountType !== "user" && accountType !== "medical-student") {
+      throw new HttpError(400, "Account type must be resident, attending, or student");
     }
-    const accountRole: Role = accountType === "user" ? "viewer" : accountType;
+    const accountRole: Role = accountType === "user" ? "resident" : accountType === "medical-student" ? "student" : accountType;
     if (role !== undefined && role !== accountRole) {
       throw new HttpError(400, "accountType and role must describe the same account type");
     }
@@ -2834,19 +2834,19 @@ function normalizeUserCreationInput(req: AuthenticatedRequest, input: unknown): 
   }
 
   if (req.user?.authType === "apiKey" && role === "admin") {
-    throw new HttpError(403, "API keys can create only user, attending, or medical-student accounts");
+    throw new HttpError(403, "API keys can create only resident, attending, or student accounts");
   }
 
   return { ...user, role };
 }
 
 function isRole(value: unknown): value is Role {
-  return value === "admin" || value === "attending" || value === "viewer" || value === "medical-student";
+  return value === "admin" || value === "attending" || value === "resident" || value === "student";
 }
 
 function assertMedicalStudentAccountLinks(state: PlannerState, inputs: Array<{ role?: unknown; username?: unknown }>): void {
   for (const input of inputs) {
-    if (input.role !== "medical-student") continue;
+    if (input.role !== "student") continue;
     const username = readOptionalString(input.username);
     if (!username) throw new HttpError(400, "Medical student accounts require a username");
     const linkedResident = state.residents.find((resident) => normalizeUsername(resident.username ?? "") === normalizeUsername(username));
@@ -2858,7 +2858,7 @@ function assertMedicalStudentAccountLinks(state: PlannerState, inputs: Array<{ r
 
 function addMedicalStudentRosterEntries(state: PlannerState, users: Array<{ username: string; displayName: string; role: Role }>): PlannerState {
   const newStudents = users
-    .filter((user) => user.role === "medical-student")
+    .filter((user) => user.role === "student")
     .filter((user) => !state.residents.some((resident) => normalizeUsername(resident.username ?? "") === normalizeUsername(user.username)))
     .map((user): Resident => ({
       id: createId("res_medical_student"),
@@ -2906,6 +2906,15 @@ function requireEntityWriteAccess(
   nextEntity?: unknown
 ): boolean {
   if (req.user?.role === "admin") return true;
+  if (
+    collection === "residents" &&
+    hasCallBuilderAccess(req.user) &&
+    currentEntity &&
+    nextEntity &&
+    onlyAdvancedScheduleFieldsChanged(currentEntity, nextEntity)
+  ) {
+    return true;
+  }
   if (!isScheduleEditableCollection(collection)) {
     res.status(403).json({ error: "Admin access required" });
     return false;
@@ -2927,6 +2936,15 @@ function requireEntityWriteAccess(
     }
   }
   return true;
+}
+
+function onlyAdvancedScheduleFieldsChanged(currentEntity: unknown, nextEntity: unknown): boolean {
+  if (!currentEntity || !nextEntity || typeof currentEntity !== "object" || typeof nextEntity !== "object") return false;
+  const editableFields = new Set(["rotationSchedule", "vacation", "unavailable"]);
+  const current = currentEntity as Record<string, unknown>;
+  const next = nextEntity as Record<string, unknown>;
+  const protectedFields = new Set([...Object.keys(current), ...Object.keys(next)].filter((key) => !editableFields.has(key)));
+  return [...protectedFields].every((key) => JSON.stringify(current[key]) === JSON.stringify(next[key]));
 }
 
 function entityBelongsToAttending(
@@ -4290,13 +4308,30 @@ function assertNoPhiInEntity(collection: CollectionName, entity: unknown): void 
   }
 }
 
-function assertResidentVacationInput(entity: unknown): void {
-  if (!entity || typeof entity !== "object" || !("vacation" in entity)) return;
-  const vacation = (entity as { vacation?: unknown }).vacation;
-  if (!Array.isArray(vacation)) {
-    throw new HttpError(400, "vacation must be an array");
+function assertResidentScheduleInput(entity: unknown): void {
+  if (!entity || typeof entity !== "object") return;
+  if ("vacation" in entity) {
+    const vacation = (entity as { vacation?: unknown }).vacation;
+    if (!Array.isArray(vacation)) throw new HttpError(400, "vacation must be an array");
+    normalizeVacationBlocks(vacation);
   }
-  normalizeVacationBlocks(vacation);
+  if ("unavailable" in entity) {
+    const unavailable = (entity as { unavailable?: unknown }).unavailable;
+    if (!Array.isArray(unavailable)) throw new HttpError(400, "unavailable must be an array");
+    for (const [index, value] of unavailable.entries()) {
+      if (!value || typeof value !== "object") throw new HttpError(400, `Time off ${index + 1} must be an object`);
+      const entry = value as { id?: unknown; date?: unknown; endDate?: unknown; label?: unknown };
+      readRequiredString(entry.id, `Time off ${index + 1} id`);
+      const startDate = assertDate(entry.date);
+      const endDate = entry.endDate === undefined ? startDate : assertDate(entry.endDate);
+      if (endDate < startDate) throw new HttpError(400, "Time off endDate must be on or after date");
+      const label = readRequiredString(entry.label, `Time off ${index + 1} note`);
+      assertNoPhiText(label, `Time off ${index + 1} note`);
+    }
+  }
+  if ("rotationSchedule" in entity && !Array.isArray((entity as { rotationSchedule?: unknown }).rotationSchedule)) {
+    throw new HttpError(400, "rotationSchedule must be an array");
+  }
 }
 
 function normalizeVacationBlocks(vacation: unknown[]): ResidentVacationChange["vacation"] {

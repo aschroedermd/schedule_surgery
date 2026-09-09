@@ -86,6 +86,7 @@ import { buildResidentUsername, createId, isPlaceholderResidentUsername } from "
 import { comparePersonNames } from "../shared/names";
 import {
   Assignment,
+  AvailabilityBlock,
   ATTENDING_COVERAGE_LINES,
   ActivityEvent,
   ActivityEventType,
@@ -204,7 +205,9 @@ export function App() {
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
   const isAdmin = session?.role === "admin";
-  const canBuildCall = Boolean(session && (isAdmin || session.canBuildCall));
+  const canBuildCall = Boolean(
+    session && (isAdmin || ((session.role === "resident" || session.role === "attending") && session.canBuildCall))
+  );
   const showDiagnosticErrors = canSeeDiagnosticErrors(session);
   const isAttending = session?.role === "attending";
   const selectedPrivilege = session ? getSessionPrivilege(session, selectedService) : "view";
@@ -212,7 +215,7 @@ export function App() {
   const canRequestSelectedService = Boolean(session && (canEditSelectedService || selectedPrivilege === "request"));
   const linkedResident = state && session ? findResidentForSession(state, session) : undefined;
   const canMedicalStudentSelfAssign = Boolean(
-    session?.role === "medical-student" && linkedResident?.trainingLevel === "Medical Student"
+    session?.role === "student" && linkedResident?.trainingLevel === "Medical Student"
   );
   const canUseRequests = Boolean(session && (isAdmin || hasAnyRequestPrivilege(session) || linkedResident || (state?.coverageRequests.length ?? 0) > 0));
   const pendingCoverageRequestCount = state?.coverageRequests.filter((request) => request.status === "pending").length ?? 0;
@@ -605,6 +608,10 @@ export function App() {
       setActiveTab("call");
       return;
     }
+    if (activeTab === "schedule" && !canBuildCall) {
+      setActiveTab("calendar");
+      return;
+    }
     if (activeTab === "requests" && !canUseRequests) {
       setActiveTab("board");
     }
@@ -822,8 +829,8 @@ export function App() {
       {activeTab === "call-builder" && canBuildCall && (
         <CallBuilderTab state={state} token={session.token} username={session.username} onMutate={runMutation} />
       )}
-      {activeTab === "schedule" && (
-        <ResidentScheduleTab state={state} token={session.token} isAdmin={isAdmin} disabled={!isAdmin} onMutate={runMutation} />
+      {activeTab === "schedule" && canBuildCall && (
+        <ResidentScheduleTab state={state} token={session.token} disabled={false} onMutate={runMutation} />
       )}
       {activeTab === "requests" && (
         <RequestsTab
@@ -851,8 +858,8 @@ export function App() {
           username={session.username}
           onToast={(message) => setToast(message)}
           onPasswordChanged={handlePasswordChanged}
-          onOpenTamagotchi={session.role === "medical-student" ? undefined : () => setIsTamagotchiOpen(true)}
-          eggLink={session.role === "medical-student" ? "https://surgemon.com/" : undefined}
+          onOpenTamagotchi={session.role === "student" ? undefined : () => setIsTamagotchiOpen(true)}
+          eggLink={session.role === "student" ? "https://surgemon.com/" : undefined}
         >
           {linkedResident && (
             <ResidentProfileRequestPanel
@@ -4159,13 +4166,11 @@ function RosterTab({
 function ResidentScheduleTab({
   state,
   token,
-  isAdmin,
   disabled,
   onMutate
 }: {
   state: PlannerState;
   token: string;
-  isAdmin: boolean;
   disabled: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
@@ -4186,7 +4191,7 @@ function ResidentScheduleTab({
     <section className="resident-schedule-page">
       <div className="schedule-toolbar">
         <label>
-          Block
+          Browse rotation block
           <select value={selectedBlock} onChange={(event) => setSelectedBlock(Number(event.target.value))}>
             {ROTATION_BLOCK_DATES.map((rotationBlock) => (
               <option key={rotationBlock.blockNumber} value={rotationBlock.blockNumber}>
@@ -4196,7 +4201,7 @@ function ResidentScheduleTab({
           </select>
         </label>
         <label>
-          Resident
+          Edit schedule for
           <select value={selectedResident?.id ?? ""} onChange={(event) => setSelectedResidentId(event.target.value)}>
             {residents.map((resident) => (
               <option key={resident.id} value={resident.id}>
@@ -4228,6 +4233,9 @@ function ResidentScheduleTab({
                       {getVacationsForDateRange(resident, block.startDate, block.endDate).map((vacation) => (
                         <span key={vacation.id} className="vacation-line">VAC {formatVacationDateRange(vacation)}</span>
                       ))}
+                      {getTimeOffForDateRange(resident, block.startDate, block.endDate).map((entry) => (
+                        <span key={entry.id} className="time-off-line">{entry.label} · {formatMonthDayRange(entry.date, entry.endDate ?? entry.date)}</span>
+                      ))}
                     </span>
                   ))}
                 </div>
@@ -4240,7 +4248,6 @@ function ResidentScheduleTab({
           <ResidentRotationEditor
             resident={selectedResident}
             token={token}
-            isAdmin={isAdmin}
             disabled={disabled}
             serviceOptions={serviceOptions}
             onMutate={onMutate}
@@ -4254,25 +4261,25 @@ function ResidentScheduleTab({
 function ResidentRotationEditor({
   resident,
   token,
-  isAdmin,
   disabled,
   serviceOptions,
   onMutate
 }: {
   resident: Resident;
   token: string;
-  isAdmin: boolean;
   disabled: boolean;
   serviceOptions: string[];
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const [draftServices, setDraftServices] = useState<Record<number, string>>(() => makeRotationDraft(resident));
   const [vacationDraft, setVacationDraft] = useState<VacationBlock[]>(() => resident.vacation ?? []);
+  const [timeOffDraft, setTimeOffDraft] = useState<Resident["unavailable"]>(() => resident.unavailable ?? []);
   const optionListId = `rotation-services-${resident.id}`;
 
   useEffect(() => {
     setDraftServices(makeRotationDraft(resident));
     setVacationDraft(resident.vacation ?? []);
+    setTimeOffDraft(resident.unavailable ?? []);
   }, [resident]);
 
   function saveBlock(blockNumber: number) {
@@ -4300,23 +4307,29 @@ function ResidentRotationEditor({
     const vacation = vacationDraft
       .filter((block) => block.startDate && block.endDate)
       .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
-    if (isAdmin) {
-      void onMutate(
-        () => updateEntity<Resident>(token, "residents", resident.id, { vacation }),
-        "Vacation updated"
-      );
-      return;
-    }
     void onMutate(
-      () =>
-        submitCoverageRequest(token, {
-          requestType: "resident-vacation",
-          action: "update",
-          targetResidentId: resident.id,
-          requestedResidentVacation: { residentId: resident.id, vacation },
-          message: ""
-        }),
-      "Vacation request submitted"
+      () => updateEntity<Resident>(token, "residents", resident.id, { vacation }),
+      "Vacation updated"
+    );
+  }
+
+  function addTimeOff() {
+    const date = getTodayDate();
+    setTimeOffDraft((current) => [...current, { id: createId("off"), date, endDate: date, label: "" }]);
+  }
+
+  function updateTimeOffDraft(id: string, patch: Partial<AvailabilityBlock>) {
+    setTimeOffDraft((current) => current.map((entry) => entry.id === id ? { ...entry, ...patch } : entry));
+  }
+
+  function saveTimeOff() {
+    const unavailable = timeOffDraft
+      .filter((entry) => entry.date && entry.label.trim())
+      .map((entry) => ({ ...entry, label: entry.label.trim(), endDate: entry.endDate || undefined }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    void onMutate(
+      () => updateEntity<Resident>(token, "residents", resident.id, { unavailable }),
+      "Time off updated"
     );
   }
 
@@ -4341,6 +4354,9 @@ function ResidentRotationEditor({
                 <span>{formatBlockDateRange(rotation.startDate, rotation.endDate)}</span>
                 {getVacationsForDateRange(resident, rotation.startDate, rotation.endDate).map((vacation) => (
                   <span key={vacation.id} className="vacation-line">VAC {formatVacationDateRange(vacation)}</span>
+                ))}
+                {getTimeOffForDateRange(resident, rotation.startDate, rotation.endDate).map((entry) => (
+                  <span key={entry.id} className="time-off-line">{entry.label} · {formatMonthDayRange(entry.date, entry.endDate ?? entry.date)}</span>
                 ))}
               </div>
               <input
@@ -4408,7 +4424,56 @@ function ResidentRotationEditor({
             <Plus size={15} />Add vacation
           </button>
           <button type="button" className="primary-button" onClick={saveVacation}>
-            <Save size={15} />{isAdmin ? "Save vacation" : "Request vacation change"}
+            <Save size={15} />Save vacation
+          </button>
+        </div>
+      </section>
+      <section className="resident-vacation-panel">
+        <div className="schedule-panel-heading">
+          <p className="eyebrow">Other time away</p>
+          <h3>Time off</h3>
+          <span className="muted-copy">Add a short scheduling note, such as maternity leave or conference.</span>
+        </div>
+        <div className="resident-vacation-list">
+          {timeOffDraft.length === 0 && <span className="vacation-empty">No other time off entered</span>}
+          {timeOffDraft.map((entry) => (
+            <div key={entry.id} className="resident-time-off-row">
+              <input
+                aria-label={`${formatResidentName(resident)} time off note`}
+                placeholder="Reason or note"
+                value={entry.label}
+                onChange={(event) => updateTimeOffDraft(entry.id, { label: event.target.value })}
+              />
+              <input
+                aria-label={`${formatResidentName(resident)} time off start`}
+                type="date"
+                value={entry.date}
+                onChange={(event) => updateTimeOffDraft(entry.id, { date: event.target.value })}
+              />
+              <input
+                aria-label={`${formatResidentName(resident)} time off end`}
+                type="date"
+                min={entry.date}
+                value={entry.endDate ?? entry.date}
+                onChange={(event) => updateTimeOffDraft(entry.id, { endDate: event.target.value })}
+              />
+              <button
+                type="button"
+                className="icon-button"
+                title="Remove time off"
+                onClick={() => setTimeOffDraft((current) => current.filter((item) => item.id !== entry.id))}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="resident-vacation-actions">
+          <button type="button" className="secondary-button" onClick={addTimeOff}>
+            <Plus size={15} />Add time off
+          </button>
+          <button type="button" className="primary-button" onClick={saveTimeOff}>
+            <Save size={15} />Save time off
           </button>
         </div>
       </section>
@@ -5050,6 +5115,10 @@ function getVacationsForDateRange(resident: Resident, startDate: string, endDate
   return (resident.vacation ?? []).filter((vacation) => vacation.startDate <= endDate && vacation.endDate >= startDate);
 }
 
+function getTimeOffForDateRange(resident: Resident, startDate: string, endDate: string): AvailabilityBlock[] {
+  return (resident.unavailable ?? []).filter((entry) => entry.date <= endDate && (entry.endDate ?? entry.date) >= startDate);
+}
+
 function formatBlockDateRange(startDate: string, endDate: string): string {
   return formatMonthDayRange(startDate, endDate);
 }
@@ -5417,7 +5486,7 @@ function getTabTitle(tab: Tab): string {
     case "call-builder":
       return "Call Builder 🧩";
     case "schedule":
-      return "Blocks ⏹️";
+      return "Schedule Editor ✎";
     case "requests":
       return "Requests 📤";
     case "roster":
@@ -5570,8 +5639,8 @@ function clampPriority(value: number): 1 | 2 | 3 | 4 | 5 {
 }
 
 export function getAccountRoleLabel(role: Role, resident?: Pick<Resident, "trainingLevel">): string {
-  if (role === "medical-student" || resident?.trainingLevel === "Medical Student") return "Medical Student";
-  if (role === "viewer") return resident?.trainingLevel ? `Resident · ${resident.trainingLevel}` : "Resident";
+  if (role === "student" || resident?.trainingLevel === "Medical Student") return "Student";
+  if (role === "resident") return resident?.trainingLevel ? `Resident · ${resident.trainingLevel}` : "Resident";
   return role === "admin" ? "Admin" : "Attending";
 }
 
@@ -5683,7 +5752,7 @@ function isKnownServiceLine(serviceLine: string | null | undefined): serviceLine
 }
 
 function isRole(role: string | null): role is Role {
-  return role === "admin" || role === "attending" || role === "viewer" || role === "medical-student";
+  return role === "admin" || role === "attending" || role === "resident" || role === "student";
 }
 
 function parseStoredPrivileges(value: string | null): PlannerSession["servicePrivileges"] {

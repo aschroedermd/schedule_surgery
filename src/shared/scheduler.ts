@@ -367,7 +367,7 @@ export function applySuggestion(
   });
 }
 
-export function applyClaim(state: PlannerState, claim: ClaimRequest, actor: ActivityActor = { actorRole: "viewer" }): PlannerState {
+export function applyClaim(state: PlannerState, claim: ClaimRequest, actor: ActivityActor = { actorRole: "resident" }): PlannerState {
   const source: Assignment["source"] = "viewer-claim";
   const kind = claim.scope === "block" ? "block" : "case";
   const nextAssignment = makeAssignment(kind, claim.targetId, claim.residentId, source, false);

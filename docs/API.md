@@ -12,7 +12,7 @@ curl -H "X-API-Key: $ADMIN_API_KEY" https://your-domain.example/api/state
 
 Roles:
 
-- Admin API key: full read/write access, plus creation of `user`, `attending`, and `medical-student` browser accounts.
+- Admin API key: full read/write access, plus creation of `resident`, `attending`, and `student` browser accounts.
 - Viewer API key: read access.
 
 Browser logins use username/password credentials:
@@ -27,7 +27,7 @@ The response token can be passed as `Authorization: Bearer <token>`. MCP/tools c
 
 Seeded browser users are `admin` plus resident-linked accounts for account-eligible residents. Named residents use first-initial-plus-last-name usernames such as `aadeleke`. When no exact username exists, login also accepts one accidental alphabetic middle initial immediately after the first initial (for example, `jsrudderow` for `jrudderow`); the account's correct password is still required. Off-service rotators from outside programs are kept as assignable-only residents unless `accountEligible` is enabled, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No `guest` account is seeded. The initial admin password comes from `ADMIN_PASSWORD` when the user store is first created; seeded resident accounts use `SEED_USER_PASSWORD` only if you set it privately. Passwords are stored as `scrypt` hashes in `USER_STORE_PATH` and cannot be read back. New-user creation and admin resets can generate a temporary password that is returned once and opens the password-change screen on every login until the user chooses a new password; the user can skip for now and use the planner for the current session only.
 
-The admin Users tab can add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges. A medical-student account is case-assignable, and its egg icon opens [Surgemon](https://surgemon.com/) rather than the Tamagotchi.
+The admin Users tab can add/delete users one at a time or in bulk, generate temporary passwords, copy privileges from another user, and grant per-service privileges. A student account is case-assignable, and its egg icon opens [Surgemon](https://surgemon.com/) rather than the Tamagotchi. Residents and attendings may also receive the Advanced editor setting (`canBuildCall`), which unlocks both Call Builder and Schedule Editor.
 
 - `view`: read-only.
 - `request`: can submit coverage calendar edit requests for that service.
@@ -44,7 +44,7 @@ PATCH  /api/users/:username/password
 DELETE /api/users/:username
 ```
 
-For `POST /api/users` and `POST /api/users/bulk`, use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"`; `user` is stored internally as the browser `viewer` role. A medical-student account automatically creates a linked, case-assignable Medical Student roster entry and cannot be assigned to blocks, clinics, call, or rounding. Set permissions with `servicePrivileges`. An `attending` account must include an existing planner `attendingId`. Set `temporaryPassword` to choose the first-login password. If both `password` and `temporaryPassword` are omitted, the temporary password is `schroeder1`, returned once, and opens the password-change screen on every login until the user changes it. `POST /api/me/password/skip` lets that current session use the planner without changing the stored requirement.
+For `POST /api/users` and `POST /api/users/bulk`, use `accountType: "resident"`, `accountType: "attending"`, or `accountType: "student"`. A student account automatically creates a linked, case-assignable Medical Student roster entry and cannot be assigned to blocks, clinics, call, or rounding. New accounts default to view-only service privileges. Set permissions with `servicePrivileges`; residents and attendings may set `canBuildCall: true` for Advanced editor access. An `attending` account must include an existing planner `attendingId`. Set `temporaryPassword` to choose the first-login password. If both `password` and `temporaryPassword` are omitted, the temporary password is `schroeder1`, returned once, and opens the password-change screen on every login until the user changes it. `POST /api/me/password/skip` lets that current session use the planner without changing the stored requirement.
 
 `PATCH /api/users/:username/password` accepts an admin browser token or `ADMIN_API_KEY`. The API key cannot reset the built-in `admin` browser account. Omit the body to generate a random temporary password, or send `{ "temporaryPassword": "..." }` to choose it. The response returns the temporary password once and invalidates existing bearer sessions for that user.
 
@@ -76,7 +76,7 @@ curl -X POST https://your-domain.example/api/users \
   -d '{
     "username":"jsmith",
     "displayName":"Jamie Smith",
-    "accountType":"user",
+    "accountType":"resident",
     "servicePrivileges":{"Davies":"request","Berry":"view"}
   }'
 ```
@@ -89,7 +89,7 @@ Bulk creation uses this shape:
     {
       "username": "jsmith",
       "displayName": "Jamie Smith",
-      "accountType": "user",
+      "accountType": "resident",
       "servicePrivileges": { "Davies": "request", "Berry": "view" }
     }
   ]

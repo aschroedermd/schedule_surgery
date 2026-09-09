@@ -71,16 +71,18 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
 
   const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
     username?: string;
-    role?: Role;
+    role?: unknown;
     pwd?: string;
     exp?: number;
     deferPasswordChange?: boolean;
   };
-  if (!parsed.username || !parsed.role || !["admin", "attending", "viewer", "medical-student"].includes(parsed.role)) return undefined;
+  if (!parsed.username || !parsed.role) return undefined;
   if (!parsed.exp || parsed.exp < Math.floor(Date.now() / 1000)) return undefined;
 
+  const tokenRole = normalizeTokenRole(parsed.role);
+  if (!tokenRole) return undefined;
   const user = await userStore.getUser(parsed.username);
-  if (!user || user.role !== parsed.role) return undefined;
+  if (!user || user.role !== tokenRole) return undefined;
   if (!parsed.pwd || parsed.pwd !== user.passwordUpdatedAt) return undefined;
   const passwordChangeDeferred = user.mustChangePassword && parsed.deferPasswordChange === true;
   return {
@@ -104,7 +106,7 @@ export function verifyApiKey(apiKey: string | undefined): SessionUser | undefine
     return makeApiKeyUser("api-admin", "API admin", "admin", "edit");
   }
   if (config.viewerApiKey && safeEqual(apiKey, config.viewerApiKey)) {
-    return makeApiKeyUser("api-viewer", "API viewer", "viewer", "view");
+    return makeApiKeyUser("api-viewer", "API viewer", "resident", "view");
   }
   return undefined;
 }
@@ -158,7 +160,7 @@ export function requireSessionAdmin(req: AuthenticatedRequest, res: Response, ne
 }
 
 export function hasCallBuilderAccess(user: Pick<SessionUser, "role" | "canBuildCall"> | undefined): boolean {
-  return Boolean(user && (user.role === "admin" || user.canBuildCall));
+  return Boolean(user && (user.role === "admin" || ((user.role === "resident" || user.role === "attending") && user.canBuildCall)));
 }
 
 export function requireCallBuilder(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
@@ -196,6 +198,13 @@ function makeApiKeyUser(username: string, displayName: string, role: Role, privi
     passwordUpdatedAt: new Date(0).toISOString(),
     mustChangePassword: false
   };
+}
+
+function normalizeTokenRole(role: unknown): Role | undefined {
+  if (role === "resident" || role === "attending" || role === "student" || role === "admin") return role;
+  if (role === "viewer") return "resident";
+  if (role === "medical-student") return "student";
+  return undefined;
 }
 
 export function requirePasswordReady(req: AuthenticatedRequest, res: Response, next: NextFunction): void {

@@ -45,7 +45,7 @@ export function UsersTab({
     entries: "",
     temporaryPassword: "",
     attendingId: "",
-    role: "viewer",
+    role: "resident",
     preset: "view",
     cloneFrom: "",
     servicePrivileges: buildPrivileges(serviceLines, "view"),
@@ -99,7 +99,7 @@ export function UsersTab({
         temporaryPassword: addDraft.temporaryPassword.trim() || undefined,
         servicePrivileges,
         canAddContacts: addDraft.role === "admin" || addDraft.canAddContacts,
-        canBuildCall: addDraft.role === "admin" || addDraft.canBuildCall
+        canBuildCall: addDraft.role === "admin" || ((addDraft.role === "resident" || addDraft.role === "attending") && addDraft.canBuildCall)
       }));
       const result =
         payload.length === 1
@@ -233,9 +233,9 @@ export function UsersTab({
             value={addDraft.role}
             onChange={(event) => setAddDraft({ ...addDraft, role: event.target.value as Role })}
           >
-            <option value="viewer">user</option>
-            <option value="medical-student">medical student</option>
+            <option value="resident">resident</option>
             <option value="attending">attending</option>
+            <option value="student">student</option>
             <option value="admin">admin</option>
           </select>
         </label>
@@ -308,11 +308,11 @@ export function UsersTab({
         <label className="contact-permission-field">
           <input
             type="checkbox"
-            checked={addDraft.role === "admin" || addDraft.canBuildCall}
-            disabled={addDraft.role === "admin"}
+            checked={addDraft.role === "admin" || ((addDraft.role === "resident" || addDraft.role === "attending") && addDraft.canBuildCall)}
+            disabled={addDraft.role === "admin" || addDraft.role === "student"}
             onChange={(event) => setAddDraft({ ...addDraft, canBuildCall: event.target.checked })}
           />
-          Call Builder
+          Advanced editor (Call Builder + Schedule Editor)
         </label>
         {addDraft.preset === "custom" && addDraft.role !== "admin" && (
           <div className="privilege-grid add-privilege-grid">
@@ -370,9 +370,9 @@ export function UsersTab({
                   disabled={user.username === "admin"}
                   onChange={(event) => updateDraft(user.username, { role: event.target.value as Role })}
                 >
-                  <option value="viewer">user</option>
-                  <option value="medical-student">medical student</option>
+                  <option value="resident">resident</option>
                   <option value="attending">attending</option>
+                  <option value="student">student</option>
                   <option value="admin">admin</option>
                 </select>
               </label>
@@ -402,11 +402,11 @@ export function UsersTab({
                 <label className="contact-permission-field">
                   <input
                     type="checkbox"
-                    checked={draft.role === "admin" || draft.canBuildCall}
-                    disabled={draft.role === "admin"}
+                    checked={draft.role === "admin" || ((draft.role === "resident" || draft.role === "attending") && draft.canBuildCall)}
+                    disabled={draft.role === "admin" || draft.role === "student"}
                     onChange={(event) => updateDraft(user.username, { canBuildCall: event.target.checked })}
                   />
-                  Call Builder
+                  Advanced editor (Call Builder + Schedule Editor)
                 </label>
                 <div className="privilege-presets" aria-label={`${user.username} bulk privileges`}>
                   <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "edit")}>
