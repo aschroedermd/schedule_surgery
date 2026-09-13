@@ -28,6 +28,26 @@ describe("scheduler core", () => {
     expect(changedCases.find((surgeryCase) => surgeryCase.id === "case_chen_chole")?.startTime).toBe("10:00");
   });
 
+  it("uses an explicit case start and follows it for subsequent cases", () => {
+    const state = createInitialState();
+    state.cases = state.cases.map(item => item.id === "case_chen_whipple" ? { ...item, startTimeOverride: "08:00" } : item);
+    const cases = computeScheduledCases(state, "week_current");
+    expect(cases.find(item => item.id === "case_chen_whipple")?.startTime).toBe("08:00");
+    expect(cases.find(item => item.id === "case_chen_chole")?.startTime).toBe("14:30");
+  });
+
+  it("keeps block case order and flags explicit starts that overlap the previous case", () => {
+    const state = createInitialState();
+    state.cases = state.cases.map(item => item.id === "case_chen_chole" ? { ...item, startTimeOverride: "07:00" } : item);
+    const block = buildWeekSchedule(state, "week_current").days.flatMap(day => day.blocks).find(item => item.id === "block_chen_mon")!;
+    expect(block.cases.map(item => item.id)).toEqual(["case_chen_whipple", "case_chen_chole"]);
+    expect(block.cases[1].warningMessages).toContain("Start time overlaps the previous case");
+    state.assignments = [makeAssignment("block", "block_chen_mon", "res_chief", "admin", false)];
+    const interval = buildAssignmentIntervals(state, "week_current").find(item => item.targetId === "block_chen_mon")!;
+    expect(interval.start).toBe(7 * 60);
+    expect(interval.end).toBe(13 * 60 + 30);
+  });
+
   it("warns but permits unavailable assignments and tight cross-hospital splits", () => {
     const state = createInitialState();
     const tuesday = state.attendingBlocks.find((block) => block.id === "block_morris_tue")!.date;

@@ -70,7 +70,7 @@ export function buildWeekSchedule(state: PlannerState, weekId: string, serviceLi
     .map<ScheduledBlock>((block) => {
       const attending = requireEntity(state.attendings, block.attendingId, "attending");
       const hospital = requireEntity(state.hospitals, block.hospitalId, "hospital");
-      const cases = scheduledCases.filter((surgeryCase) => surgeryCase.blockId === block.id);
+      const cases = scheduledCases.filter((surgeryCase) => surgeryCase.blockId === block.id).sort((a, b) => a.order - b.order);
       const assignment = blockAssignments.find((candidate) => candidate.targetId === block.id);
       return {
         ...block,
@@ -148,7 +148,7 @@ export function computeScheduledCases(state: PlannerState, weekId: string, servi
       const blockAssignment = blockAssignments.find((assignment) => assignment.targetId === block.id);
 
       return blockCases.map<ScheduledCase>((surgeryCase, index) => {
-        const startMinutes = currentStart;
+        const startMinutes = surgeryCase.startTimeOverride ? timeToMinutes(surgeryCase.startTimeOverride) : currentStart;
         const endMinutes = startMinutes + surgeryCase.durationMinutes;
         currentStart = endMinutes + (index < blockCases.length - 1 ? state.settings.turnoverMinutes : 0);
         const directAssignments = caseAssignments.filter((candidate) => candidate.targetId === surgeryCase.id);
@@ -178,6 +178,18 @@ export function computeScheduledCases(state: PlannerState, weekId: string, servi
 export function collectWarnings(state: PlannerState, weekId: string, serviceLine?: string): Warning[] {
   const intervals = buildAssignmentIntervals(state, weekId, serviceLine);
   const warnings: Warning[] = [];
+  const casesByBlock = groupBy(computeScheduledCases(state, weekId, serviceLine), surgeryCase => surgeryCase.blockId);
+  for (const blockCases of casesByBlock.values()) {
+    const ordered = [...blockCases].sort((a, b) => a.order - b.order);
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1];
+      const current = ordered[index];
+      if (current.startMinutes < previous.endMinutes) warnings.push({
+        id: createId("warn"), severity: "warning", targetId: current.id,
+        message: "Start time overlaps the previous case"
+      });
+    }
+  }
 
   for (const interval of intervals) {
     const calendarOffEntries = state.coverageEntries.filter(
@@ -486,8 +498,8 @@ export function buildAssignmentIntervals(state: PlannerState, weekId: string, se
               assignment: block.assignment,
               resident,
               date: block.date,
-              start: run[0].startMinutes,
-              end: run[run.length - 1].endMinutes,
+              start: Math.min(...run.map(item => item.startMinutes)),
+              end: Math.max(...run.map(item => item.endMinutes)),
               hospitalId: block.hospitalId,
               label: `${block.attending.name} block`,
               targetId: block.id
@@ -548,7 +560,7 @@ function buildWeekScheduleWithoutWarnings(state: PlannerState, weekId: string, s
         ...block,
         attending,
         hospital,
-        cases: scheduledCases.filter((surgeryCase) => surgeryCase.blockId === block.id),
+        cases: scheduledCases.filter((surgeryCase) => surgeryCase.blockId === block.id).sort((a, b) => a.order - b.order),
         assignment: state.assignments.find((assignment) => assignment.kind === "block" && assignment.targetId === block.id),
         warningMessages: []
       };

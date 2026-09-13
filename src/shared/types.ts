@@ -318,6 +318,8 @@ export interface SurgeryCase {
   blockId: string;
   procedureLabel: string;
   durationMinutes: number;
+  /** Optional fixed start; an empty value follows the previous case. */
+  startTimeOverride?: string;
   priority: Priority;
   tags: string[];
   notes: string;

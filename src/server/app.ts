@@ -1800,6 +1800,7 @@ export function createApp(
       const entity = req.body;
       if (!requireEntityWriteAccess(req, res, state, collection, entity)) return;
       assertNoPhiInEntity(collection, entity);
+      if (collection === "cases") assertCaseStartTimeInput(entity);
       if (collection === "residents") assertResidentVacationInput(entity);
       const nextState = {
         ...state,
@@ -1828,6 +1829,7 @@ export function createApp(
       const nextEntity = existing ? { ...existing, ...req.body, id } : undefined;
       if (!requireEntityWriteAccess(req, res, state, collection, existing, nextEntity)) return;
       assertNoPhiInEntity(collection, req.body);
+      if (collection === "cases") assertCaseStartTimeInput(req.body);
       if (collection === "residents") assertResidentVacationInput(req.body);
       const nextState = {
         ...state,
@@ -1866,6 +1868,31 @@ export function createApp(
     } catch (error) {
       next(error);
     }
+  });
+
+  app.post("/api/cases/:id/move", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const id = getParam(req.params.id);
+      const surgeryCase = state.cases.find(candidate => candidate.id === id);
+      if (!surgeryCase) throw new HttpError(404, "Case not found");
+      if (!requireEntityWriteAccess(req, res, state, "cases", surgeryCase)) return;
+      const direction = req.body.direction;
+      if (direction !== "up" && direction !== "down") throw new HttpError(400, "Direction must be up or down");
+      const cases = state.cases.filter(candidate => candidate.blockId === surgeryCase.blockId)
+        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+      const index = cases.findIndex(candidate => candidate.id === id);
+      const order = Math.max(0, Math.min(cases.length - 1, index + (direction === "up" ? -1 : 1))) + 1;
+      if (order === index + 1) { res.json(state); return; }
+      const reordered = applyCaseOrderChange(state, { caseId: id, order });
+      // Reordering returns this block to sequential timing, preserving durations.
+      const nextState = { ...reordered, cases: reordered.cases.map(candidate =>
+        candidate.blockId === surgeryCase.blockId ? { ...candidate, startTimeOverride: "" } : candidate) };
+      res.json(await commitState(req, addActivity(nextState, {
+        ...requestActivityActor(req), activityType: collectionActivityType("cases"),
+        action: "reordered case", details: `Moved case ${direction}`, entityType: "cases", entityId: id
+      })));
+    } catch (error) { next(error); }
   });
 
   app.post("/api/assignments", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
@@ -4287,6 +4314,14 @@ function assertNoPhiInEntity(collection: CollectionName, entity: unknown): void 
   for (const field of fieldsByCollection[collection] ?? []) {
     const value = (entity as Record<string, unknown>)[field];
     if (typeof value === "string") assertNoPhiText(value, field);
+  }
+}
+
+function assertCaseStartTimeInput(entity: unknown): void {
+  if (!entity || typeof entity !== "object" || !("startTimeOverride" in entity)) return;
+  const value = (entity as { startTimeOverride: unknown }).startTimeOverride;
+  if (typeof value !== "string" || (value !== "" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
+    throw new HttpError(400, "Case start time must be HH:mm or blank for automatic timing");
   }
 }
 

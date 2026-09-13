@@ -7422,3 +7422,83 @@ h2 {
     justify-content: flex-end;
   }
 }
+
+/* Compact viewing retains the original theme; editing is an explicit mode. */
+.schedule-mode-tabs {
+  display: flex;
+  gap: 4px;
+  width: fit-content;
+  margin: 0 0 12px;
+  padding: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.schedule-mode-tabs button {
+  min-height: 44px;
+  min-width: 78px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+.schedule-mode-tabs button[aria-pressed="true"] {
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+}
+.assignment-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: .78rem; }
+.coverage-needed { color: var(--color-danger); font-size: .78rem; }
+.schedule-view-mode .day-column { gap: 8px; padding: 8px; }
+.schedule-view-mode .block-section, .schedule-view-mode .clinic-section { gap: 5px; padding: 8px; }
+.schedule-view-mode .case-row { gap: 3px; padding: 6px 8px; }
+.schedule-view-mode .case-assignment-stack { display: flex; gap: 5px 10px; }
+.schedule-view-mode .case-main { gap: 5px; }
+.calendar-rounder-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px; font-size: .78rem; }
+.calendar-rounder-summary > span { color: var(--text-muted); font-size: .7rem; }
+.calendar-rounder-summary em { flex-basis: 100%; font-size: .72rem; }
+.calendar-view-mode .coverage-day { min-height: 110px; gap: 5px; padding: 7px; }
+.calendar-view-mode .coverage-chip { padding: 4px 6px; }
+.week-manager:not(:has([title="Delete selected week"])) { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+@media print { .schedule-mode-tabs { display: none !important; } }
+.schedule-view-mode .case-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.schedule-view-mode .case-main .time-pill { width: fit-content; grid-column: 1; grid-row: 1; }
+.schedule-view-mode .case-main > strong { grid-column: 1 / -1; grid-row: 2; }
+.schedule-view-mode .case-main > span:last-child { grid-column: 2; grid-row: 1; color: var(--text-muted); font-size: .72rem; }
+
+/* Schedule controls live beside the item being edited. */
+.schedule-edit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.schedule-edit-actions > .schedule-inline-form { flex: 1 0 100%; order: 2; }
+.schedule-edit-actions .icon-button { min-width: 44px; min-height: 44px; }
+.schedule-danger { color: var(--danger, #b42318); }
+.schedule-day-add { display: grid; gap: 8px; min-width: 0; }
+.schedule-add-button { justify-content: center; width: 100%; min-height: 44px; border-style: dashed; }
+.schedule-add-options { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-surface); }
+.schedule-add-options button { min-height: 44px; padding: 8px 12px; text-align: left; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); }
+.schedule-add-options button:hover { background: var(--bg-surface-hover); }
+.schedule-inline-form { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--border-focus); border-radius: var(--radius-sm); background: var(--bg-surface); }
+.schedule-inline-form fieldset { display: grid; gap: 10px; min-width: 0; padding: 0; margin: 0; border: 0; }
+.schedule-inline-form label { display: grid; gap: 4px; min-width: 0; font-size: .8rem; }
+.schedule-inline-form input, .schedule-inline-form select { width: 100%; min-width: 0; min-height: 44px; }
+.schedule-form-times { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.schedule-delete-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 0 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-surface); }
+.schedule-delete-confirm > span { flex: 1 0 100%; font-size: .8rem; overflow-wrap: anywhere; }
+.board-grid .case-main > strong, .board-grid .attending-label, .board-grid .assignment-summary { overflow-wrap: anywhere; min-width: 0; }
+.board-grid .block-title > div { min-width: 0; }
+.board-grid .case-assignment-stack, .board-grid .assign-control { max-width: 100%; min-width: 0; }
+.board-grid .assignment-select { min-width: 0; max-width: 100%; }
+@media (max-width: 760px) {
+  .board-grid .schedule-inline-form input, .board-grid .schedule-inline-form select,
+  .board-grid .assignment-select { font-size: 16px; min-height: 44px; }
+  .schedule-inline-form .primary-button, .schedule-inline-form .secondary-button,
+  .schedule-delete-confirm button { min-height: 44px; }
+  .board-grid .case-main .time-pill { white-space: nowrap; }
+}
+@media print {
+  .schedule-edit-actions, .schedule-day-add, .schedule-add-button, .schedule-inline-form { display: none !important; }
+}
+.schedule-form-hint { font-size: .75rem; color: var(--text-muted); line-height: 1.4; }
+.desktop-tabs button { min-width: 0; }
+@media (min-width: 1101px) {
+  .board-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .board-grid .day-column { min-width: 0; }
+}

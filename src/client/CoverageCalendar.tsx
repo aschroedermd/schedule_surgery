@@ -95,6 +95,7 @@ export function CalendarTab({
   servicePrivileges,
   onMutate
 }: CalendarTabProps) {
+  const [editing, setEditing] = useState(false);
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCoverageMonth(state));
   const [visibleServices, setVisibleServices] = useState(() => getStoredCalendarServices(serviceLines, selectedService, username));
   const dates = useMemo(() => getMonthGridDates(month), [month]);
@@ -123,6 +124,10 @@ export function CalendarTab({
     [state.coverageEntries]
   );
   const currentResident = useMemo(() => findResidentForUsername(state, username), [state, username]);
+  const canEditCalendar = visibleServices.some((service) => canEditService(isAdmin, servicePrivileges, service));
+  const canRequestCalendar = visibleServices.some((service) => canRequestService(isAdmin, servicePrivileges, service)) || Boolean(currentResident);
+  const editMode = editing && (canEditCalendar || canRequestCalendar);
+  useEffect(() => { setEditing(false); }, [selectedService, username]);
   const pendingCount = state.coverageRequests.filter(
     (request) => request.status === "pending" && coverageRequestMatchesServices(state, request, visibleServices)
   ).length;
@@ -151,7 +156,7 @@ export function CalendarTab({
   }
 
   return (
-    <section className="coverage-page">
+    <section className={`coverage-page${editMode ? "" : " calendar-view-mode"}`}>
       <div className="coverage-toolbar">
         <div>
           <p className="eyebrow">Call & Rounding</p>
@@ -173,6 +178,10 @@ export function CalendarTab({
         </div>
       </div>
 
+      {(canEditCalendar || canRequestCalendar) && <nav className="schedule-mode-tabs" aria-label="Calendar mode">
+        <button type="button" aria-pressed={!editMode} onClick={() => setEditing(false)}>View</button>
+        <button type="button" aria-pressed={editMode} onClick={() => setEditing(true)}>{canEditCalendar ? "Edit" : "Requests"}</button>
+      </nav>}
       <div className="coverage-service-filter" aria-label="Calendar services">
         <label className="service-filter-option">
           <input
@@ -220,7 +229,8 @@ export function CalendarTab({
       <div className="coverage-calendar-grid">
         {dates.map((date) => (
           <CoverageDay
-            key={date}
+            key={`${date}-${editMode}`}
+            editing={editMode}
             state={state}
             token={token}
             selectedService={selectedService}
@@ -242,6 +252,7 @@ export function CalendarTab({
 }
 
 function CoverageDay({
+  editing,
   state,
   token,
   selectedService,
@@ -256,6 +267,7 @@ function CoverageDay({
   date,
   onMutate
 }: CalendarAccessProps & {
+  editing: boolean;
   visibleResidents: Resident[];
   coverageEntries: CoverageEntry[];
   callEntries: CoverageEntry[];
@@ -352,6 +364,7 @@ function CoverageDay({
             <div className="coverage-slots">
               {roundingEntries.map((entry) => (
                 <CoverageSlotSelect
+                  viewOnly={!editing}
                   key={entry.id}
                   label="Round"
                   kind="rounding"
@@ -372,7 +385,7 @@ function CoverageDay({
               ))}
             </div>
           )}
-          <AddRounderControl
+          {editing && <AddRounderControl
             date={date}
             state={state}
             token={token}
@@ -383,7 +396,7 @@ function CoverageDay({
             servicePrivileges={servicePrivileges}
             disabled={!inMonth || !canCreateForVisibleServices}
             onMutate={onMutate}
-          />
+          />}
         </div>
       )}
 
@@ -393,7 +406,7 @@ function CoverageDay({
             key={entry.id}
             entry={entry}
             residents={visibleResidents}
-            canDelete={inMonth && !isVacationCalendarEntry(entry)}
+            canDelete={editing && inMonth && !isVacationCalendarEntry(entry)}
             isVacation={isVacationCalendarEntry(entry)}
             selectedService={selectedService}
             visibleServices={visibleServices}
@@ -406,13 +419,13 @@ function CoverageDay({
         ))}
       </div>
 
-      {inMonth && canCreateForVisibleServices && !isRoundingDate(date) && !showNoteForm && (
+      {editing && inMonth && canCreateForVisibleServices && !isRoundingDate(date) && !showNoteForm && (
         <button type="button" className="secondary-button coverage-add-note-button" onClick={() => setShowNoteForm(true)}>
           add+
         </button>
       )}
 
-      {inMonth && !isRoundingDate(date) && showNoteForm && (
+      {editing && inMonth && !isRoundingDate(date) && showNoteForm && (
         <form className="coverage-note-form" onSubmit={addNote}>
           <select
             aria-label="Note resident"
@@ -571,6 +584,7 @@ function CoverageSlotSelect({
   kind,
   date,
   entry,
+  viewOnly = false,
   state,
   token,
   selectedService,
@@ -593,6 +607,7 @@ function CoverageSlotSelect({
   visibleServices: string[];
   visibleResidents: Resident[];
   currentResident?: Resident;
+  viewOnly?: boolean;
   isAdmin: boolean;
   servicePrivileges: ServicePrivileges;
   disabled: boolean;
@@ -755,6 +770,11 @@ function CoverageSlotSelect({
     );
     setShowTradeForm(false);
     setTradeDraft((current) => ({ ...current, swapEntryId: "", message: "" }));
+  }
+
+  if (viewOnly) {
+    const person = state.residents.find((candidate) => candidate.id === entry?.residentId);
+    return <div className="calendar-rounder-summary" style={style}><span>{label}</span><strong>{person ? formatResidentName(person) : "Unassigned"}</strong>{entry?.note && <em>{entry.note}</em>}</div>;
   }
 
   return (

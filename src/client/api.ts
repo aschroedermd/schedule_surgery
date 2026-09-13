@@ -482,6 +482,12 @@ export async function createEntity<T>(token: string, collection: CollectionName,
   });
 }
 
+export async function moveCase(token: string, id: string, direction: "up" | "down"): Promise<PlannerState> {
+  return request<PlannerState>(`/api/cases/${encodeURIComponent(id)}/move`, {
+    method: "POST", token, body: JSON.stringify({ direction })
+  });
+}
+
 export async function updateEntity<T>(token: string, collection: CollectionName, id: string, patch: Partial<T>): Promise<PlannerState> {
   return request<PlannerState>(`/api/entities/${collection}/${id}`, {
     method: "PATCH",

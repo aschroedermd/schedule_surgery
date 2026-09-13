@@ -1953,6 +1953,39 @@ describe("planner API", () => {
     }
   });
 
+  it("moves cases atomically within the block and respects edit privileges", async () => {
+    const { app, token } = await loginAs("admin");
+    await grantPrivilege(app, token, "aschroeder", "Davies", "edit");
+    const editorToken = await loginOnApp(app, "aschroeder");
+    const viewerToken = await loginOnApp(app, "aswaak");
+    await request(app).post("/api/cases/case_chen_whipple/move").set("authorization", `Bearer ${viewerToken}`).send({ direction: "down" }).expect(403);
+    await request(app).patch("/api/entities/attendingBlocks/block_morris_tue").set("authorization", `Bearer ${token}`).send({ attendingId: "att_nussbaum" }).expect(200);
+    await request(app).post("/api/cases/case_morris_hernia/move").set("authorization", `Bearer ${editorToken}`).send({ direction: "down" }).expect(403);
+    await request(app).post("/api/cases/case_chen_whipple/move").set("authorization", `Bearer ${editorToken}`).send({ direction: "sideways" }).expect(400);
+    await request(app).post("/api/cases/missing/move").set("authorization", `Bearer ${token}`).send({ direction: "up" }).expect(404);
+    await request(app).patch("/api/entities/cases/case_chen_chole").set("authorization", `Bearer ${editorToken}`).send({ startTimeOverride: "16:00" }).expect(200);
+    const moved = await request(app).post("/api/cases/case_chen_whipple/move").set("authorization", `Bearer ${editorToken}`).send({ direction: "down" }).expect(200);
+    const cases = moved.body.cases.filter((item: { blockId: string }) => item.blockId === "block_chen_mon").sort((a: { order: number }, b: { order: number }) => a.order - b.order);
+    expect(cases.map((item: { id: string }) => item.id)).toEqual(["case_chen_chole", "case_chen_whipple"]);
+    expect(cases.map((item: { order: number }) => item.order)).toEqual([0, 1]);
+    expect(cases.map((item: { startTimeOverride: string }) => item.startTimeOverride)).toEqual(["", ""]);
+    const schedule = await request(app).get("/api/weeks/week_current/schedule").set("authorization", `Bearer ${token}`).expect(200);
+    const block = schedule.body.days.flatMap((day: { blocks: unknown[] }) => day.blocks).find((item: { id: string }) => item.id === "block_chen_mon");
+    expect(block.cases.map((item: { startTime: string }) => item.startTime)).toEqual(["07:30", "09:30"]);
+    const restored = await request(app).post("/api/cases/case_chen_whipple/move").set("authorization", `Bearer ${editorToken}`).send({ direction: "up" }).expect(200);
+    expect(restored.body.cases.find((item: { id: string }) => item.id === "case_chen_whipple").order).toBe(0);
+  });
+
+  it("validates optional explicit case start times", async () => {
+    const { app, token } = await loginAs("admin");
+    for (const startTimeOverride of ["25:30", "9:00", "12:99", null, 123]) {
+      await request(app).patch("/api/entities/cases/case_chen_whipple").set("authorization", `Bearer ${token}`).send({ startTimeOverride }).expect(400);
+    }
+    for (const startTimeOverride of ["09:00", ""]) {
+      await request(app).patch("/api/entities/cases/case_chen_whipple").set("authorization", `Bearer ${token}`).send({ startTimeOverride }).expect(200);
+    }
+  });
+
   it("lets service editors manage OR and clinic schedule rows only for edited services", async () => {
     const { app, token: adminToken } = await loginAs("admin");
     await grantPrivilege(app, adminToken, "aschroeder", "Davies", "edit");

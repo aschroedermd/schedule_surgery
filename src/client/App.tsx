@@ -7,7 +7,6 @@ import {
   LoaderCircle,
   Lock,
   LogOut,
-  Minus,
   Pencil,
   Plus,
   Printer,
@@ -53,6 +52,7 @@ import {
   updateAssignment,
   updateEntity
 } from "./api";
+import { AddScheduleItem, AddCaseControl, CaseEditingControls, DeleteScheduleItem, InlineBlockSettings, InlineClinicSettings } from "./ScheduleInlineControls";
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { ChatTab } from "./ChatTab";
 import { ContactsTab } from "./ContactsTab";
@@ -125,6 +125,7 @@ import {
   clinicMatchesService,
   getAttendingsForService,
   getStateServiceLines,
+  isEndoscopyBlock,
   isGeneralOrPlasticSurgeryResident,
   isResidentOnService,
   sortResidentsForService
@@ -611,10 +612,10 @@ export function App() {
   }, [activeTab, canBuildCall, canUseRequests, isAdmin, session?.username]);
 
   useEffect(() => {
-    if (activeTab !== "board" || (!canEditSelectedService && !isAttending)) {
+    if (activeTab !== "board" || (!canEditSelectedService && !isAttending && !canMedicalStudentSelfAssign)) {
       setIsScheduleEditorOpen(false);
     }
-  }, [activeTab, canEditSelectedService, isAttending]);
+  }, [activeTab, canEditSelectedService, isAttending, canMedicalStudentSelfAssign]);
 
   if (isTamagotchiOpen) {
     return <NussbaumTamagotchi onExit={() => setIsTamagotchiOpen(false)} />;
@@ -682,7 +683,7 @@ export function App() {
               state={state}
               selectedWeek={selectedWeek}
               token={session.token}
-              canCreateWeek={isAdmin}
+              canCreateWeek={isAdmin && isScheduleEditorOpen}
               onNavigateToDate={navigateToWeekForDate}
               onMutate={runMutation}
             />
@@ -695,7 +696,7 @@ export function App() {
             >
               <RefreshCw className={pendingAction === "Refreshing schedule…" ? "is-spinning" : ""} size={18} />
             </button>
-            {isAdmin && (
+            {isAdmin && isScheduleEditorOpen && (
               <button
                 title="Suggest schedule"
                 className="primary-button"
@@ -704,16 +705,6 @@ export function App() {
               >
                 {pendingAction ? <LoaderCircle className="is-spinning" size={18} /> : <Wand2 size={18} />}
                 {pendingAction ? "Working…" : "Suggest"}
-              </button>
-            )}
-            {(canEditSelectedService || isAttending) && (
-              <button
-                title={isScheduleEditorOpen ? "Close schedule editor" : "Edit schedule"}
-                className={isScheduleEditorOpen ? "primary-button" : "secondary-button"}
-                onClick={() => setIsScheduleEditorOpen((open) => !open)}
-              >
-                <Scissors size={18} />
-                {isScheduleEditorOpen ? "Done Editing" : "Edit Schedule"}
               </button>
             )}
             <button
@@ -744,6 +735,13 @@ export function App() {
         onSelect={handleSelectTab}
       />
 
+      {activeTab === "board" && (canEditSelectedService || isAttending || canMedicalStudentSelfAssign) && (
+        <nav className="schedule-mode-tabs" aria-label="OR / Clinic mode">
+          <button type="button" aria-pressed={!isScheduleEditorOpen} onClick={() => setIsScheduleEditorOpen(false)}>View</button>
+          <button type="button" aria-pressed={isScheduleEditorOpen} onClick={() => setIsScheduleEditorOpen(true)}>Edit</button>
+        </nav>
+      )}
+
       <div className="chat-tab-host" hidden={activeTab !== "chat"}>
         <ChatTab
           token={session.token}
@@ -762,8 +760,8 @@ export function App() {
           schedule={schedule}
           token={session.token}
           selectedService={selectedService}
-          canEdit={canEditSelectedService}
-          canMedicalStudentSelfAssign={canMedicalStudentSelfAssign}
+          canEdit={canEditSelectedService && isScheduleEditorOpen}
+          canMedicalStudentSelfAssign={canMedicalStudentSelfAssign && isScheduleEditorOpen}
           currentResidentId={linkedResident?.id}
           editableAttendingId={isAttending ? session.attendingId : undefined}
           showScheduleEditor={isScheduleEditorOpen}
@@ -1275,7 +1273,7 @@ function WeekNavigator({
       >
         <ChevronRight size={18} />
       </button>
-      <button
+      {canCreateWeek && <button
         title="Delete selected week"
         type="button"
         className="icon-button"
@@ -1283,12 +1281,12 @@ function WeekNavigator({
         onClick={deleteSelectedWeek}
       >
         <Trash2 size={15} />
-      </button>
+      </button>}
     </div>
   );
 }
 
-function BoardTab({
+export function BoardTab({
   state,
   schedule,
   token,
@@ -1323,24 +1321,6 @@ function BoardTab({
 
   return (
     <>
-      {showScheduleEditor && (
-        <section className="board-schedule-editor" aria-label="Edit OR and clinic schedule">
-          {selectedService === ENDOSCOPY_SERVICE_LINE ? (
-            <p className="muted-copy">ENDO is a shared view. Add or edit an endoscopy block from its attending's service.</p>
-          ) : (
-            <ScheduleEditor
-              state={state}
-              week={schedule.week}
-              token={token}
-              selectedService={selectedService}
-              editableAttendingId={editableAttendingId}
-              disabled={!canEdit && !editableAttendingId}
-              onMutate={onMutate}
-            />
-          )}
-        </section>
-      )}
-
       <div className="mobile-day-selector" role="tablist" aria-label="Select day of week">
         {dayNames.map((name, idx) => {
           const day = schedule.days[idx];
@@ -1372,7 +1352,7 @@ function BoardTab({
         </button>
       </div>
 
-      <section className="board-grid">
+      <section className={`board-grid${showScheduleEditor ? "" : " schedule-view-mode"}`}>
         {schedule.days.map((day, idx) => (
           <article
             key={day.date}
@@ -1396,11 +1376,17 @@ function BoardTab({
               </button>
             </header>
 
+            {showScheduleEditor && (canEdit || editableAttendingId) && <AddScheduleItem
+              key={`${schedule.week.id}-${day.date}-${selectedService}`} state={state} weekId={schedule.week.id} date={day.date}
+              selectedService={selectedService} editableAttendingId={canEdit ? undefined : editableAttendingId} token={token} onMutate={onMutate}
+            />}
+
             {day.blocks.map((block) => (
               <BlockView
                 key={block.id}
                 state={state}
                 block={block}
+                canEditSchedule={showScheduleEditor && (canEdit || block.attendingId === editableAttendingId)}
                 canEdit={canEdit}
                 canMedicalStudentSelfAssign={canMedicalStudentSelfAssign}
                 currentResidentId={currentResidentId}
@@ -2759,6 +2745,7 @@ function BlockView({
   state,
   block,
   canEdit,
+  canEditSchedule,
   canMedicalStudentSelfAssign,
   currentResidentId,
   token,
@@ -2768,6 +2755,7 @@ function BlockView({
   state: PlannerState;
   block: ScheduledBlock;
   canEdit: boolean;
+  canEditSchedule: boolean;
   canMedicalStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
@@ -2792,12 +2780,11 @@ function BlockView({
             <strong>{block.attending.name}</strong>
           </div>
           <span>
-            {block.hospital.shortName} · {block.firstCaseStartTime}
+            {block.hospital.shortName} · {block.firstCaseStartTime}{isEndoscopyBlock(state, block) ? " · Endoscopy" : ""}
             {selectedService === ENDOSCOPY_SERVICE_LINE ? ` · ${block.attending.service}` : ""}
           </span>
-          {block.notes && <span>{block.notes}</span>}
         </div>
-        <div className="block-actions">
+        {(canEdit || block.assignment) && <div className="block-actions">
           <AssignmentControl
             state={state}
             token={token}
@@ -2812,17 +2799,23 @@ function BlockView({
             currentResidentId={currentResidentId}
             onMutate={onMutate}
           />
-          {canEdit && <QuickBlockEditor state={state} block={block} token={token} onMutate={onMutate} />}
-        </div>
+        </div>}
       </div>
+      {canEditSchedule && <div className="schedule-edit-actions block-edit-actions">
+        <InlineBlockSettings state={state} block={block} token={token} onMutate={onMutate} />
+        <DeleteScheduleItem token={token} onMutate={onMutate} collection="attendingBlocks" id={block.id} label={`${block.attending.name} block`} />
+      </div>}
       <Warnings warnings={block.warningMessages} />
       <div className="case-list">
-        {block.cases.map((surgeryCase) => (
+        {block.cases.map((surgeryCase, index) => (
           <CaseRow
             key={surgeryCase.id}
             state={state}
             surgeryCase={surgeryCase}
             canEdit={canEdit}
+            canEditSchedule={canEditSchedule}
+            isFirst={index === 0}
+            isLast={index === block.cases.length - 1}
             canMedicalStudentSelfAssign={canMedicalStudentSelfAssign}
             currentResidentId={currentResidentId}
             token={token}
@@ -2831,6 +2824,7 @@ function BlockView({
           />
         ))}
       </div>
+      {canEditSchedule && <AddCaseControl block={block} token={token} onMutate={onMutate} />}
     </section>
   );
 }
@@ -2838,7 +2832,10 @@ function BlockView({
 function CaseRow({
   state,
   surgeryCase,
+  isFirst,
+  isLast,
   canEdit,
+  canEditSchedule,
   canMedicalStudentSelfAssign,
   currentResidentId,
   token,
@@ -2847,7 +2844,10 @@ function CaseRow({
 }: {
   state: PlannerState;
   surgeryCase: ScheduledCase;
+  isFirst: boolean;
+  isLast: boolean;
   canEdit: boolean;
+  canEditSchedule: boolean;
   canMedicalStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
@@ -2892,7 +2892,6 @@ function CaseRow({
       <div className="case-main">
         <span className="time-pill">{surgeryCase.startTime}-{surgeryCase.endTime}</span>
         <strong>{surgeryCase.procedureLabel}</strong>
-        <span>{surgeryCase.durationMinutes} min</span>
       </div>
       <div className="case-assignment-stack">
         {assignmentControls.map((control, index) => (
@@ -2913,7 +2912,7 @@ function CaseRow({
             onMutate={onMutate}
           />
         ))}
-        {isAddingResident && (
+        {isAddingResident && (canEdit || canMedicalStudentSelfAssign) && (
           <PersonAssignmentPicker
             state={state}
             token={token}
@@ -2933,6 +2932,7 @@ function CaseRow({
           </button>
         )}
       </div>
+      {canEditSchedule && <CaseEditingControls surgeryCase={surgeryCase} isFirst={isFirst} isLast={isLast} token={token} onMutate={onMutate} />}
       <Warnings warnings={caseWarnings} />
     </div>
   );
@@ -2979,9 +2979,14 @@ function ClinicView({
             {selectedService === ENDOSCOPY_SERVICE_LINE ? ` · ${clinic.service}` : ""}
           </span>
         </div>
-        {canEdit && <QuickClinicEditor state={state} clinic={clinic} token={token} onMutate={onMutate} />}
+
       </div>
+      {canEdit && <div className="schedule-edit-actions">
+        <InlineClinicSettings clinic={clinic} token={token} onMutate={onMutate} />
+        <DeleteScheduleItem token={token} onMutate={onMutate} collection="clinicSessions" id={clinic.id} label="clinic block" />
+      </div>}
       <div className="clinic-assignments">
+        {!canEdit && clinic.assignments.length === 0 && <span className="coverage-needed">Unassigned</span>}
         {clinic.assignments.map((assignment) => (
           <AssignmentControl
             key={assignment.id}
@@ -2998,7 +3003,7 @@ function ClinicView({
             onMutate={onMutate}
           />
         ))}
-        {isAddingResident && (
+        {isAddingResident && (canEdit || canMedicalStudentSelfAssign) && (
           <PersonAssignmentPicker
             state={state}
             token={token}
@@ -3024,325 +3029,6 @@ function ClinicView({
 }
 
 const QUICK_EDIT_LOCATION_CODES = ["RMH", "CCASC", "FMH", "NRV"] as const;
-
-type QuickCaseDraft = {
-  id: string;
-  procedureLabel: string;
-  durationMinutes: number | "";
-  isNew?: boolean;
-};
-
-function QuickBlockEditor({
-  state,
-  block,
-  token,
-  onMutate
-}: {
-  state: PlannerState;
-  block: ScheduledBlock;
-  token: string;
-  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
-}) {
-  const editorRef = useRef<HTMLDivElement>(null);
-  const savingRef = useRef(false);
-  const [isOpen, setIsOpen] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [startTime, setStartTime] = useState(block.firstCaseStartTime);
-  const [hospitalId, setHospitalId] = useState(block.hospitalId);
-  const [caseDrafts, setCaseDrafts] = useState<QuickCaseDraft[]>(() => quickCaseDrafts(block.cases));
-
-  useEffect(() => {
-    if (isOpen) return;
-    setStartTime(block.firstCaseStartTime);
-    setHospitalId(block.hospitalId);
-    setCaseDrafts(quickCaseDrafts(block.cases));
-  }, [block.cases, block.firstCaseStartTime, block.hospitalId, isOpen]);
-
-  async function saveAndClose() {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    setIsSaving(true);
-
-    try {
-      if (startTime !== block.firstCaseStartTime || hospitalId !== block.hospitalId) {
-        await onMutate(
-          () => updateEntity<AttendingBlock>(token, "attendingBlocks", block.id, { firstCaseStartTime: startTime, hospitalId }),
-          "Block updated"
-        );
-      }
-
-      let newCaseOrder = block.cases.length;
-      for (const draft of caseDrafts) {
-        const procedureLabel = draft.procedureLabel.trim();
-        const durationMinutes = normalizeQuickCaseDuration(draft.durationMinutes);
-        if (draft.isNew) {
-          if (!procedureLabel) continue;
-          const order = newCaseOrder++;
-          await onMutate(
-            () => createEntity<SurgeryCase>(token, "cases", {
-              id: createId("case"),
-              blockId: block.id,
-              procedureLabel,
-              durationMinutes,
-              priority: 3,
-              tags: [],
-              notes: "",
-              order
-            }),
-            "Case added"
-          );
-          continue;
-        }
-
-        const original = block.cases.find((surgeryCase) => surgeryCase.id === draft.id);
-        if (!original || (original.procedureLabel === procedureLabel && original.durationMinutes === durationMinutes)) continue;
-        await onMutate(
-          () => updateEntity<SurgeryCase>(token, "cases", draft.id, { procedureLabel, durationMinutes }),
-          "Case updated"
-        );
-      }
-      setIsOpen(false);
-    } finally {
-      savingRef.current = false;
-      setIsSaving(false);
-    }
-  }
-
-  async function removeCase(draft: QuickCaseDraft) {
-    if (savingRef.current) return;
-    const caseName = draft.procedureLabel.trim() || "this case";
-    const confirmation = draft.isNew
-      ? `Remove unsaved ${caseName}?`
-      : `Delete ${caseName}? This cannot be undone.`;
-    if (!window.confirm(confirmation)) return;
-
-    if (draft.isNew) {
-      setCaseDrafts((current) => current.filter((candidate) => candidate.id !== draft.id));
-      return;
-    }
-
-    savingRef.current = true;
-    setIsSaving(true);
-    try {
-      await onMutate(() => deleteEntity(token, "cases", draft.id), "Case deleted");
-      setCaseDrafts((current) => current.filter((candidate) => candidate.id !== draft.id));
-    } finally {
-      savingRef.current = false;
-      setIsSaving(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!isOpen) return;
-    function handlePointerDown(event: PointerEvent) {
-      if (!editorRef.current?.contains(event.target as Node)) void saveAndClose();
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") void saveAndClose();
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen, startTime, hospitalId, caseDrafts]);
-
-  const hospitalOptions = getQuickEditHospitals(state.hospitals, block.hospitalId);
-
-  return (
-    <div className="quick-editor-anchor" ref={editorRef}>
-      <button
-        type="button"
-        className="icon-button"
-        title="Quick edit block"
-        aria-label={`Quick edit ${block.attending.name} block`}
-        aria-expanded={isOpen}
-        onClick={() => (isOpen ? void saveAndClose() : setIsOpen(true))}
-      >
-        <Pencil size={16} />
-      </button>
-      {isOpen && (
-        <div className="quick-schedule-editor" role="dialog" aria-label={`Edit ${block.attending.name} block`}>
-          <div className="quick-editor-heading">
-            <strong>Edit block</strong>
-            <button type="button" className="icon-button" title="Save and close" onClick={() => void saveAndClose()}>
-              <X size={15} />
-            </button>
-          </div>
-          <div className="quick-editor-settings">
-            <label>
-              Start
-              <input type="time" value={startTime} onInput={(event) => setStartTime(event.currentTarget.value)} />
-            </label>
-            <label>
-              Location
-              <select value={hospitalId} onChange={(event) => setHospitalId(event.target.value)}>
-                {hospitalOptions.map((hospital) => <option key={hospital.id} value={hospital.id}>{hospital.shortName}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="quick-case-heading" aria-hidden="true">
-            <span>Case</span>
-            <span>Duration (min)</span>
-            <span />
-          </div>
-          <div className="quick-case-list">
-            {caseDrafts.map((draft) => (
-              <div className="quick-case-row" key={draft.id}>
-                <input
-                  aria-label="Case name"
-                  placeholder="Case name"
-                  value={draft.procedureLabel}
-                  onChange={(event) => setCaseDrafts((current) => current.map((candidate) => candidate.id === draft.id ? { ...candidate, procedureLabel: event.target.value } : candidate))}
-                />
-                <input
-                  aria-label="Duration minutes"
-                  placeholder="90"
-                  type="number"
-                  min={1}
-                  value={draft.durationMinutes}
-                  onChange={(event) => setCaseDrafts((current) => current.map((candidate) => candidate.id === draft.id ? { ...candidate, durationMinutes: event.target.value ? Number(event.target.value) : "" } : candidate))}
-                />
-                <button
-                  type="button"
-                  className="icon-button quick-remove-case"
-                  title="Delete case"
-                  aria-label={`Delete ${draft.procedureLabel.trim() || "case"}`}
-                  disabled={isSaving}
-                  onClick={() => void removeCase(draft)}
-                >
-                  <Minus size={16} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="quick-editor-footer">
-            <button
-              type="button"
-              className="icon-button quick-add-case"
-              title="Add case row"
-              aria-label="Add case row"
-              onClick={() => setCaseDrafts((current) => [...current, { id: createId("draft"), procedureLabel: "", durationMinutes: "", isNew: true }])}
-            >
-              <Plus size={16} />
-            </button>
-            <button type="button" className="primary-button" disabled={isSaving} onClick={() => void saveAndClose()}>
-              <Save size={15} />{isSaving ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function QuickClinicEditor({
-  state,
-  clinic,
-  token,
-  onMutate
-}: {
-  state: PlannerState;
-  clinic: ScheduledClinicSession;
-  token: string;
-  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
-}) {
-  const editorRef = useRef<HTMLDivElement>(null);
-  const savingRef = useRef(false);
-  const [isOpen, setIsOpen] = useState(false);
-  const [startTime, setStartTime] = useState(clinic.startTime);
-  const [location, setLocation] = useState(clinic.location);
-
-  useEffect(() => {
-    if (isOpen) return;
-    setStartTime(clinic.startTime);
-    setLocation(clinic.location);
-  }, [clinic.location, clinic.startTime, isOpen]);
-
-  async function saveAndClose() {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    try {
-      if (startTime !== clinic.startTime || location !== clinic.location) {
-        const matchingHospital = state.hospitals.find((hospital) => hospital.shortName.toUpperCase() === location.toUpperCase());
-        await onMutate(
-          () => updateEntity<ClinicSession>(token, "clinicSessions", clinic.id, {
-            startTime,
-            endTime: shiftEndTime(clinic.startTime, clinic.endTime, startTime),
-            location,
-            ...(matchingHospital ? { hospitalId: matchingHospital.id } : {})
-          }),
-          "Clinic updated"
-        );
-      }
-      setIsOpen(false);
-    } finally {
-      savingRef.current = false;
-    }
-  }
-
-  useEffect(() => {
-    if (!isOpen) return;
-    function handlePointerDown(event: PointerEvent) {
-      if (!editorRef.current?.contains(event.target as Node)) void saveAndClose();
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") void saveAndClose();
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen, location, startTime]);
-
-  const locationOptions = Array.from(new Set([...QUICK_EDIT_LOCATION_CODES, clinic.location]));
-
-  return (
-    <div className="quick-editor-anchor" ref={editorRef}>
-      <button
-        type="button"
-        className="icon-button"
-        title="Quick edit clinic"
-        aria-label={`Quick edit ${formatClinicLabel(clinic)}`}
-        aria-expanded={isOpen}
-        onClick={() => (isOpen ? void saveAndClose() : setIsOpen(true))}
-      >
-        <Pencil size={16} />
-      </button>
-      {isOpen && (
-        <div className="quick-schedule-editor quick-clinic-editor" role="dialog" aria-label={`Edit ${formatClinicLabel(clinic)}`}>
-          <div className="quick-editor-heading">
-            <strong>Edit clinic</strong>
-            <button type="button" className="icon-button" title="Save and close" onClick={() => void saveAndClose()}><X size={15} /></button>
-          </div>
-          <div className="quick-editor-settings">
-            <label>Start<input type="time" value={startTime} onInput={(event) => setStartTime(event.currentTarget.value)} /></label>
-            <label>
-              Location
-              <select value={location} onChange={(event) => setLocation(event.target.value)}>
-                {locationOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="quick-editor-footer">
-            <button type="button" className="primary-button" onClick={() => void saveAndClose()}><Save size={15} />Save</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function quickCaseDrafts(cases: ScheduledCase[]): QuickCaseDraft[] {
-  return cases.map((surgeryCase) => ({
-    id: surgeryCase.id,
-    procedureLabel: surgeryCase.procedureLabel,
-    durationMinutes: surgeryCase.durationMinutes
-  }));
-}
 
 export function normalizeQuickCaseDuration(value: number | ""): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 90;
@@ -3559,6 +3245,13 @@ function AssignmentControl({
     setClaimResidentId(residents[0].id);
   }, [claimResidentId, residents]);
 
+  if (disabled) {
+    return <div className="assignment-summary">
+      <span className={isCovered ? "" : "coverage-needed"}>{displayedAssignment ? residentLabel(state, displayedAssignment.residentId) : emptyLabel ?? "Unassigned"}</span>
+      {arrangementWarnings.map((warning) => <span key={warning} className="arrangement-badge">{warning}</span>)}
+    </div>;
+  }
+
   if (claimable && kind !== "clinic") {
     return (
       <div className="assign-control">
@@ -3629,383 +3322,6 @@ function AssignmentControl({
       ))}
       {displayedAssignment?.source === "viewer-claim" && <span className="claim-badge">claim</span>}
     </div>
-  );
-}
-
-function ScheduleEditor({
-  state,
-  week,
-  token,
-  selectedService,
-  editableAttendingId,
-  disabled,
-  onMutate
-}: {
-  state: PlannerState;
-  week: Week;
-  token: string;
-  selectedService: string;
-  editableAttendingId?: string;
-  disabled: boolean;
-  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
-}) {
-  const serviceAttendings = getAttendingsForService(state.attendings, selectedService);
-  const editableAttendings = editableAttendingId
-    ? serviceAttendings.filter((attending) => attending.id === editableAttendingId)
-    : serviceAttendings;
-  const attendingOptions = editableAttendings;
-  const [blockForm, setBlockForm] = useState({
-    date: week.startDate,
-    attendingId: attendingOptions[0]?.id ?? "",
-    hospitalId: state.hospitals[0]?.id ?? "",
-    firstCaseStartTime: "07:30"
-  });
-  const [clinicForm, setClinicForm] = useState({
-    date: week.startDate,
-    attendingId: attendingOptions[0]?.id ?? "",
-    hospitalId: state.hospitals[0]?.id ?? "",
-    startTime: "13:00",
-    endTime: "17:00",
-    service: selectedService,
-    location: "",
-    capacity: 1,
-    isProcedure: false
-  });
-  const weekBlocks = state.attendingBlocks.filter(
-    (block) =>
-      block.weekId === week.id &&
-      editableAttendings.some((attending) => attending.id === block.attendingId)
-  );
-  const weekClinics = state.clinicSessions.filter((clinic) => clinic.weekId === week.id && clinicMatchesService(clinic, selectedService));
-
-  useEffect(() => {
-    const nextAttendingId = attendingOptions.some((attending) => attending.id === blockForm.attendingId)
-      ? blockForm.attendingId
-      : attendingOptions[0]?.id ?? "";
-    setBlockForm((current) => ({ ...current, date: week.startDate, attendingId: nextAttendingId }));
-    setClinicForm((current) => ({
-      ...current,
-      date: week.startDate,
-      attendingId: attendingOptions.some((attending) => attending.id === current.attendingId)
-        ? current.attendingId
-        : attendingOptions[0]?.id ?? "",
-      service: selectedService
-    }));
-  }, [week.id, week.startDate, selectedService]);
-
-  return (
-    <section className="two-column">
-      <form
-        className="editor-panel"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onMutate(
-            () =>
-              createEntity<AttendingBlock>(token, "attendingBlocks", {
-                id: createId("block"),
-                weekId: week.id,
-                notes: "",
-                ...blockForm
-              }),
-            "Block added"
-          );
-        }}
-      >
-        <h2>OR Blocks</h2>
-        <fieldset disabled={disabled}>
-          <label>Date<input type="date" min={week.startDate} max={getWeekEndDate(week, state.settings.weekdayOnly)} value={blockForm.date} onChange={(event) => setBlockForm({ ...blockForm, date: event.target.value })} /></label>
-          <label>Attending<Select value={blockForm.attendingId} onChange={(attendingId) => setBlockForm({ ...blockForm, attendingId })} options={attendingOptions} /></label>
-          <label>Hospital<Select value={blockForm.hospitalId} onChange={(hospitalId) => setBlockForm({ ...blockForm, hospitalId })} options={state.hospitals} labelKey="shortName" /></label>
-          <label>First start<input type="time" value={blockForm.firstCaseStartTime} onChange={(event) => setBlockForm({ ...blockForm, firstCaseStartTime: event.target.value })} /></label>
-          <button className="primary-button" type="submit" disabled={!blockForm.attendingId}><Plus size={16} />Add Block</button>
-        </fieldset>
-        <div className="entity-list">
-          {weekBlocks.map((block) => (
-            <BlockEditor key={block.id} state={state} block={block} token={token} selectedService={selectedService} disabled={disabled} onMutate={onMutate} />
-          ))}
-        </div>
-      </form>
-
-      {!editableAttendingId && <form
-        className="editor-panel"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onMutate(
-            () =>
-              createEntity<ClinicSession>(token, "clinicSessions", {
-                id: createId("clinic"),
-                weekId: week.id,
-                ...clinicForm
-              }),
-            "Clinic added"
-          );
-        }}
-      >
-        <h2>Clinic Sessions</h2>
-        <fieldset disabled={disabled}>
-          <label>Date<input type="date" min={week.startDate} max={getWeekEndDate(week, state.settings.weekdayOnly)} value={clinicForm.date} onChange={(event) => setClinicForm({ ...clinicForm, date: event.target.value })} /></label>
-          <label>Attending<Select value={clinicForm.attendingId} onChange={(attendingId) => setClinicForm({ ...clinicForm, attendingId })} options={attendingOptions} /></label>
-          <label>Hospital<Select value={clinicForm.hospitalId} onChange={(hospitalId) => setClinicForm({ ...clinicForm, hospitalId })} options={state.hospitals} labelKey="shortName" /></label>
-          <label>Start<input type="time" value={clinicForm.startTime} onChange={(event) => setClinicForm({ ...clinicForm, startTime: event.target.value })} /></label>
-          <label>End<input type="time" value={clinicForm.endTime} onChange={(event) => setClinicForm({ ...clinicForm, endTime: event.target.value })} /></label>
-          <label>Service<Select value={clinicForm.service} onChange={(service) => setClinicForm({ ...clinicForm, service })} options={serviceLineOptions(state)} /></label>
-          <label className="inline-checkbox">
-            <input type="checkbox" checked={clinicForm.isProcedure} onChange={(event) => setClinicForm({ ...clinicForm, isProcedure: event.target.checked })} />
-            <span>Procedure</span>
-          </label>
-          <label>Location<input value={clinicForm.location} onChange={(event) => setClinicForm({ ...clinicForm, location: event.target.value })} /></label>
-          <label>Capacity<input type="number" min={1} value={clinicForm.capacity} onChange={(event) => setClinicForm({ ...clinicForm, capacity: Number(event.target.value) })} /></label>
-          <button className="primary-button" type="submit"><Plus size={16} />Add Clinic</button>
-        </fieldset>
-        <div className="entity-list">
-          {weekClinics.map((clinic) => (
-            <ClinicSessionEditor
-              key={clinic.id}
-              state={state}
-              clinic={clinic}
-              token={token}
-              disabled={disabled}
-              onMutate={onMutate}
-            />
-          ))}
-        </div>
-      </form>}
-    </section>
-  );
-}
-
-function ClinicSessionEditor({
-  state,
-  clinic,
-  token,
-  disabled,
-  onMutate
-}: {
-  state: PlannerState;
-  clinic: ClinicSession;
-  token: string;
-  disabled: boolean;
-  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
-}) {
-  const attending = state.attendings.find((candidate) => candidate.id === clinic.attendingId);
-
-  return (
-    <div className="compact-entity">
-      <div>
-        <strong>{formatClinicLabel({ ...clinic, attending })}</strong>
-        <span>{clinic.date} {clinic.startTime}-{clinic.endTime} · {clinic.location}</span>
-      </div>
-      <div className="row-actions">
-        <label className="inline-checkbox">
-          <input
-            type="checkbox"
-            checked={clinic.isProcedure}
-            disabled={disabled}
-            onChange={(event) =>
-              onMutate(
-                () => updateEntity<ClinicSession>(token, "clinicSessions", clinic.id, { isProcedure: event.target.checked }),
-                "Clinic updated"
-              )
-            }
-          />
-          <span>Procedure</span>
-        </label>
-        <button
-          title="Delete"
-          type="button"
-          className="icon-button"
-          disabled={disabled}
-          onClick={() => onMutate(() => deleteEntity(token, "clinicSessions", clinic.id), "Clinic deleted")}
-        >
-          <Trash2 size={15} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function BlockEditor({
-  state,
-  block,
-  token,
-  selectedService,
-  disabled,
-  onMutate
-}: {
-  state: PlannerState;
-  block: AttendingBlock;
-  token: string;
-  selectedService: string;
-  disabled: boolean;
-  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
-}) {
-  const serviceAttendings = getAttendingsForService(state.attendings, selectedService);
-  const attendingOptions = serviceAttendings;
-  const [blockDraft, setBlockDraft] = useState({
-    date: block.date,
-    attendingId: block.attendingId,
-    hospitalId: block.hospitalId,
-    firstCaseStartTime: block.firstCaseStartTime,
-    notes: block.notes
-  });
-  const [caseForm, setCaseForm] = useState({
-    defaultId: state.procedureDefaults[0]?.id ?? "",
-    procedureLabel: state.procedureDefaults[0]?.label ?? "",
-    durationMinutes: state.procedureDefaults[0]?.durationMinutes ?? 90,
-    priority: state.procedureDefaults[0]?.priority ?? 3,
-    tags: state.procedureDefaults[0]?.tags.join(", ") ?? ""
-  });
-  const blockCases = state.cases.filter((surgeryCase) => surgeryCase.blockId === block.id).sort((a, b) => a.order - b.order);
-  const attending = state.attendings.find((candidate) => candidate.id === block.attendingId);
-  const hospital = state.hospitals.find((candidate) => candidate.id === block.hospitalId);
-
-  useEffect(() => {
-    setBlockDraft({
-      date: block.date,
-      attendingId: block.attendingId,
-      hospitalId: block.hospitalId,
-      firstCaseStartTime: block.firstCaseStartTime,
-      notes: block.notes
-    });
-  }, [block.attendingId, block.date, block.firstCaseStartTime, block.hospitalId, block.notes]);
-
-  function applyDefault(defaultId: string) {
-    const procedureDefault = state.procedureDefaults.find((candidate) => candidate.id === defaultId);
-    if (!procedureDefault) return;
-    setCaseForm({
-      defaultId,
-      procedureLabel: procedureDefault.label,
-      durationMinutes: procedureDefault.durationMinutes,
-      priority: procedureDefault.priority,
-      tags: procedureDefault.tags.join(", ")
-    });
-  }
-
-  return (
-    <section className="mini-section">
-      <div className="mini-title">
-        <strong>{attending?.name}</strong>
-        <span>{block.date} · {hospital?.shortName} · {block.firstCaseStartTime}</span>
-        <button
-          title="Delete block"
-          className="icon-button"
-          disabled={disabled}
-          onClick={() => onMutate(() => deleteEntity(token, "attendingBlocks", block.id), "Block deleted")}
-        >
-          <Trash2 size={15} />
-        </button>
-      </div>
-      <fieldset disabled={disabled} className="inline-form block-edit-form">
-        <input type="date" value={blockDraft.date} onChange={(event) => setBlockDraft({ ...blockDraft, date: event.target.value })} />
-        <Select value={blockDraft.attendingId} onChange={(attendingId) => setBlockDraft({ ...blockDraft, attendingId })} options={attendingOptions} />
-        <Select value={blockDraft.hospitalId} onChange={(hospitalId) => setBlockDraft({ ...blockDraft, hospitalId })} options={state.hospitals} labelKey="shortName" />
-        <input type="time" value={blockDraft.firstCaseStartTime} onChange={(event) => setBlockDraft({ ...blockDraft, firstCaseStartTime: event.target.value })} />
-        <input value={blockDraft.notes} placeholder="Room / notes" onChange={(event) => setBlockDraft({ ...blockDraft, notes: event.target.value })} />
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => onMutate(() => updateEntity<AttendingBlock>(token, "attendingBlocks", block.id, blockDraft), "Block updated")}
-        >
-          Save Block
-        </button>
-      </fieldset>
-      <fieldset disabled={disabled} className="inline-form">
-        <select value={caseForm.defaultId} onChange={(event) => applyDefault(event.target.value)}>
-          {state.procedureDefaults.map((procedureDefault) => (
-            <option key={procedureDefault.id} value={procedureDefault.id}>{procedureDefault.label}</option>
-          ))}
-        </select>
-        <input value={caseForm.procedureLabel} onChange={(event) => setCaseForm({ ...caseForm, procedureLabel: event.target.value })} />
-        <input type="number" min={1} value={caseForm.durationMinutes} onChange={(event) => setCaseForm({ ...caseForm, durationMinutes: Number(event.target.value) })} />
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() =>
-            onMutate(
-              () =>
-                createEntity(token, "cases", {
-                  id: createId("case"),
-                  blockId: block.id,
-                  procedureLabel: caseForm.procedureLabel,
-                  durationMinutes: caseForm.durationMinutes,
-                  priority: caseForm.priority,
-                  tags: splitTags(caseForm.tags),
-                  notes: "",
-                  order: blockCases.length
-                }),
-              "Case added"
-            )
-          }
-        >
-          <Plus size={15} />Case
-        </button>
-      </fieldset>
-      {blockCases.map((surgeryCase) => (
-        <CaseEditor
-          key={surgeryCase.id}
-          surgeryCase={surgeryCase}
-          token={token}
-          disabled={disabled}
-          onMutate={onMutate}
-        />
-      ))}
-    </section>
-  );
-}
-
-function CaseEditor({
-  surgeryCase,
-  token,
-  disabled,
-  onMutate
-}: {
-  surgeryCase: SurgeryCase;
-  token: string;
-  disabled: boolean;
-  onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState({
-    procedureLabel: surgeryCase.procedureLabel,
-    durationMinutes: surgeryCase.durationMinutes
-  });
-
-  useEffect(() => {
-    setDraft({
-      procedureLabel: surgeryCase.procedureLabel,
-      durationMinutes: surgeryCase.durationMinutes
-    });
-  }, [surgeryCase.durationMinutes, surgeryCase.procedureLabel]);
-
-  return (
-    <fieldset disabled={disabled} className="case-edit-row">
-      <input
-        value={draft.procedureLabel}
-        aria-label="Case name"
-        onChange={(event) => setDraft({ ...draft, procedureLabel: event.target.value })}
-      />
-      <input
-        type="number"
-        min={1}
-        value={draft.durationMinutes}
-        aria-label="Duration minutes"
-        onChange={(event) => setDraft({ ...draft, durationMinutes: Number(event.target.value) })}
-      />
-      <button
-        type="button"
-        className="secondary-button"
-        onClick={() => onMutate(() => updateEntity<SurgeryCase>(token, "cases", surgeryCase.id, draft), "Case updated")}
-      >
-        Save
-      </button>
-      <button
-        title="Delete case"
-        type="button"
-        className="icon-button"
-        onClick={() => onMutate(() => deleteEntity(token, "cases", surgeryCase.id), "Case deleted")}
-      >
-        <Trash2 size={15} />
-      </button>
-    </fieldset>
   );
 }
 

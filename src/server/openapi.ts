@@ -1420,6 +1420,26 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/cases/{id}/move": {
+        post: {
+          summary: "Move a case up or down within its block",
+          description: "Requires edit access to the case's service, admin access, or ownership of the block as its attending. Saves the new order atomically and recalculates this block's start times from the block start and case durations, clearing explicit case start times.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: {
+              type: "object", required: ["direction"], properties: { direction: { type: "string", enum: ["up", "down"] } }
+            } } }
+          },
+          responses: {
+            "200": { description: "Updated PlannerState" },
+            "400": { description: "Invalid direction" },
+            "403": { description: "Edit access required" },
+            "404": { description: "Case not found" },
+            "409": { description: "Schedule version conflict" }
+          }
+        }
+      },
       "/api/assignments": {
         post: {
           summary: "Create an assignment",
