@@ -4,8 +4,8 @@ import { canSeeDiagnosticErrors, presentActionError, presentBackgroundError } fr
 describe("error presentation", () => {
   it("shows diagnostic detail only to admins and the aschroeder account", () => {
     expect(canSeeDiagnosticErrors({ role: "admin", username: "admin" })).toBe(true);
-    expect(canSeeDiagnosticErrors({ role: "viewer", username: "Aschroeder" })).toBe(true);
-    expect(canSeeDiagnosticErrors({ role: "viewer", username: "resident01" })).toBe(false);
+    expect(canSeeDiagnosticErrors({ role: "resident", username: "Aschroeder" })).toBe(true);
+    expect(canSeeDiagnosticErrors({ role: "resident", username: "resident01" })).toBe(false);
   });
 
   it("uses actionable copy instead of internal errors for regular users", () => {

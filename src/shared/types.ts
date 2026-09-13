@@ -1,4 +1,4 @@
-export type Role = "admin" | "attending" | "viewer" | "medical-student";
+export type Role = "resident" | "attending" | "student" | "admin";
 
 export type ServicePrivilege = "view" | "request" | "edit";
 

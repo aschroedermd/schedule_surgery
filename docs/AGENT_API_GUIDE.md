@@ -18,6 +18,67 @@ Contract sources: use the live `GET /api/openapi.json` response as the authorita
 - If API keys are configured, use the admin API key only for intentional writes and the viewer API key for read-only tools. Otherwise use browser-session bearer tokens.
 - After OR, clinic, resident-assignment, or rounding writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings. After attending-call writes, verify with a ranged `GET /api/attending-coverage` and inspect `effectiveCoverage`.
 
+## Rebuild And Deploy The Production Server
+
+Deployment uses the GitHub Actions API as a separate control plane. Do not look for or add a rebuild endpoint under the app's `/api` routes: the process being replaced cannot reliably supervise its own deployment, and exposing a shell-capable route would unnecessarily increase risk. The checked-in `.github/workflows/deploy-production.yml` workflow connects as a restricted `deploy` user and may run only the root-owned `/usr/local/bin/rebuild` command. It also runs automatically after a push to `main`.
+
+An agent may trigger a rebuild when the user explicitly asks it to deploy or rebuild. It needs these secrets/configuration from its private runtime, never from this repository or planner state:
+
+```text
+GITHUB_TOKEN=<fine-grained token with Actions: write for this repository>
+GITHUB_REPOSITORY=OWNER/REPO
+BASE_URL=https://schedule.yourdomain.com
+```
+
+First create a unique correlation id and dispatch the workflow. Keep the same id until the deployment reaches a terminal state:
+
+```bash
+DEPLOY_REQUEST_ID="agent-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+
+DISPATCH_RESPONSE="$(curl --fail-with-body -X POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/deploy-production.yml/dispatches" \
+  --data-binary "$(jq -nc --arg request_id "$DEPLOY_REQUEST_ID" \
+    '{ref:"main",inputs:{request_id:$request_id}}')")"
+
+RUN_ID="$(jq -er '.workflow_run_id' <<<"$DISPATCH_RESPONSE")"
+RUN_URL="$(jq -er '.html_url' <<<"$DISPATCH_RESPONSE")"
+```
+
+`200 OK` returns the new `workflow_run_id`, API `run_url`, and browser `html_url`; it does not mean the rebuild succeeded. A network timeout leaves the result unknown, so do not immediately dispatch again. Find the run with the existing correlation id first:
+
+```bash
+curl --fail-with-body \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/deploy-production.yml/runs?event=workflow_dispatch&branch=main&per_page=20"
+```
+
+From `workflow_runs[]`, select the entry whose `display_title` is exactly `Deploy production (<DEPLOY_REQUEST_ID>)` and retain its `id` as `RUN_ID`. GitHub may take several seconds to create the run; retry this read without sending another dispatch. The workflow serializes production deployments, so a run may remain `queued` while an earlier deploy finishes.
+
+Poll the selected run, with reasonable pauses, until `status` is `completed`:
+
+```bash
+curl --fail-with-body \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+```
+
+Treat the rebuild as successful only when `status` is `completed` and `conclusion` is `success`. On failure, report `conclusion` and `html_url`; inspect step-level results with `GET /repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs`. Do not expose the GitHub token, SSH material, environment secrets, or raw logs containing secrets.
+
+Finally, verify the newly served application independently through HTTPS:
+
+```bash
+curl --fail-with-body "$BASE_URL/api/healthz"
+```
+
+The expected body is `{ "ok": true }`. A successful workflow plus a failed health check is a failed verification, not a successful deployment. Report the correlated GitHub run URL and health-check result to the user. The one-time SSH key, pinned host key, GitHub environment, and restricted sudo setup are documented in [DEPLOY_DIGITALOCEAN.md](DEPLOY_DIGITALOCEAN.md#remote-deploys-with-github-actions).
+
 ## Authentication
 
 External tools can pass an API key when one is configured:
@@ -30,9 +91,9 @@ Authentication roles:
 
 - `admin`: full planner access. A browser-session admin can manage all browser users. The admin API key can create accounts, reset passwords, manage assistant model settings, and read/change/reset per-user voice quotas, but cannot list, update, or delete browser users.
 - `attending`: browser-session account linked to exactly one existing `attendings[]` record. It can create, update, and delete that attending's OR blocks and cases without a service edit grant. It cannot use that ownership exception for clinics, resident assignments, coverage entries, suggestions, or account management; those require the normal service privilege or admin role.
-- `viewer`: read access unless a browser user has explicit per-service `request` or `edit` privileges.
+- `resident`, `attending`, and `student`: read access unless the browser user has explicit per-service `request` or `edit` privileges.
 
-`attending` is a browser-user role, not an API-key role. An API-key tool is authenticated as `admin` or `viewer` only. Send browser tokens as `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=<token>` for `EventSource`). A temporary-password session may call `POST /api/me/password/skip` to use planner endpoints for that current session; the password-change gate returns on the next username/password login unless it calls `PATCH /api/me/password`.
+`attending` is a browser-user role, not an API-key role. An API-key tool is authenticated with admin or read-only access. Send browser tokens as `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=<token>` for `EventSource`). A temporary-password session may call `POST /api/me/password/skip` to use planner endpoints for that current session; the password-change gate returns on the next username/password login unless it calls `PATCH /api/me/password`.
 
 Browser sessions use username/password login, not the API-key role names:
 
@@ -44,7 +105,7 @@ curl -X POST "$BASE_URL/api/auth/login" \
 
 Seeded browser users are `admin` plus account-eligible resident-linked accounts when `SEED_USER_PASSWORD` is configured privately. Named residents use first-initial-plus-last-name usernames such as `aadeleke`; outside-program rotators with `accountEligible: false` stay manually assignable but do not receive seeded accounts, while Plastic Surgery (`Pl Sx`) rotators are account-eligible by default. No public `guest` account is seeded. Browser users have per-service privileges of `view`, `request`, or `edit`; request-privileged users submit coverage calendar requests, and users with edit privilege for that service can approve/deny those requests.
 
-An admin browser session or admin API key can call `GET /api/users` and `PATCH /api/users/{username}`. API-key updates may grant or revoke `servicePrivileges`, `canAddContacts`, and `canBuildCall` for non-admin accounts, but cannot modify an admin browser account, change account roles, or relink attending identities. Only a logged-in admin browser session can delete accounts. An admin API key can also call `POST /api/users`, `POST /api/users/bulk`, `PATCH /api/users/{username}/password`, and the per-user voice-quota endpoints documented below. API-key creations use `accountType: "user"`, `accountType: "attending"`, or `accountType: "medical-student"` (`user` is stored as the browser `viewer` role); a medical-student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
+An admin browser session or admin API key can call `GET /api/users` and `PATCH /api/users/{username}`. API-key updates may grant or revoke `servicePrivileges`, `canAddContacts`, and `canBuildCall` for non-admin accounts, but cannot modify an admin browser account, change account roles, or relink attending identities. `canBuildCall` is the Advanced editor setting and unlocks both Call Builder and Schedule Editor; it is limited to resident and attending accounts. Only a logged-in admin browser session can delete accounts. An admin API key can also call `POST /api/users`, `POST /api/users/bulk`, `PATCH /api/users/{username}/password`, and the per-user voice-quota endpoints documented below. API-key creations use `accountType: "resident"`, `accountType: "attending"`, or `accountType: "student"`; a student account creates a linked Medical Student roster entry that is assignable to cases only. They can set `servicePrivileges` and cannot create an admin account. When creating an account, use exactly one password mode: `password` for a permanent password, `temporaryPassword` for an admin-chosen first-login password, or omit both to receive the `schroeder1` temporary password exactly once. Temporary-password accounts return to the password-change screen after every login until their password is changed. An `attending` account must include an `attendingId` that exists in the current planner state.
 
 Example attending account creation (with an admin API key):
 

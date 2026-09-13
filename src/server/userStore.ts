@@ -126,7 +126,11 @@ export class FileUserStore implements UserStore {
       if (user.role === "attending" && !user.attendingId) throw new Error("Attending accounts must be linked to an attending");
       if (patch.servicePrivileges) user.servicePrivileges = normalizePrivileges(patch.servicePrivileges);
       if (typeof patch.canAddContacts === "boolean") user.canAddContacts = user.role === "admin" || patch.canAddContacts;
-      if (typeof patch.canBuildCall === "boolean") user.canBuildCall = user.role === "admin" || patch.canBuildCall;
+      if (typeof patch.canBuildCall === "boolean") {
+        user.canBuildCall = user.role === "admin" || (canBeAdvancedEditor(user.role) && patch.canBuildCall);
+      } else if (!canBeAdvancedEditor(user.role) && user.role !== "admin") {
+        user.canBuildCall = false;
+      }
       user.updatedAt = new Date().toISOString();
       return toSummary(user);
     });
@@ -276,7 +280,7 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       attendingId: normalizeRole(user.role) === "attending" ? readOptionalString(user.attendingId) : undefined,
       servicePrivileges: normalizePrivileges(user.servicePrivileges),
       canAddContacts: username === "admin" || user.canAddContacts === true,
-      canBuildCall: username === "admin" || user.canBuildCall === true,
+      canBuildCall: username === "admin" || (canBeAdvancedEditor(normalizeRole(user.role)) && user.canBuildCall === true),
       voiceDailyLimit: normalizeVoiceDailyLimit(user.voiceDailyLimit),
       preferredVoicePreset: normalizeVoicePreset(user.preferredVoicePreset),
       createdAt: user.createdAt ?? now,
@@ -306,7 +310,7 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       }
     }
     if (!existing) {
-      users.set(user.username, makeSeedUser(user.username, user.displayName, "viewer", seedPassword, now, true));
+      users.set(user.username, makeSeedUser(user.username, user.displayName, "resident", seedPassword, now, true));
     }
   }
 
@@ -366,7 +370,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
         role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : input.servicePrivileges
       ),
       canAddContacts: role === "admin" || input.canAddContacts === true,
-      canBuildCall: role === "admin" || input.canBuildCall === true,
+      canBuildCall: role === "admin" || (canBeAdvancedEditor(role) && input.canBuildCall === true),
       voiceDailyLimit: DEFAULT_VOICE_DAILY_LIMIT,
       preferredVoicePreset: DEFAULT_VOICE_PRESET,
       passwordHash: hashSecret(password),
@@ -445,7 +449,13 @@ function normalizeVoicePreset(value: unknown): 1 | 2 | 3 | 4 | 5 {
 }
 
 function normalizeRole(role: unknown): Role {
-  return role === "admin" || role === "attending" || role === "medical-student" ? role : "viewer";
+  if (role === "admin" || role === "attending" || role === "student" || role === "resident") return role;
+  if (role === "medical-student") return "student";
+  return "resident";
+}
+
+function canBeAdvancedEditor(role: Role): boolean {
+  return role === "resident" || role === "attending";
 }
 
 function hashSecret(secret: string): PasswordHash {
