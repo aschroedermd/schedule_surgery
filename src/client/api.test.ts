@@ -69,9 +69,20 @@ describe("client API requests", () => {
         onReset: () => {
           resets += 1;
         }
-      }
+      },
+      undefined,
+      true,
+      5
     );
 
+    expect(fetch).toHaveBeenCalledWith("/api/chat/stream", expect.objectContaining({
+      body: JSON.stringify({
+        messages: [{ role: "user", content: "Who is on call?" }],
+        serviceLine: "Davies",
+        voiceMode: true,
+        voicePreset: 5
+      })
+    }));
     expect(deltas).toEqual(["Checking…", "On call: ", "Dr. Blue"]);
     expect(resets).toBe(1);
     expect(response).toMatchObject({ message: "On call: Dr. Blue", stateVersion: 7, remaining: 19 });

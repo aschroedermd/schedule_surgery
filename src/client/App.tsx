@@ -4802,7 +4802,7 @@ function getTabTitle(tab: Tab): string {
     case "call-builder":
       return "Call Builder 🧩";
     case "schedule":
-      return "Schedule Editor ✎";
+      return "Blocks ⏹️";
     case "requests":
       return "Requests 📤";
     case "roster":

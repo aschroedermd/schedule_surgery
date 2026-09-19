@@ -312,7 +312,7 @@ export function UsersTab({
             disabled={addDraft.role === "admin" || addDraft.role === "student"}
             onChange={(event) => setAddDraft({ ...addDraft, canBuildCall: event.target.checked })}
           />
-          Advanced editor (Call Builder + Schedule Editor)
+          Advanced editor (Call Builder + Blocks)
         </label>
         {addDraft.preset === "custom" && addDraft.role !== "admin" && (
           <div className="privilege-grid add-privilege-grid">
@@ -406,7 +406,7 @@ export function UsersTab({
                     disabled={draft.role === "admin" || draft.role === "student"}
                     onChange={(event) => updateDraft(user.username, { canBuildCall: event.target.checked })}
                   />
-                  Advanced editor (Call Builder + Schedule Editor)
+                  Advanced editor (Call Builder + Blocks)
                 </label>
                 <div className="privilege-presets" aria-label={`${user.username} bulk privileges`}>
                   <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "edit")}>

@@ -443,7 +443,8 @@ export function ChatTab({
           }
         },
         controller.signal,
-        shouldSpeak
+        shouldSpeak,
+        selectedVoicePreset
       );
       const completedId = assistantMessageId ?? createChatMessageId();
       setMessages((current) => {

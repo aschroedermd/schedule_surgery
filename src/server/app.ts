@@ -397,6 +397,7 @@ export function createApp(
         res.status(400).json({ error: "Current service is required" });
         return;
       }
+      const voicePreset = readVoicePreset(req.body.voicePreset);
       const unlimited = req.user!.role === "admin";
       const quota = unlimited
         ? { allowed: true, used: 0, remaining: DAILY_CHAT_LIMIT }
@@ -418,6 +419,7 @@ export function createApp(
           user: req.user!,
           serviceLine,
           voiceMode: req.body.voiceMode === true,
+          voicePreset,
           actions: assistantActionPreparer(state, req.user!, serviceLine)
         },
         fetch,
@@ -460,6 +462,7 @@ export function createApp(
     }
 
     try {
+      const voicePreset = readVoicePreset(req.body.voicePreset);
       const unlimited = req.user!.role === "admin";
       const quota = unlimited
         ? { allowed: true, used: 0, remaining: DAILY_CHAT_LIMIT }
@@ -501,6 +504,7 @@ export function createApp(
           user: req.user!,
           serviceLine,
           voiceMode: req.body.voiceMode === true,
+          voicePreset,
           actions: assistantActionPreparer(state, req.user!, serviceLine)
         },
         (delta) => writeChatStreamEvent(res, { type: "delta", delta }),

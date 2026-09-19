@@ -317,12 +317,13 @@ export async function sendChatMessage(
   token: string,
   messages: ChatConversationMessage[],
   serviceLine: string,
-  voiceMode = false
+  voiceMode = false,
+  voicePreset: VoicePreset = 1
 ): Promise<ChatResponse> {
   return request<ChatResponse>("/api/chat", {
     method: "POST",
     token,
-    body: JSON.stringify({ messages, serviceLine, voiceMode })
+    body: JSON.stringify({ messages, serviceLine, voiceMode, voicePreset })
   });
 }
 
@@ -336,7 +337,8 @@ export async function streamChatMessage(
     onReset?: () => void;
   },
   signal?: AbortSignal,
-  voiceMode = false
+  voiceMode = false,
+  voicePreset: VoicePreset = 1
 ): Promise<ChatResponse> {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
@@ -344,7 +346,7 @@ export async function streamChatMessage(
       authorization: `Bearer ${token}`,
       "content-type": "application/json"
     },
-    body: JSON.stringify({ messages, serviceLine, voiceMode }),
+    body: JSON.stringify({ messages, serviceLine, voiceMode, voicePreset }),
     signal
   });
   if (!response.ok) {

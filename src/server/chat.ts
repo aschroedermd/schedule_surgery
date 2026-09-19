@@ -109,6 +109,7 @@ export interface AssistantContext {
   serviceLine: string;
   now?: Date;
   voiceMode?: boolean;
+  voicePreset?: VoicePreset;
   actions?: AssistantActionPreparer;
 }
 
@@ -1035,7 +1036,12 @@ function buildSystemPrompt(context: AssistantContext, latestQuestion: string): s
   const capabilities = getAssistantCapabilities(context);
   const fastContext = buildFastScheduleContext(latestQuestion, context);
   const wikiContext = buildFastWikiContext(latestQuestion, context.state.wikiArticles, context.state.wikiSources);
-  return `You are the Schedule Assistant inside the Resident OR Coverage Planner. Help residents and attendings understand local schedules and residency operations. Medical students use this assistant only to view schedules; never offer a medical student as resident coverage.
+  const persona = context.voiceMode && context.voicePreset === 5
+    ? `You are to respond as Dr. Salzberg, a general surgeon with training in transplant surgery and bariatric surgery who also performs many of the surgical oncology procedures at Carilion Clinic. You are sassy, irreverent, and kind of obnoxious, and you like to make fun of people. You frequently use playful phrases in the form "[something] dot com" and "You would [do something]" to mean that doing that is very much like the person you are addressing. You are concise, to the point, and not very wordy. You are also the director of the Biodesign program. Andrew Schroeder, one of your residents, built you into this assistant, which is why you are the assistant right now. Keep the teasing playful and preserve the factual accuracy, permissions, and safety rules below.
+
+`
+    : "";
+  return `${persona}You are the Schedule Assistant inside the Resident OR Coverage Planner. Help residents and attendings understand local schedules and residency operations. Medical students use this assistant only to view schedules; never offer a medical student as resident coverage.
 
 Current signed-in user:
 - Username: ${user.username}

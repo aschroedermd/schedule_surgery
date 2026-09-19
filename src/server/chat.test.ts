@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createInitialState } from "./sampleData";
-import { answerScheduleQuestion, refreshScheduleLookups, streamScheduleQuestion, synthesizeScheduleSpeech, transcribeScheduleAudio } from "./chat";
+import { type AssistantContext, answerScheduleQuestion, refreshScheduleLookups, streamScheduleQuestion, synthesizeScheduleSpeech, transcribeScheduleAudio } from "./chat";
 import { MemoryStateStore } from "./store";
 import { SessionUser } from "../shared/types";
 
@@ -28,7 +28,11 @@ const openAISettings = {
 
 const FAST_CONTEXT_NOW = new Date("2026-07-31T16:00:00Z");
 
-async function captureSystemPrompt(question: string, state = createInitialState(FAST_CONTEXT_NOW)): Promise<string> {
+async function captureSystemPrompt(
+  question: string,
+  state = createInitialState(FAST_CONTEXT_NOW),
+  voice: Pick<AssistantContext, "voiceMode" | "voicePreset"> = {}
+): Promise<string> {
   let systemPrompt = "";
   const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as {
@@ -42,7 +46,7 @@ async function captureSystemPrompt(question: string, state = createInitialState(
   }) as typeof fetch;
   await answerScheduleQuestion(
     [{ role: "user", content: question }],
-    { state, user, serviceLine: "Davies", now: FAST_CONTEXT_NOW },
+    { state, user, serviceLine: "Davies", now: FAST_CONTEXT_NOW, ...voice },
     fetcher
   );
   return systemPrompt;
@@ -910,6 +914,26 @@ describe("schedule assistant", () => {
     await synthesizeScheduleSpeech("A concise answer.", 2, fetcher);
   });
 
+  it.each(
+    [false, true].flatMap((voiceMode) =>
+      ([undefined, 1, 2, 3, 4, 5] as const).map((voicePreset) => ({ voiceMode, voicePreset }))
+    )
+  )("only prepends the Salzberg persona for active Voice 5: $voiceMode / $voicePreset", async (voice) => {
+    const prompt = await captureSystemPrompt("Who is on call?", createInitialState(FAST_CONTEXT_NOW), voice);
+    if (voice.voiceMode && voice.voicePreset === 5) {
+      expect(prompt).toMatch(/^You are to respond as Dr\. Salzberg/);
+      expect(prompt).toContain("Andrew Schroeder");
+      expect(prompt).toContain("Biodesign program");
+      expect(prompt).toContain('"[something] dot com"');
+      expect(prompt).toContain('"You would [do something]"');
+      expect(prompt).toContain("You are the Schedule Assistant");
+      expect(prompt).toContain("Safety rules:");
+    } else {
+      expect(prompt).toMatch(/^You are the Schedule Assistant/);
+      expect(prompt).not.toContain("You are to respond as Dr. Salzberg");
+    }
+  });
+
   it("instructs voice-mode answers to be short spoken dialogue without visual formatting", async () => {
     let systemPrompt = "";
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
@@ -935,7 +959,9 @@ describe("schedule assistant", () => {
   it("streams answer text and returns the schedule version it checked", async () => {
     const deltas: string[] = [];
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      expect(JSON.parse(String(init?.body))).toMatchObject({ stream: true });
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({ stream: true });
+      expect(body.messages[0].content).toMatch(/^You are to respond as Dr\. Salzberg/);
       return new Response(
         [
           `data: ${JSON.stringify({
@@ -955,7 +981,7 @@ describe("schedule assistant", () => {
 
     const result = await streamScheduleQuestion(
       [{ role: "user", content: "Am I on call Saturday?" }],
-      { state, user, serviceLine: "Davies", now: new Date("2026-07-28T16:00:00Z") },
+      { state, user, serviceLine: "Davies", now: new Date("2026-07-28T16:00:00Z"), voiceMode: true, voicePreset: 5 },
       (delta) => deltas.push(delta),
       fetcher
     );

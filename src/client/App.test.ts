@@ -76,7 +76,7 @@ describe("planner navigation", () => {
     expect(tabIds(userTabs)).not.toContain("activity");
   });
 
-  it("shows the Call Builder and Schedule Editor only to admins and advanced editors", () => {
+  it("shows the Call Builder and Blocks only to admins and advanced editors", () => {
     const adminTabs = tabIds(getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true }));
     const advancedTabs = tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: true, pendingCoverageRequestCount: 0, isAdmin: false }));
     const basicTabs = tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: false, pendingCoverageRequestCount: 0, isAdmin: false }));

@@ -24,7 +24,7 @@ export function getNavigationTabs({
     ["contacts", "Contacts ☎️"],
     ["calendar", "Calendar 🗓️"],
     ["call", "CALL 📟"],
-    ...(canBuildCall || isAdmin ? [["call-builder", "Call Builder 🧩"], ["schedule", "Schedule Editor ✎"]] as const : []),
+    ...(canBuildCall || isAdmin ? [["call-builder", "Call Builder 🧩"], ["schedule", "Blocks ⏹️"]] as const : []),
     ...(canUseRequests ? [["requests", pendingCoverageRequestCount > 0 ? `Requests 📤 (${pendingCoverageRequestCount})` : "Requests 📤"]] as const : []),
     ...(isAdmin ? [["roster", "Roster"], ["defaults", "Setup"], ["users", "Users"], ["activity", "Activity 🛒"]] as const : []),
     ["residents", "✨⭐️"],
