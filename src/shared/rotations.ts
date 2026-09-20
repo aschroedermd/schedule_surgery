@@ -98,7 +98,7 @@ export function getTrainingLevelRank(trainingLevel: TrainingLevel): number {
     PGY3: 3,
     PGY2: 2,
     PGY1: 1,
-    "Medical Student": 0
+    "Student": 0
   };
   return ranks[trainingLevel] ?? 0;
 }

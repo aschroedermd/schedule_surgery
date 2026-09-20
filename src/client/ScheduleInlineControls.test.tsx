@@ -27,7 +27,7 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); });
 function render(edit: boolean, editableAttendingId?: string) {
   act(() => root.render(<BoardTab state={state} schedule={buildWeekSchedule(state, "week_current", "Davies")}
-    token="test" selectedService="Davies" canEdit={edit && !editableAttendingId} canMedicalStudentSelfAssign={false}
+    token="test" selectedService="Davies" canEdit={edit && !editableAttendingId} canStudentSelfAssign={false}
     showScheduleEditor={edit} editableAttendingId={editableAttendingId} onMutate={async action => { await action(); }} onCopied={() => {}} />));
 }
 function button(name: string, scope: ParentNode = container) {
@@ -104,7 +104,7 @@ describe("inline schedule editing", () => {
   it("keeps the case draft open after a failed save", async () => {
     vi.mocked(updateEntity).mockRejectedValue(new Error("Offline"));
     act(() => root.render(<BoardTab state={state} schedule={buildWeekSchedule(state, "week_current", "Davies")}
-      token="test" selectedService="Davies" canEdit canMedicalStudentSelfAssign={false} showScheduleEditor
+      token="test" selectedService="Davies" canEdit canStudentSelfAssign={false} showScheduleEditor
       onMutate={async action => { try { await action(); } catch {} }} onCopied={() => {}} />));
     await click("Edit Whipple");
     await submit(container.querySelector<HTMLFormElement>('form[aria-label="Edit case"]')!);

@@ -10,7 +10,7 @@ export const SERVICE_LINES = ["ICU", "Gilbert", "Vascular", "Davies", "Berry", "
 
 export type ServiceLine = (typeof SERVICE_LINES)[number];
 
-export type TrainingLevel = "PGY1" | "PGY2" | "PGY3" | "PGY4" | "PGY5" | "Fellow" | "Medical Student";
+export type TrainingLevel = "PGY1" | "PGY2" | "PGY3" | "PGY4" | "PGY5" | "Fellow" | "Student";
 
 export type ResidentRosterKind = "primary" | "off-service";
 

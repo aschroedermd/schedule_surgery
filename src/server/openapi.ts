@@ -105,7 +105,7 @@ export function getOpenApiDocument() {
             accountType: {
               type: "string",
               enum: ["resident", "attending", "student"],
-              description: "Use this for account creation, especially with X-API-Key. Student accounts also create a case-assignable medical-student roster entry. Defaults to resident."
+              description: "Use this for account creation, especially with X-API-Key. Student accounts also create a case-assignable student roster entry. Defaults to resident."
             },
             role: {
               type: "string",
@@ -460,10 +460,10 @@ export function getOpenApiDocument() {
           properties: {
             kind: { type: "string", enum: ["case", "block", "clinic"] },
             targetId: { type: "string" },
-            residentId: { type: "string", description: "Existing resident or medical-student roster id." },
-            manualMedicalStudentName: {
+            residentId: { type: "string", description: "Existing resident or student roster id." },
+            manualStudentName: {
               type: "string",
-              description: "Creates or reuses an assignable-only medical-student roster entry for a case or clinic assignment."
+              description: "Creates or reuses an assignable-only student roster entry for a case or clinic assignment."
             },
             locked: { type: "boolean", default: false }
           }

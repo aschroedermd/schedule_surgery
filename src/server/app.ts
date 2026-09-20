@@ -744,9 +744,9 @@ export function createApp(
       const input = normalizeUserCreationInput(req, req.body);
       const state = await store.load();
       assertAttendingAccountLinks(state, [input]);
-      assertMedicalStudentAccountLinks(state, [input]);
+      assertStudentAccountLinks(state, [input]);
       const created = await userStore.createUser(input);
-      const nextState = addActivity(addMedicalStudentRosterEntries(state, [created.user]), {
+      const nextState = addActivity(addStudentRosterEntries(state, [created.user]), {
         ...requestActivityActor(req),
         activityType: "account",
         action: "created account",
@@ -766,9 +766,9 @@ export function createApp(
       const users = Array.isArray(req.body.users) ? req.body.users.map((input: unknown) => normalizeUserCreationInput(req, input)) : [];
       const state = await store.load();
       assertAttendingAccountLinks(state, users);
-      assertMedicalStudentAccountLinks(state, users);
+      assertStudentAccountLinks(state, users);
       const created = await userStore.createUsers(users);
-      const nextState = addActivity(addMedicalStudentRosterEntries(state, created.map((item) => item.user)), {
+      const nextState = addActivity(addStudentRosterEntries(state, created.map((item) => item.user)), {
         ...requestActivityActor(req),
         activityType: "account",
         action: "created accounts",
@@ -797,7 +797,7 @@ export function createApp(
         displayName: req.body.displayName ?? existing.displayName
       };
       assertAttendingAccountLinks(state, [input]);
-      assertMedicalStudentAccountLinks(state, [input]);
+      assertStudentAccountLinks(state, [input]);
       const user = await userStore.updateUser(username, {
         displayName: readOptionalString(req.body.displayName),
         role: isRole(req.body.role) ? req.body.role : undefined,
@@ -806,7 +806,7 @@ export function createApp(
         canAddContacts: typeof req.body.canAddContacts === "boolean" ? req.body.canAddContacts : undefined,
         canBuildCall: typeof req.body.canBuildCall === "boolean" ? req.body.canBuildCall : undefined
       });
-      const nextState = addActivity(addMedicalStudentRosterEntries(state, [user]), {
+      const nextState = addActivity(addStudentRosterEntries(state, [user]), {
         ...requestActivityActor(req),
         activityType: "account",
         action: "updated account",
@@ -1903,28 +1903,28 @@ export function createApp(
     try {
       let state = await store.load();
       const serviceLine = getAssignmentTargetServiceLine(state, req.body.kind, req.body.targetId);
-      const isMedicalStudentSelfAssignment = req.user?.role === "student" && !hasServicePrivilege(req.user, serviceLine, "edit");
-      if (isMedicalStudentSelfAssignment) {
-        assertMedicalStudentSelfAssignment(state, req.user, req.body);
+      const isStudentSelfAssignment = req.user?.role === "student" && !hasServicePrivilege(req.user, serviceLine, "edit");
+      if (isStudentSelfAssignment) {
+        assertStudentSelfAssignment(state, req.user, req.body);
       } else if (!requireServiceEdit(req, res, serviceLine)) {
         return;
       }
-      const manualMedicalStudentName = readOptionalString(req.body.manualMedicalStudentName);
-      if (manualMedicalStudentName && req.body.residentId) {
-        throw new HttpError(400, "Choose an existing person or enter a medical student name, not both");
+      const manualStudentName = readOptionalString(req.body.manualStudentName) ?? readOptionalString(req.body.manualMedicalStudentName);
+      if (manualStudentName && req.body.residentId) {
+        throw new HttpError(400, "Choose an existing person or enter a student name, not both");
       }
-      if (manualMedicalStudentName && req.body.kind !== "case" && req.body.kind !== "clinic") {
-        throw new HttpError(400, "Medical students can be assigned to cases or clinics only");
+      if (manualStudentName && req.body.kind !== "case" && req.body.kind !== "clinic") {
+        throw new HttpError(400, "Students can be assigned to cases or clinics only");
       }
-      const manualMedicalStudent = manualMedicalStudentName
-        ? findOrCreateManualMedicalStudent(state, manualMedicalStudentName)
+      const manualStudent = manualStudentName
+        ? findOrCreateManualStudent(state, manualStudentName)
         : undefined;
-      if (manualMedicalStudent?.created) {
-        state = { ...state, residents: [...state.residents, manualMedicalStudent.resident] };
+      if (manualStudent?.created) {
+        state = { ...state, residents: [...state.residents, manualStudent.resident] };
       }
-      const residentId = manualMedicalStudent?.resident.id ?? req.body.residentId;
+      const residentId = manualStudent?.resident.id ?? req.body.residentId;
       requireResident(state, residentId);
-      assertMedicalStudentAssignmentKind(state, req.body.kind, residentId);
+      assertStudentAssignmentKind(state, req.body.kind, residentId);
       assertResidentAvailableForAssignment(state, req.body.kind, req.body.targetId, residentId);
       const assignment = makeAssignment(req.body.kind, req.body.targetId, residentId, "admin", Boolean(req.body.locked));
       if (
@@ -1981,7 +1981,7 @@ export function createApp(
       const nextResidentId = typeof req.body.residentId === "string" ? req.body.residentId : existing.residentId;
       const nextTargetId = typeof req.body.targetId === "string" ? req.body.targetId : existing.targetId;
       if (typeof req.body.residentId === "string" || typeof req.body.targetId === "string") {
-        assertMedicalStudentAssignmentKind(state, existing.kind, nextResidentId);
+        assertStudentAssignmentKind(state, existing.kind, nextResidentId);
         assertResidentAvailableForAssignment(state, existing.kind, nextTargetId, nextResidentId);
       }
       if (
@@ -2379,7 +2379,7 @@ export function createApp(
       const serviceLine = getAssignmentTargetServiceLine(state, claim.scope, claim.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
       requireResident(state, claim.residentId);
-      assertMedicalStudentAssignmentKind(state, claim.scope, claim.residentId);
+      assertStudentAssignmentKind(state, claim.scope, claim.residentId);
       assertResidentAvailableForAssignment(state, claim.scope, claim.targetId, claim.residentId);
       const nextState = applyClaim(state, claim, requestActivityActor(req, "resident"));
       res.status(201).json(await commitState(req, nextState));
@@ -2875,28 +2875,28 @@ function isRole(value: unknown): value is Role {
   return value === "admin" || value === "attending" || value === "resident" || value === "student";
 }
 
-function assertMedicalStudentAccountLinks(state: PlannerState, inputs: Array<{ role?: unknown; username?: unknown }>): void {
+function assertStudentAccountLinks(state: PlannerState, inputs: Array<{ role?: unknown; username?: unknown }>): void {
   for (const input of inputs) {
     if (input.role !== "student") continue;
     const username = readOptionalString(input.username);
-    if (!username) throw new HttpError(400, "Medical student accounts require a username");
+    if (!username) throw new HttpError(400, "Student accounts require a username");
     const linkedResident = state.residents.find((resident) => normalizeUsername(resident.username ?? "") === normalizeUsername(username));
-    if (linkedResident && linkedResident.trainingLevel !== "Medical Student") {
-      throw new HttpError(400, "This username is already linked to a non-medical-student roster entry");
+    if (linkedResident && linkedResident.trainingLevel !== "Student") {
+      throw new HttpError(400, "This username is already linked to a non-student roster entry");
     }
   }
 }
 
-function addMedicalStudentRosterEntries(state: PlannerState, users: Array<{ username: string; displayName: string; role: Role }>): PlannerState {
+function addStudentRosterEntries(state: PlannerState, users: Array<{ username: string; displayName: string; role: Role }>): PlannerState {
   const newStudents = users
     .filter((user) => user.role === "student")
     .filter((user) => !state.residents.some((resident) => normalizeUsername(resident.username ?? "") === normalizeUsername(user.username)))
     .map((user): Resident => ({
-      id: createId("res_medical_student"),
+      id: createId("res_student"),
       username: user.username,
       name: user.displayName,
       aliases: [],
-      trainingLevel: "Medical Student",
+      trainingLevel: "Student",
       rosterKind: "primary",
       sourceProgram: "Medical School",
       accountEligible: true,
@@ -3259,7 +3259,7 @@ function prepareAssistantCaseCoverage(
     ? assignment && state.residents.find((candidate) => candidate.id === assignment!.residentId)
     : findResidentByName(state, readRequiredString(args.resident_name, "resident_name"));
   if (action !== "delete") {
-    assertMedicalStudentAssignmentKind(state, "case", resident!.id);
+    assertStudentAssignmentKind(state, "case", resident!.id);
     assertResidentAvailableForAssignment(state, "case", surgeryCase.id, resident!.id);
   }
   const change: AssignmentChange = {
@@ -3738,7 +3738,7 @@ function applyAssignmentChange(
   }
   if (!change.residentId) throw new Error("Assignment request is missing residentId");
   requireResident(state, change.residentId);
-  assertMedicalStudentAssignmentKind(state, change.kind, change.residentId);
+  assertStudentAssignmentKind(state, change.kind, change.residentId);
   assertResidentAvailableForAssignment(state, change.kind, change.targetId, change.residentId);
   if (action === "create") {
     if (state.assignments.some((assignment) =>
@@ -5700,20 +5700,20 @@ function assertResidentAvailableForAssignment(state: PlannerState, kind: unknown
   assertResidentAvailableForWork(state, residentId, getAssignmentTargetDate(state, kind, targetId), "case");
 }
 
-function assertMedicalStudentSelfAssignment(state: PlannerState, user: SessionUser | undefined, input: Record<string, unknown>): void {
+function assertStudentSelfAssignment(state: PlannerState, user: SessionUser | undefined, input: Record<string, unknown>): void {
   if (input.kind !== "case" && input.kind !== "clinic") {
-    throw new HttpError(403, "Medical students can add themselves to cases or clinics only");
+    throw new HttpError(403, "Students can add themselves to cases or clinics only");
   }
-  if (readOptionalString(input.manualMedicalStudentName)) {
-    throw new HttpError(403, "Medical students can only add their own linked profile");
+  if (readOptionalString(input.manualStudentName) || readOptionalString(input.manualMedicalStudentName)) {
+    throw new HttpError(403, "Students can only add their own linked profile");
   }
   if (input.locked) {
-    throw new HttpError(403, "Medical student self-assignments cannot be locked");
+    throw new HttpError(403, "Student self-assignments cannot be locked");
   }
 
   const resident = findResidentForUser(state, user);
-  if (!resident || resident.trainingLevel !== "Medical Student" || input.residentId !== resident.id) {
-    throw new HttpError(403, "Medical students can only add themselves");
+  if (!resident || resident.trainingLevel !== "Student" || input.residentId !== resident.id) {
+    throw new HttpError(403, "Students can only add themselves");
   }
 
   if (input.kind === "case") {
@@ -5739,44 +5739,44 @@ function assertMedicalStudentSelfAssignment(state: PlannerState, user: SessionUs
   }
 }
 
-function assertMedicalStudentAssignmentKind(state: PlannerState, kind: unknown, residentId: unknown): void {
+function assertStudentAssignmentKind(state: PlannerState, kind: unknown, residentId: unknown): void {
   if (typeof residentId !== "string") return;
   const resident = state.residents.find((candidate) => candidate.id === residentId);
-  if (resident?.trainingLevel === "Medical Student" && kind !== "case" && kind !== "clinic") {
-    throw new HttpError(400, "Medical students can be assigned to cases or clinics only");
+  if (resident?.trainingLevel === "Student" && kind !== "case" && kind !== "clinic") {
+    throw new HttpError(400, "Students can be assigned to cases or clinics only");
   }
 }
 
-function findOrCreateManualMedicalStudent(
+function findOrCreateManualStudent(
   state: PlannerState,
   inputName: string
 ): { resident: Resident; created: boolean } {
   const name = inputName.trim().replace(/\s+/g, " ");
   if (name.length < 2 || name.length > 100) {
-    throw new HttpError(400, "Medical student name must be 2-100 characters");
+    throw new HttpError(400, "Student name must be 2-100 characters");
   }
   const normalizedName = normalizePersonLookupName(name);
   const existing = state.residents.find(
-    (resident) => resident.trainingLevel === "Medical Student" && normalizePersonLookupName(resident.name) === normalizedName
+    (resident) => resident.trainingLevel === "Student" && normalizePersonLookupName(resident.name) === normalizedName
   );
   if (existing) return { resident: existing, created: false };
 
   return {
     created: true,
     resident: {
-      id: createId("res_med_student"),
+      id: createId("res_student"),
       name,
       aliases: [],
-      trainingLevel: "Medical Student",
+      trainingLevel: "Student",
       designation: "resident",
       rosterKind: "off-service",
-      sourceProgram: "Medical Student",
+      sourceProgram: "Student",
       sourceProgramAbbreviation: "MS",
       accountEligible: false,
       serviceTags: [],
       serviceStatus: "off-service",
       color: "#64748b",
-      tags: ["manual-medical-student"],
+      tags: ["manual-student"],
       trainingInterests: [],
       unavailable: [],
       vacation: [],

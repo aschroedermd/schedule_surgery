@@ -548,7 +548,7 @@ function normalizeResidents(residents: Resident[]): Resident[] {
 function normalizeResident(resident: Resident): Resident {
   const legacy = resident as Resident & { serviceStatus?: "on-service" | "off-service" ;};
   const sourceProgramAbbreviation = normalizeOptionalString(resident.sourceProgramAbbreviation);
-  const sourceProgram = normalizeOptionalString(resident.sourceProgram);
+  const sourceProgram = resident.sourceProgram === "Medical Student" ? "Student" : normalizeOptionalString(resident.sourceProgram);
   const tags = resident.tags ?? [];
   const designation = resident.designation === "minimally-invasive-fellow" ? resident.designation : "resident";
   const rosterKind = normalizeResidentRosterKind(resident, sourceProgramAbbreviation, tags);
@@ -563,7 +563,7 @@ function normalizeResident(resident: Resident): Resident {
     sourceProgram,
     sourceProgramAbbreviation,
     accountEligible,
-    trainingLevel: designation === "minimally-invasive-fellow" ? "Fellow" : resident.trainingLevel,
+    trainingLevel: designation === "minimally-invasive-fellow" ? "Fellow" : (resident.trainingLevel as string) === "Medical Student" ? "Student" : resident.trainingLevel,
     serviceTags: designation === "minimally-invasive-fellow"
       ? ["Davies"]
       : normalizeServiceTags(resident.serviceTags, legacy.serviceStatus, resident.rotationSchedule),

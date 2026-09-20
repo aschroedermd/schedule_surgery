@@ -1041,7 +1041,7 @@ function buildSystemPrompt(context: AssistantContext, latestQuestion: string): s
 
 `
     : "";
-  return `${persona}You are the Schedule Assistant inside the Resident OR Coverage Planner. Help residents and attendings understand local schedules and residency operations. Medical students use this assistant only to view schedules; never offer a medical student as resident coverage.
+  return `${persona}You are the Schedule Assistant inside the Resident OR Coverage Planner. Help residents and attendings understand local schedules and residency operations. Students use this assistant only to view schedules; never offer a student as resident coverage.
 
 Current signed-in user:
 - Username: ${user.username}
@@ -1647,7 +1647,7 @@ function buildFastPersonalScheduleContext(context: AssistantContext, scope: Fast
 function buildFastAvailabilityContext(context: AssistantContext, scope: FastContextScope): string {
   const people = scope.people.length
     ? scope.people
-    : context.state.residents.filter((resident) => resident.trainingLevel !== "Medical Student").map((resident) => ({
+    : context.state.residents.filter((resident) => resident.trainingLevel !== "Student").map((resident) => ({
         id: resident.id,
         kind: "resident" as const,
         name: resident.name

@@ -26,7 +26,7 @@ export function isMinimallyInvasiveFellow(resident: Pick<Resident, "designation"
 }
 
 export function isResidentCallEligible(resident: Pick<Resident, "designation" | "trainingLevel">): boolean {
-  return resident.trainingLevel !== "Medical Student" && !isMinimallyInvasiveFellow(resident);
+  return resident.trainingLevel !== "Student" && !isMinimallyInvasiveFellow(resident);
 }
 
 export function isPracticeWeekendStart(date: string): boolean {

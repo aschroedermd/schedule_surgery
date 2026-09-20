@@ -59,7 +59,7 @@ export function groupCallOffRequestsByResident(
     .map(([residentId, residentRequests]) => ({
       residentId,
       residentName: residentsById.get(residentId)?.name ?? residentId,
-      trainingLevel: residentsById.get(residentId)?.trainingLevel ?? "Medical Student",
+      trainingLevel: residentsById.get(residentId)?.trainingLevel ?? "Student",
       requests: [...residentRequests].sort((left, right) =>
         compareCallOffRequestPrecedence(left, right, residentsById)
         || left.date.localeCompare(right.date)

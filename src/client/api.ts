@@ -511,7 +511,7 @@ export async function createAssignment(
     kind: "case" | "block" | "clinic";
     targetId: string;
     residentId?: string;
-    manualMedicalStudentName?: string;
+    manualStudentName?: string;
     locked?: boolean;
   }
 ): Promise<PlannerState> {

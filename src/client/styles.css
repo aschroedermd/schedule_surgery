@@ -2442,7 +2442,7 @@ h2 {
 }
 
 .person-choice-list,
-.medical-student-picker {
+.student-picker {
   display: grid;
   gap: 6px;
 }
@@ -2479,11 +2479,11 @@ h2 {
   text-align: right;
 }
 
-.medical-student-choice {
+.student-choice {
   border-color: color-mix(in srgb, var(--color-primary) 45%, var(--border-color));
 }
 
-.medical-student-picker {
+.student-picker {
   border-left: 3px solid var(--color-primary);
   padding-left: 8px;
 }

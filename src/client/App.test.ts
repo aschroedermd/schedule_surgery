@@ -103,10 +103,10 @@ describe("planner navigation", () => {
 });
 
 describe("resident identity and person ordering", () => {
-  it("shows residents and medical students instead of the technical viewer role", () => {
+  it("shows residents and students instead of the technical viewer role", () => {
     expect(getAccountRoleLabel("resident", { trainingLevel: "PGY3" })).toBe("Resident · PGY3");
     expect(getAccountRoleLabel("resident")).toBe("Resident");
-    expect(getAccountRoleLabel("student", { trainingLevel: "Medical Student" })).toBe("Student");
+    expect(getAccountRoleLabel("student", { trainingLevel: "Student" })).toBe("Student");
   });
 
   it("puts the signed-in resident first, then the dated team, then other residents by last name", () => {

@@ -65,7 +65,7 @@ export function CallOffRequestForm({
   onClose: () => void;
   onMutate: Mutate;
 }) {
-  const residentOptions = state.residents.filter((resident) => resident.rosterKind === "primary" && resident.trainingLevel !== "Medical Student");
+  const residentOptions = state.residents.filter((resident) => resident.rosterKind === "primary" && resident.trainingLevel !== "Student");
   const [residentId, setResidentId] = useState(linkedResident?.id ?? (canBuildCall ? residentOptions[0]?.id ?? "" : ""));
   const [date, setDate] = useState(getNextCallDate(getTodayDate()));
   const [scope, setScope] = useState<CallOffRequestScope>("weekend");

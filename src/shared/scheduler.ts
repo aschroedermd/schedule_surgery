@@ -618,7 +618,7 @@ function chooseResidentForTarget(
 }
 
 function isAutoAssignmentCandidate(resident: Resident): boolean {
-  return resident.accountEligible !== false && resident.trainingLevel !== "Medical Student";
+  return resident.accountEligible !== false && resident.trainingLevel !== "Student";
 }
 
 function scoreResidentForTarget(resident: Resident, target: AssignmentTarget): number {

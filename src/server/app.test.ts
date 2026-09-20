@@ -837,7 +837,25 @@ describe("planner API", () => {
     expect(viewerState.body.activityEvents).toEqual([]);
   });
 
-  it("creates a case-assignable roster entry for medical-student accounts", async () => {
+  it("migrates existing medical student roster entries to Student without changing identity", () => {
+    const base = createInitialState();
+    const legacyStudent = {
+      ...base.residents[0],
+      id: "legacy_student",
+      name: "Taylor Learner",
+      tags: [],
+      rotationSchedule: [],
+      username: "legacy_student",
+      trainingLevel: "Medical Student" as unknown as typeof base.residents[number]["trainingLevel"],
+      sourceProgram: "Medical Student"
+    };
+    const normalized = normalizePlannerState({ ...base, residents: [...base.residents, legacyStudent] });
+    expect(normalized.residents.find((resident) => resident.id === legacyStudent.id)).toEqual(
+      expect.objectContaining({ id: "legacy_student", username: "legacy_student", trainingLevel: "Student", sourceProgram: "Student" })
+    );
+  });
+
+  it("creates a case-assignable roster entry for student accounts", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 
     const created = await request(app)
@@ -854,27 +872,27 @@ describe("planner API", () => {
     expect(created.body.user).toEqual(expect.objectContaining({ username: "medstudent1", role: "student" }));
 
     const stateResponse = await request(app).get("/api/state").set("x-api-key", "test-admin-api-key").expect(200);
-    const medicalStudent = stateResponse.body.residents.find((resident: { username?: string }) => resident.username === "medstudent1");
-    expect(medicalStudent).toEqual(
-      expect.objectContaining({ name: "Avery Student", trainingLevel: "Medical Student" })
+    const student = stateResponse.body.residents.find((resident: { username?: string }) => resident.username === "medstudent1");
+    expect(student).toEqual(
+      expect.objectContaining({ name: "Avery Student", trainingLevel: "Student" })
     );
 
     await request(app)
       .post("/api/assignments")
       .set("x-api-key", "test-admin-api-key")
-      .send({ kind: "case", targetId: "case_chen_whipple", residentId: medicalStudent.id })
+      .send({ kind: "case", targetId: "case_chen_whipple", residentId: student.id })
       .expect(201);
 
     await request(app)
       .post("/api/assignments")
       .set("x-api-key", "test-admin-api-key")
-      .send({ kind: "clinic", targetId: "clinic_hpb_tue", residentId: medicalStudent.id })
+      .send({ kind: "clinic", targetId: "clinic_hpb_tue", residentId: student.id })
       .expect(201);
 
     await request(app)
       .post("/api/assignments")
       .set("x-api-key", "test-admin-api-key")
-      .send({ kind: "block", targetId: "block_chen_mon", residentId: medicalStudent.id })
+      .send({ kind: "block", targetId: "block_chen_mon", residentId: student.id })
       .expect(400);
 
     const login = await request(app)
@@ -884,17 +902,17 @@ describe("planner API", () => {
     expect(login.body).toEqual(expect.objectContaining({ role: "student" }));
   });
 
-  it("creates or reuses a manually entered medical student for case and clinic assignments", async () => {
+  it("creates or reuses a manually entered student for case and clinic assignments", async () => {
     const { app, token } = await loginAs("admin");
 
     const caseResponse = await request(app)
       .post("/api/assignments")
       .set("authorization", `Bearer ${token}`)
-      .send({ kind: "case", targetId: "case_chen_whipple", manualMedicalStudentName: "Jordan Learner" })
+      .send({ kind: "case", targetId: "case_chen_whipple", manualStudentName: "Jordan Learner" })
       .expect(201);
 
     const student = caseResponse.body.residents.find(
-      (resident: { name: string; trainingLevel: string }) => resident.name === "Jordan Learner" && resident.trainingLevel === "Medical Student"
+      (resident: { name: string; trainingLevel: string }) => resident.name === "Jordan Learner" && resident.trainingLevel === "Student"
     );
     expect(student).toEqual(expect.objectContaining({ accountEligible: false, rosterKind: "off-service" }));
     expect(caseResponse.body.assignments).toContainEqual(
@@ -913,7 +931,7 @@ describe("planner API", () => {
     );
   });
 
-  it("lets medical students add only themselves to cases and clinics", async () => {
+  it("lets students add only themselves to cases and clinics", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 
     await request(app)
