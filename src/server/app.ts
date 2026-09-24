@@ -113,6 +113,7 @@ import {
   validateLogin
 } from "./auth";
 import { getOpenApiDocument } from "./openapi";
+import { getAgentGuideDocument } from "./agentGuide";
 import {
   answerScheduleQuestion,
   ChatMessage,
@@ -234,7 +235,11 @@ export function createApp(
   }
 
   app.get("/api/healthz", (_req, res) => {
-    res.json({ ok: true });
+    res.json({ ok: true, agentGuide: "/api/agent-guide", openapi: "/api/openapi.json" });
+  });
+
+  app.get(["/api", "/api/agent-guide"], (_req, res) => {
+    res.json(getAgentGuideDocument());
   });
 
   app.get("/api/openapi.json", (_req, res) => {
@@ -259,9 +264,10 @@ export function createApp(
         </head>
         <body>
           <h1>Resident OR Coverage Planner API</h1>
-          <p>Use <code>X-API-Key</code> for external tools and MCP servers.</p>
+          <p>Sign in and create a personal API key on the Account tab. Send it in <code>X-API-Key</code>; requests use your current account privileges.</p>
+          <p><a href="/api/agent-guide">Quick guide for AI agents</a></p>
           <p><a href="/api/openapi.json">OpenAPI JSON</a></p>
-          <pre>curl -H "X-API-Key: $ADMIN_API_KEY" ${process.env.PUBLIC_BASE_URL || ""}/api/state</pre>
+          <pre>curl -H "X-API-Key: $MY_API_KEY" ${process.env.PUBLIC_BASE_URL || ""}/api/state</pre>
         </body>
       </html>
     `);
@@ -299,6 +305,47 @@ export function createApp(
 
   app.get("/api/session", requireAuth, (req: AuthenticatedRequest, res) => {
     res.json(req.user);
+  });
+
+  app.get("/api/me/api-key", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (req.user?.authType !== "session") {
+        res.status(403).json({ error: "Browser session required" });
+        return;
+      }
+      res.set("Cache-Control", "no-store").json(await userStore.getApiKeyStatus(req.user.username));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/me/api-key", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (req.user?.authType !== "session") {
+        res.status(403).json({ error: "Browser session required" });
+        return;
+      }
+      if ((await userStore.getUser(req.user.username))?.mustChangePassword) {
+        res.status(403).json({ error: "Complete your password change before creating an API key" });
+        return;
+      }
+      res.set("Cache-Control", "no-store").status(201).json(await userStore.rotateApiKey(req.user.username));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/me/api-key", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (req.user?.authType !== "session") {
+        res.status(403).json({ error: "Browser session required" });
+        return;
+      }
+      await userStore.revokeApiKey(req.user.username);
+      res.set("Cache-Control", "no-store").json({ createdAt: null });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.patch("/api/me/voice-preset", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
@@ -1977,9 +2024,13 @@ export function createApp(
       if (!existing) throw new Error(`Assignment not found: ${id}`);
       const serviceLine = getAssignmentTargetServiceLine(state, existing.kind, existing.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
+      if (req.body.kind !== undefined && req.body.kind !== existing.kind) {
+        throw new HttpError(400, "Assignment kind cannot be changed");
+      }
       if (req.body.residentId) requireResident(state, req.body.residentId);
       const nextResidentId = typeof req.body.residentId === "string" ? req.body.residentId : existing.residentId;
       const nextTargetId = typeof req.body.targetId === "string" ? req.body.targetId : existing.targetId;
+      if (!requireServiceEdit(req, res, getAssignmentTargetServiceLine(state, existing.kind, nextTargetId))) return;
       if (typeof req.body.residentId === "string" || typeof req.body.targetId === "string") {
         assertStudentAssignmentKind(state, existing.kind, nextResidentId);
         assertResidentAvailableForAssignment(state, existing.kind, nextTargetId, nextResidentId);

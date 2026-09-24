@@ -4,6 +4,41 @@ The app exposes a JSON API for browser users, scripts, and future MCP servers.
 
 ## Authentication
 
+Every account can create a personal API key on the **Account** tab. The key is shown once. Send it as `X-API-Key`; the server checks that account's current privileges on each request. Rotating or revoking a key takes effect immediately. Changing or resetting the account password also revokes it. API key creation requires a completed password change and a browser session.
+
+```bash
+curl -H "X-API-Key: $MY_API_KEY" https://your-domain.example/api/session
+```
+
+The same endpoints are available to scripts: `GET /api/me/api-key` shows whether your account has a key, `POST /api/me/api-key` creates or rotates it, and `DELETE /api/me/api-key` revokes it. Use a browser session bearer token for these three operations. An API key cannot create or revoke itself.
+
+All accounts can read their visible schedule and use `POST /api/chat` to ask about OR blocks, call assignments or totals, and directory phone numbers. The normal per-account daily chat limit applies. Service editors can create cases with `POST /api/entities/cases` and assign people to cases or blocks with `POST /api/assignments` for services they can edit. Linked attending accounts can create their own cases, while assigning residents requires service edit privilege.
+
+```bash
+curl -X POST https://your-domain.example/api/chat \
+  -H "X-API-Key: $MY_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"serviceLine":"Davies","messages":[{"role":"user","content":"What OR blocks are on Monday, and who is on call?"}]}'
+```
+
+For writes, first fetch `GET /api/state` to resolve the current block, resident, and service ids. Send its `version` in `X-State-Version`:
+
+```bash
+curl -X POST https://your-domain.example/api/entities/cases \
+  -H "X-API-Key: $MY_API_KEY" \
+  -H "X-State-Version: $STATE_VERSION" \
+  -H "content-type: application/json" \
+  -d '{"id":"case_example_1","blockId":"block_chen_mon","procedureLabel":"Laparoscopic cholecystectomy","durationMinutes":90,"priority":2,"tags":[],"notes":"","order":2}'
+
+curl -X POST https://your-domain.example/api/assignments \
+  -H "X-API-Key: $MY_API_KEY" \
+  -H "X-State-Version: $NEW_STATE_VERSION" \
+  -H "content-type: application/json" \
+  -d '{"kind":"case","targetId":"case_example_1","residentId":"RESIDENT_ID"}'
+```
+
+Fetch the updated version after creating the case before assigning a resident. Scheduler text must contain no patient identifiers.
+
 For external tools, you can enable API-key auth by setting `ADMIN_API_KEY` and/or `VIEWER_API_KEY`:
 
 ```bash
@@ -97,6 +132,15 @@ Bulk creation uses this shape:
 ```
 
 ## Discovery
+
+Agents can fetch the public quick guide without credentials:
+
+```text
+GET /api
+GET /api/agent-guide
+```
+
+The health check also returns its URL as `agentGuide`.
 
 OpenAPI JSON is served by the app:
 

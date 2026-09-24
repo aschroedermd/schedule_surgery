@@ -18,8 +18,9 @@ export function getOpenApiDocument() {
       title: "Resident OR Coverage Planner API",
       version: "0.1.0",
       description:
-        "API for viewing and editing resident OR coverage planner data. Use X-API-Key for external tools and MCP servers, or a browser login token for app sessions."
+        "API for viewing and editing resident OR coverage planner data. Each account can create a personal X-API-Key; requests use that account's current privileges. Browser login tokens are also accepted."
     },
+    externalDocs: { description: "Short agent onboarding guide", url: "/api/agent-guide" },
     servers: [
       {
         url: process.env.PUBLIC_BASE_URL || "/"
@@ -585,9 +586,23 @@ export function getOpenApiDocument() {
           security: [],
           responses: {
             "200": {
-              description: "Server is healthy"
+              description: "Server is healthy; response links to the agent guide and OpenAPI document"
             }
           }
+        }
+      },
+      "/api": {
+        get: {
+          summary: "Discover how an agent uses this API",
+          security: [],
+          responses: { "200": { description: "Short agent onboarding guide" } }
+        }
+      },
+      "/api/agent-guide": {
+        get: {
+          summary: "Read the short agent onboarding guide",
+          security: [],
+          responses: { "200": { description: "Login, permissions, common requests, and credential handling" } }
         }
       },
       "/api/openapi.json": {
@@ -633,6 +648,46 @@ export function getOpenApiDocument() {
             "200": { description: "Current role and auth type" },
             "401": { description: "Unauthorized" }
           }
+        }
+      },
+      "/api/me/api-key": {
+        get: {
+          summary: "Show whether the current account has an API key",
+          security: [{ BearerAuth: [] }],
+          description: "Requires a browser bearer session. Returns only the key creation time, never the secret.",
+          responses: { "200": { description: "Object with createdAt or null" }, "403": { description: "Browser session required" } }
+        },
+        post: {
+          summary: "Create or rotate a personal API key",
+          security: [{ BearerAuth: [] }],
+          description: "Requires a browser bearer session and a completed password change. The key is shown once; rotating immediately invalidates the previous key. It uses the account's current privileges on every request.",
+          responses: { "201": { description: "Object with apiKey and createdAt" }, "403": { description: "Browser session or password change required" } }
+        },
+        delete: {
+          summary: "Revoke the current account's API key",
+          security: [{ BearerAuth: [] }],
+          description: "Requires a browser bearer session. Revocation takes effect immediately.",
+          responses: { "200": { description: "Object with createdAt: null" }, "403": { description: "Browser session required" } }
+        }
+      },
+      "/api/chat": {
+        post: {
+          summary: "Ask the schedule assistant a question",
+          description: "Available to all authenticated accounts, including personal API keys. Ask about OR blocks, resident or attending call, coverage, and directory phone numbers. Uses the account's daily chat quota and visibility rules.",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: {
+              type: "object",
+              required: ["serviceLine", "messages"],
+              properties: {
+                serviceLine: { type: "string", enum: [...SERVICE_LINES] },
+                messages: { type: "array", items: { type: "object", required: ["role", "content"], properties: {
+                  role: { type: "string", enum: ["user", "assistant"] }, content: { type: "string" }
+                } } }
+              }
+            } } }
+          },
+          responses: { "200": { description: "Assistant answer, lookup data, and remaining quota" }, "429": { description: "Daily chat limit reached" } }
         }
       },
       "/api/me/voice-preset": {
@@ -1370,7 +1425,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create an entity",
           description:
-            "Admin only. Collection must be one of hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cases, clinicSessions.",
+            "Admin access is required for roster and setup collections. Service editors may create attendingBlocks, cases, and clinicSessions for their service; linked attending accounts may create their own blocks and cases. The collection must be one of hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cases, clinicSessions.",
           parameters: [{ name: "collection", in: "path", required: true, schema: { type: "string" } }],
           requestBody: {
             required: true,
@@ -1382,14 +1437,14 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Admin, service edit, or linked attending access required" }
           }
         }
       },
       "/api/entities/{collection}/{id}": {
         patch: {
           summary: "Patch an entity",
-          description: "Admin only. Partial updates are merged into the entity with the matching id.",
+          description: "Partial updates are merged into the entity with the matching id. Schedule entities follow the same service editor or linked attending access rule as creation.",
           parameters: [
             { name: "collection", in: "path", required: true, schema: { type: "string" } },
             { name: "id", in: "path", required: true, schema: { type: "string" } }
@@ -1404,19 +1459,19 @@ export function getOpenApiDocument() {
           },
           responses: {
             "200": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit access required" }
           }
         },
         delete: {
           summary: "Delete an entity",
-          description: "Admin only.",
+          description: "Schedule entities follow the same service editor or linked attending access rule as creation.",
           parameters: [
             { name: "collection", in: "path", required: true, schema: { type: "string" } },
             { name: "id", in: "path", required: true, schema: { type: "string" } }
           ],
           responses: {
             "200": { description: "Updated PlannerState" },
-            "403": { description: "Admin access required" }
+            "403": { description: "Edit access required" }
           }
         }
       },

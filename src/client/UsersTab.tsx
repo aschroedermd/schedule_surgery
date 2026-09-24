@@ -6,8 +6,11 @@ import {
   createUser,
   createUsers,
   deleteUser,
+  fetchMyApiKeyStatus,
   fetchUsers,
   resetUserPassword,
+  revokeMyApiKey,
+  rotateMyApiKey,
   updateUser
 } from "./api";
 import type { PasswordChangeResponse } from "./api";
@@ -605,6 +608,50 @@ export function AccountTab({
   eggLink?: string;
   children?: ReactNode;
 }) {
+  const [apiKeyCreatedAt, setApiKeyCreatedAt] = useState<string | null>(null);
+  const [newApiKey, setNewApiKey] = useState<string | null>(null);
+  const [apiKeyBusy, setApiKeyBusy] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNewApiKey(null);
+    fetchMyApiKeyStatus(token)
+      .then((status) => { if (!cancelled) setApiKeyCreatedAt(status.createdAt); })
+      .catch((error) => { if (!cancelled) setApiKeyError(error instanceof Error ? error.message : "API key status failed to load"); });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  async function rotateApiKey() {
+    setApiKeyBusy(true);
+    setApiKeyError(null);
+    try {
+      const result = await rotateMyApiKey(token);
+      setApiKeyCreatedAt(result.createdAt);
+      setNewApiKey(result.apiKey);
+      onToast("API key created");
+    } catch (error) {
+      setApiKeyError(error instanceof Error ? error.message : "API key creation failed");
+    } finally {
+      setApiKeyBusy(false);
+    }
+  }
+
+  async function revokeApiKey() {
+    setApiKeyBusy(true);
+    setApiKeyError(null);
+    try {
+      await revokeMyApiKey(token);
+      setApiKeyCreatedAt(null);
+      setNewApiKey(null);
+      onToast("API key revoked");
+    } catch (error) {
+      setApiKeyError(error instanceof Error ? error.message : "API key revocation failed");
+    } finally {
+      setApiKeyBusy(false);
+    }
+  }
+
   return (
     <section className="account-panel">
       {(onOpenTamagotchi || eggLink) && (
@@ -632,11 +679,32 @@ export function AccountTab({
         </div>
       )}
       {children}
+      <div className="editor-panel">
+        <p className="eyebrow">API access</p>
+        <h2>Personal API key</h2>
+        <p>Use this key in the <code>X-API-Key</code> header. It has your current account privileges. Service editors can add cases and assign residents; all accounts can ask the schedule assistant about blocks and call. Rotating replaces your old key immediately.</p>
+        <p>{apiKeyCreatedAt ? `Active since ${new Date(apiKeyCreatedAt).toLocaleString()}` : "No active key"}</p>
+        {newApiKey && (
+          <div className="account-api-key">
+            <p>Copy this key now. It will not be shown again.</p>
+            <code>{newApiKey}</code>
+            <button type="button" className="secondary-button" onClick={() => navigator.clipboard.writeText(newApiKey)}><Copy size={15} /> Copy key</button>
+          </div>
+        )}
+        {apiKeyError && <p className="error-text">{apiKeyError}</p>}
+        <div className="user-row-actions">
+          <button type="button" className="primary-button" disabled={apiKeyBusy} onClick={rotateApiKey}>{apiKeyCreatedAt ? "Rotate key" : "Create key"}</button>
+          {apiKeyCreatedAt && <button type="button" className="secondary-button" disabled={apiKeyBusy} onClick={revokeApiKey}>Revoke key</button>}
+        </div>
+        <a href="/api/docs" target="_blank" rel="noreferrer">API documentation</a>
+      </div>
       <PasswordChangeForm
         token={token}
         username={username}
         heading={username}
         onPasswordChanged={(user) => {
+          setApiKeyCreatedAt(null);
+          setNewApiKey(null);
           onPasswordChanged?.(user);
           onToast("Password changed");
         }}

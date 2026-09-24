@@ -121,8 +121,13 @@ export function authenticate(userStore: UserStore) {
           ? req.query.token
           : undefined;
       const token = headerToken ?? queryToken;
-      const apiKeyUser = verifyApiKey(req.header("x-api-key"));
-      if (apiKeyUser) {
+      const apiKey = req.header("x-api-key");
+      if (apiKey) {
+        const apiKeyUser = verifyApiKey(apiKey) ?? await userStore.authenticateApiKey(apiKey);
+        if (!apiKeyUser) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
         req.user = { ...apiKeyUser, authType: "apiKey" };
         next();
         return;

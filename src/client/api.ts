@@ -781,6 +781,22 @@ export async function changeMyPassword(token: string, currentPassword: string, n
   });
 }
 
+export interface ApiKeyStatus {
+  createdAt: string | null;
+}
+
+export async function fetchMyApiKeyStatus(token: string): Promise<ApiKeyStatus> {
+  return request<ApiKeyStatus>("/api/me/api-key", { token });
+}
+
+export async function rotateMyApiKey(token: string): Promise<ApiKeyStatus & { apiKey: string }> {
+  return request<ApiKeyStatus & { apiKey: string }>("/api/me/api-key", { method: "POST", token });
+}
+
+export async function revokeMyApiKey(token: string): Promise<ApiKeyStatus> {
+  return request<ApiKeyStatus>("/api/me/api-key", { method: "DELETE", token });
+}
+
 export function subscribeToStateEvents(
   token: string,
   onState: (event: { version: number; updatedAt: string }) => void,

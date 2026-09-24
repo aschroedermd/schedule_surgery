@@ -17,6 +17,8 @@ interface PasswordHash {
 
 interface StoredUser extends UserSummary {
   passwordHash: PasswordHash;
+  apiKeyHash?: string;
+  apiKeyCreatedAt?: string;
 }
 
 interface UserStoreData {
@@ -58,6 +60,10 @@ export interface UserStore {
   deleteUser(username: string): Promise<void>;
   resetPassword(username: string, temporaryPassword?: string): Promise<PasswordResetResult>;
   changePassword(username: string, currentPassword: string, nextPassword: string): Promise<UserSummary>;
+  authenticateApiKey(apiKey: string): Promise<UserSummary | undefined>;
+  getApiKeyStatus(username: string): Promise<{ createdAt: string | null }>;
+  rotateApiKey(username: string): Promise<{ apiKey: string; createdAt: string }>;
+  revokeApiKey(username: string): Promise<void>;
 }
 
 export class FileUserStore implements UserStore {
@@ -80,6 +86,43 @@ export class FileUserStore implements UserStore {
     const data = await this.load();
     const user = findStoredUser(data, username);
     return user ? toSummary(user) : undefined;
+  }
+
+  async authenticateApiKey(apiKey: string): Promise<UserSummary | undefined> {
+    if (!/^ss_v1_[A-Za-z0-9_-]{43}$/.test(apiKey)) return undefined;
+    const hash = crypto.createHash("sha256").update(apiKey).digest("hex");
+    const data = await this.load();
+    const user = data.users.find((candidate) => candidate.apiKeyHash === hash);
+    return user && !user.mustChangePassword ? toSummary(user) : undefined;
+  }
+
+  async getApiKeyStatus(username: string): Promise<{ createdAt: string | null }> {
+    const data = await this.load();
+    const user = findStoredUser(data, username);
+    if (!user) throw new Error(`User not found: ${username}`);
+    return { createdAt: user.apiKeyHash ? user.apiKeyCreatedAt ?? null : null };
+  }
+
+  async rotateApiKey(username: string): Promise<{ apiKey: string; createdAt: string }> {
+    return this.mutate((data) => {
+      const user = requireStoredUser(data, username);
+      if (user.mustChangePassword) throw new Error("Password change required");
+      const apiKey = `ss_v1_${crypto.randomBytes(32).toString("base64url")}`;
+      const createdAt = new Date().toISOString();
+      user.apiKeyHash = crypto.createHash("sha256").update(apiKey).digest("hex");
+      user.apiKeyCreatedAt = createdAt;
+      user.updatedAt = createdAt;
+      return { apiKey, createdAt };
+    });
+  }
+
+  async revokeApiKey(username: string): Promise<void> {
+    await this.mutate((data) => {
+      const user = requireStoredUser(data, username);
+      delete user.apiKeyHash;
+      delete user.apiKeyCreatedAt;
+      user.updatedAt = new Date().toISOString();
+    });
   }
 
   async listUsers(): Promise<UserSummary[]> {
@@ -173,6 +216,8 @@ export class FileUserStore implements UserStore {
       user.passwordUpdatedAt = now;
       user.updatedAt = now;
       user.mustChangePassword = true;
+      delete user.apiKeyHash;
+      delete user.apiKeyCreatedAt;
       return { user: toSummary(user), temporaryPassword };
     });
   }
@@ -187,6 +232,8 @@ export class FileUserStore implements UserStore {
       user.passwordUpdatedAt = now;
       user.updatedAt = now;
       user.mustChangePassword = false;
+      delete user.apiKeyHash;
+      delete user.apiKeyCreatedAt;
       return toSummary(user);
     });
   }

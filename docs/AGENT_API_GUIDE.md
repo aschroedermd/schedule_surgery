@@ -6,7 +6,7 @@ Live app/API base URL: `http://159.89.226.139`. Set `BASE_URL=http://159.89.226.
 
 Security prerequisite: the numeric live URL currently shown here is plain HTTP. Do not send an admin API key, bearer token, or temporary password over it from an untrusted network. Configure the documented HTTPS domain first (preferred), or use a trusted SSH tunnel, then set `BASE_URL` to that protected endpoint.
 
-Contract sources: use the live `GET /api/openapi.json` response as the authoritative endpoint and request-schema contract. Use [API.md](API.md) for the complete human-readable API reference. This guide adds agent-specific safety, sequencing, fallback, and verification rules; if examples here disagree with the live OpenAPI schema, stop and follow the live schema rather than guessing.
+Contract sources: start with the public `GET /api` quick guide, then use the live `GET /api/openapi.json` response as the authoritative endpoint and request-schema contract. Use [API.md](API.md) for the complete human-readable API reference. This guide adds agent-specific safety, sequencing, fallback, and verification rules; if examples here disagree with the live OpenAPI schema, stop and follow the live schema rather than guessing.
 
 ## Ground Rules
 
@@ -15,7 +15,7 @@ Contract sources: use the live `GET /api/openapi.json` response as the authorita
 - Before a planner-state mutation, fetch `GET /api/state` and resolve actual `id` values for residents, attendings, hospitals, and weeks from the live state. Browser-account endpoints are a separate user store and do not use `state.version`.
 - Include `X-State-Version: state.version` on planner-state mutations (`/api/entities`, assignments, attending coverage, coverage entries/requests, claims, ✨⭐️ awards, and suggestions). On `409`, refetch state, reapply the intended change to the fresh state, and retry once only if the change is still appropriate. Do not send this header to login, password, browser-user management, or chat-settings endpoints.
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
-- If API keys are configured, use the admin API key only for intentional writes and the viewer API key for read-only tools. Otherwise use browser-session bearer tokens.
+- Prefer the account's personal API key in `X-API-Key`. It uses that account's current service privileges and can be rotated or revoked from the Account tab. Use the configured admin API key only for authorized administration and the viewer API key for shared read-only tools.
 - After OR, clinic, resident-assignment, or rounding writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings. After attending-call writes, verify with a ranged `GET /api/attending-coverage` and inspect `effectiveCoverage`.
 
 ## Rebuild And Deploy The Production Server
@@ -93,7 +93,7 @@ Authentication roles:
 - `attending`: browser-session account linked to exactly one existing `attendings[]` record. It can create, update, and delete that attending's OR blocks and cases without a service edit grant. It cannot use that ownership exception for clinics, resident assignments, coverage entries, suggestions, or account management; those require the normal service privilege or admin role.
 - `resident`, `attending`, and `student`: read access unless the browser user has explicit per-service `request` or `edit` privileges.
 
-`attending` is a browser-user role, not an API-key role. An API-key tool is authenticated with admin or read-only access. Send browser tokens as `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=<token>` for `EventSource`). A temporary-password session may call `POST /api/me/password/skip` to use planner endpoints for that current session; the password-change gate returns on the next username/password login unless it calls `PATCH /api/me/password`.
+`attending` is an account role. A personal API key has the same current privileges as its owner; the configured shared API keys have admin or read-only access. Send login tokens as `Authorization: Bearer <token>` (the SSE endpoint also accepts `?token=<token>` for `EventSource`). A temporary-password session may call `POST /api/me/password/skip` to use planner endpoints for that current session; the password-change gate returns on the next username/password login unless it calls `PATCH /api/me/password`. Creating a personal API key requires a completed password change and rotates any existing key, so use the bearer token unless the user requests a new key.
 
 Browser sessions use username/password login, not the API-key role names:
 
@@ -123,6 +123,7 @@ The live OpenAPI document is at:
 
 ```text
 GET /api/openapi.json
+GET /api/agent-guide
 ```
 
 Browser clients can watch state changes with `GET /api/events?token=<browser-token>` using Server-Sent Events. External tools can also poll `/api/state` and compare `version`.
@@ -362,8 +363,14 @@ If a week-scoped endpoint receives an unknown `weekId`, the scheduler returns an
 
 ```text
 GET    /api/healthz
+GET    /api                              (public agent quick guide)
+GET    /api/agent-guide                  (public agent quick guide)
 GET    /api/openapi.json
 GET    /api/session
+GET    /api/me/api-key                   (browser session only; key status)
+POST   /api/me/api-key                   (browser session only; create or rotate)
+DELETE /api/me/api-key                   (browser session only; revoke)
+POST   /api/chat                         (ask about blocks, call assignments or totals, and phone numbers)
 GET    /api/events?token=<browser-token>
 GET    /api/admin/chat-settings           (admin browser session or admin API key)
 PATCH  /api/admin/chat-settings           (admin browser session or admin API key)

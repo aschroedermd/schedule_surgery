@@ -3578,6 +3578,16 @@ h2 {
   line-height: 1;
 }
 
+.account-api-key {
+  display: grid;
+  gap: 8px;
+}
+
+.account-api-key code {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .nb-stage {
   min-height: 100svh;
   display: grid;

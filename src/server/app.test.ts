@@ -55,6 +55,77 @@ describe("planner API", () => {
     process.env.OPENAI_FALLBACK_MODELS = "gpt-5.6-terra";
   });
 
+  it("authenticates personal API keys with live privileges for schedule questions, cases, and assignments", async () => {
+    const state = createInitialState(new Date("2026-07-06T12:00:00Z"));
+    state.attendingBlocks.push({
+      id: "block_nussbaum_mon", weekId: "week_current", date: state.weeks[0].startDate,
+      attendingId: "att_nussbaum", hospitalId: "hosp_main", firstCaseStartTime: "08:00", notes: ""
+    });
+    state.cases.push({
+      id: "case_nussbaum", blockId: "block_nussbaum_mon", procedureLabel: "Hernia repair",
+      durationMinutes: 90, priority: 2, tags: [], notes: "", order: 0
+    });
+    const chatSettingsStore = new MemoryChatSettingsStore();
+    await chatSettingsStore.update({ chatProvider: "openrouter" });
+    const app = createApp(new MemoryStateStore(state), { chatSettingsStore });
+    const residentToken = await loginOnApp(app, "cblue");
+    const adminToken = await loginOnApp(app, "admin", "admin-dev-password");
+    const issued = await request(app)
+      .post("/api/me/api-key")
+      .set("authorization", `Bearer ${residentToken}`)
+      .expect(201);
+    const apiKey = issued.body.apiKey as string;
+
+    await request(app).get("/api/session").set("x-api-key", apiKey).expect(200)
+      .expect((response) => expect(response.body).toMatchObject({ username: "cblue", authType: "apiKey" }));
+    await request(app).get("/api/state").set("x-api-key", apiKey).expect(200);
+    await request(app).post("/api/me/api-key").set("x-api-key", apiKey).expect(403);
+    await request(app).get("/api/session").set("x-api-key", "invalid").set("authorization", `Bearer ${residentToken}`).expect(401);
+
+    const caseInput = {
+      id: "case_personal_key",
+      blockId: "block_chen_mon",
+      procedureLabel: "Laparoscopic cholecystectomy",
+      durationMinutes: 90,
+      priority: 2,
+      tags: [],
+      notes: "",
+      order: 2
+    };
+    await request(app).post("/api/entities/cases").set("x-api-key", apiKey).send(caseInput).expect(403);
+    await grantPrivilege(app, adminToken, "cblue", "Davies", "edit");
+    await request(app).post("/api/entities/cases").set("x-api-key", apiKey).send(caseInput).expect(201);
+    const assigned = await request(app).post("/api/assignments").set("x-api-key", apiKey)
+      .send({ kind: "case", targetId: caseInput.id, residentId: "res_fellow" }).expect(201);
+    const assignmentId = assigned.body.assignments.find((entry: { targetId: string }) => entry.targetId === caseInput.id).id;
+    await request(app).patch(`/api/assignments/${assignmentId}`).set("x-api-key", apiKey)
+      .send({ targetId: "case_nussbaum" }).expect(403);
+
+    process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      model: "test-model",
+      choices: [{ message: { role: "assistant", content: "The Monday blocks and call schedule are available." } }]
+    })));
+    try {
+      const answer = await request(app).post("/api/chat").set("x-api-key", apiKey)
+        .send({ serviceLine: "Davies", messages: [{ role: "user", content: "What are Monday's blocks and call numbers?" }] }).expect(200);
+      expect(answer.body.message).toContain("Monday blocks");
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.OPENROUTER_API_KEY;
+    }
+
+    await grantPrivilege(app, adminToken, "cblue", "Davies", "view");
+    await request(app).post("/api/assignments").set("x-api-key", apiKey)
+      .send({ kind: "case", targetId: caseInput.id, residentId: "res_blue" }).expect(403);
+
+    const rotated = await request(app).post("/api/me/api-key").set("authorization", `Bearer ${residentToken}`).expect(201);
+    await request(app).get("/api/state").set("x-api-key", apiKey).expect(401);
+    await request(app).get("/api/state").set("x-api-key", rotated.body.apiKey).expect(200);
+    await request(app).delete("/api/me/api-key").set("authorization", `Bearer ${residentToken}`).expect(200);
+    await request(app).get("/api/state").set("x-api-key", rotated.body.apiKey).expect(401);
+  });
+
   it("allows generated speech blob URLs in the content security policy", async () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 
@@ -1665,6 +1736,7 @@ describe("planner API", () => {
 
     expect(response.body.openapi).toBe("3.1.0");
     expect(response.body.components.securitySchemes.ApiKeyAuth.name).toBe("X-API-Key");
+    expect(response.body.paths["/api/agent-guide"].get.security).toEqual([]);
     expect(response.body.paths["/api/entities/{collection}"].post).toBeDefined();
     expect(response.body.paths["/api/assignments"].post).toBeDefined();
     expect(response.body.paths["/api/wiki/export"].get).toBeDefined();
@@ -1672,6 +1744,26 @@ describe("planner API", () => {
     expect(response.body.paths["/api/wiki/sync/apply"].post).toBeDefined();
     expect(response.body.paths["/api/wiki/sources/{sourceId}/file"].get).toBeDefined();
     expect(response.body.paths["/api/wiki/sources/{sourceId}/file"].put).toBeDefined();
+  });
+
+  it("lets unauthenticated agents discover account login and API usage", async () => {
+    const app = createApp(new MemoryStateStore(createInitialState()));
+
+    const response = await request(app).get("/api").expect(200);
+    expect(response.body.authentication.login).toMatchObject({ method: "POST", path: "/api/auth/login" });
+    expect(response.body.authentication.login.next).toContain("Authorization: Bearer <token>");
+    expect(response.body.commonRequests).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "/api/chat" }),
+      expect.objectContaining({ path: "/api/entities/cases" }),
+      expect.objectContaining({ path: "/api/assignments" })
+    ]));
+    expect(response.body.writeRules).toContain("X-State-Version");
+    await request(app).get("/api/agent-guide").expect(200)
+      .expect((guide) => expect(guide.body).toEqual(response.body));
+    await request(app).get("/api/healthz").expect(200)
+      .expect((health) => expect(health.body.agentGuide).toBe("/api/agent-guide"));
+    await request(app).get("/api/docs").expect(200)
+      .expect((docs) => expect(docs.text).toContain('href="/api/agent-guide"'));
   });
 
   it("routes request-privileged calendar edits through editor-approved requests", async () => {

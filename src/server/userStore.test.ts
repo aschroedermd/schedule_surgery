@@ -18,6 +18,33 @@ async function makeStore(): Promise<{ filePath: string; store: FileUserStore }> 
 }
 
 describe("file user store", () => {
+  it("stores only a hash of a personal API key and invalidates it on rotation, revocation, and password change", async () => {
+    const { filePath, store } = await makeStore();
+    await store.createUser({ username: "apiresident", password: "safe-password" });
+
+    const first = await store.rotateApiKey("apiresident");
+    expect(first.apiKey).toMatch(/^ss_v1_[A-Za-z0-9_-]{43}$/);
+    expect(await store.authenticateApiKey(first.apiKey)).toEqual(expect.objectContaining({ username: "apiresident" }));
+    expect(await fs.readFile(filePath, "utf8")).not.toContain(first.apiKey);
+    expect(await new FileUserStore(filePath).authenticateApiKey(first.apiKey)).toEqual(expect.objectContaining({ username: "apiresident" }));
+
+    const second = await store.rotateApiKey("apiresident");
+    expect(await store.authenticateApiKey(first.apiKey)).toBeUndefined();
+    expect(await store.authenticateApiKey(second.apiKey)).toBeDefined();
+    await store.revokeApiKey("apiresident");
+    expect(await store.authenticateApiKey(second.apiKey)).toBeUndefined();
+    expect(await store.getApiKeyStatus("apiresident")).toEqual({ createdAt: null });
+
+    const third = await store.rotateApiKey("apiresident");
+    await store.changePassword("apiresident", "safe-password", "new-safe-password");
+    expect(await store.authenticateApiKey(third.apiKey)).toBeUndefined();
+
+    const fourth = await store.rotateApiKey("apiresident");
+    await store.resetPassword("apiresident", "temporary-safe-password");
+    expect(await store.authenticateApiKey(fourth.apiKey)).toBeUndefined();
+    await expect(store.rotateApiKey("apiresident")).rejects.toThrow("Password change required");
+  });
+
   it("creates resident accounts with view-only defaults", async () => {
     const { store } = await makeStore();
 
