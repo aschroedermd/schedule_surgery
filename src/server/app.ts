@@ -114,6 +114,7 @@ import {
 } from "./auth";
 import { getOpenApiDocument } from "./openapi";
 import { getAgentGuideDocument } from "./agentGuide";
+import { getAgentPageHtml } from "./agentPage";
 import {
   answerScheduleQuestion,
   ChatMessage,
@@ -235,7 +236,11 @@ export function createApp(
   }
 
   app.get("/api/healthz", (_req, res) => {
-    res.json({ ok: true, agentGuide: "/api/agent-guide", openapi: "/api/openapi.json" });
+    res.json({ ok: true, agentPage: "/agent", agentGuide: "/api/agent-guide", openapi: "/api/openapi.json" });
+  });
+
+  app.get("/agent", (_req, res) => {
+    res.type("html").send(getAgentPageHtml());
   });
 
   app.get(["/api", "/api/agent-guide"], (_req, res) => {
@@ -265,6 +270,7 @@ export function createApp(
         <body>
           <h1>Resident OR Coverage Planner API</h1>
           <p>Sign in and create a personal API key on the Account tab. Send it in <code>X-API-Key</code>; requests use your current account privileges.</p>
+          <p><a href="/agent">Agent landing page</a></p>
           <p><a href="/api/agent-guide">Quick guide for AI agents</a></p>
           <p><a href="/api/openapi.json">OpenAPI JSON</a></p>
           <pre>curl -H "X-API-Key: $MY_API_KEY" ${process.env.PUBLIC_BASE_URL || ""}/api/state</pre>

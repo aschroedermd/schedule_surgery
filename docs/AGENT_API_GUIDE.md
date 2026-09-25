@@ -6,7 +6,7 @@ Live app/API base URL: `http://159.89.226.139`. Set `BASE_URL=http://159.89.226.
 
 Security prerequisite: the numeric live URL currently shown here is plain HTTP. Do not send an admin API key, bearer token, or temporary password over it from an untrusted network. Configure the documented HTTPS domain first (preferred), or use a trusted SSH tunnel, then set `BASE_URL` to that protected endpoint.
 
-Contract sources: start with the public `GET /api` quick guide, then use the live `GET /api/openapi.json` response as the authoritative endpoint and request-schema contract. Use [API.md](API.md) for the complete human-readable API reference. This guide adds agent-specific safety, sequencing, fallback, and verification rules; if examples here disagree with the live OpenAPI schema, stop and follow the live schema rather than guessing.
+Contract sources: start with the public `/agent` landing page or `GET /api` JSON quick guide, then use the live `GET /api/openapi.json` response as the authoritative endpoint and request-schema contract. Use [API.md](API.md) for the complete human-readable API reference. This guide adds agent-specific safety, sequencing, fallback, and verification rules; if examples here disagree with the live OpenAPI schema, stop and follow the live schema rather than guessing.
 
 ## Ground Rules
 
@@ -363,6 +363,7 @@ If a week-scoped endpoint receives an unknown `weekId`, the scheduler returns an
 
 ```text
 GET    /api/healthz
+GET    /agent                            (public landing page with call and rotation context)
 GET    /api                              (public agent quick guide)
 GET    /api/agent-guide                  (public agent quick guide)
 GET    /api/openapi.json

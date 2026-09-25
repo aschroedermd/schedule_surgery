@@ -1735,6 +1735,7 @@ describe("planner API", () => {
     const response = await request(app).get("/api/openapi.json").expect(200);
 
     expect(response.body.openapi).toBe("3.1.0");
+    expect(response.body.externalDocs.url).toBe("/agent");
     expect(response.body.components.securitySchemes.ApiKeyAuth.name).toBe("X-API-Key");
     expect(response.body.paths["/api/agent-guide"].get.security).toEqual([]);
     expect(response.body.paths["/api/entities/{collection}"].post).toBeDefined();
@@ -1750,6 +1751,7 @@ describe("planner API", () => {
     const app = createApp(new MemoryStateStore(createInitialState()));
 
     const response = await request(app).get("/api").expect(200);
+    expect(response.body.agentPage).toBe("/agent");
     expect(response.body.authentication.login).toMatchObject({ method: "POST", path: "/api/auth/login" });
     expect(response.body.authentication.login.next).toContain("Authorization: Bearer <token>");
     expect(response.body.commonRequests).toEqual(expect.arrayContaining([
@@ -1758,12 +1760,19 @@ describe("planner API", () => {
       expect.objectContaining({ path: "/api/assignments" })
     ]));
     expect(response.body.writeRules).toContain("X-State-Version");
+    expect(response.body.scheduleModel.residentCall).toContain("mid-level");
+    expect(response.body.scheduleModel.attendingCall).toContain("Practice");
+    const landing = await request(app).get("/agent").expect(200);
+    expect(landing.headers["content-type"]).toMatch(/text\/html/);
+    for (const phrase of ["senior/chief", "mid-level", "intern", "ACS", "Practice", "Berry", "Davies", "Fogel", "rotationSchedule", "/api/contacts"]) {
+      expect(landing.text).toContain(phrase);
+    }
     await request(app).get("/api/agent-guide").expect(200)
       .expect((guide) => expect(guide.body).toEqual(response.body));
     await request(app).get("/api/healthz").expect(200)
-      .expect((health) => expect(health.body.agentGuide).toBe("/api/agent-guide"));
+      .expect((health) => expect(health.body).toMatchObject({ agentPage: "/agent", agentGuide: "/api/agent-guide" }));
     await request(app).get("/api/docs").expect(200)
-      .expect((docs) => expect(docs.text).toContain('href="/api/agent-guide"'));
+      .expect((docs) => expect(docs.text).toContain('href="/agent"'));
   });
 
   it("routes request-privileged calendar edits through editor-approved requests", async () => {

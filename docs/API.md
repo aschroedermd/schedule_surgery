@@ -136,11 +136,12 @@ Bulk creation uses this shape:
 Agents can fetch the public quick guide without credentials:
 
 ```text
+GET /agent
 GET /api
 GET /api/agent-guide
 ```
 
-The health check also returns its URL as `agentGuide`.
+`/agent` is a readable landing page explaining resident call, ACS and Practice attending call, rotation blocks, and the main API routes. The health check links to it as `agentPage` and to the JSON guide as `agentGuide`.
 
 OpenAPI JSON is served by the app:
 

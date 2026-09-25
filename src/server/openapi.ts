@@ -20,7 +20,7 @@ export function getOpenApiDocument() {
       description:
         "API for viewing and editing resident OR coverage planner data. Each account can create a personal X-API-Key; requests use that account's current privileges. Browser login tokens are also accepted."
     },
-    externalDocs: { description: "Short agent onboarding guide", url: "/api/agent-guide" },
+    externalDocs: { description: "Agent landing page with schedule and call interpretation", url: "/agent" },
     servers: [
       {
         url: process.env.PUBLIC_BASE_URL || "/"
