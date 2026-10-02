@@ -1,4 +1,5 @@
-import { FormEvent, lazy, Suspense, useState } from 'react';
+import './BoardsTesterPage.css';
+import { FormEvent, lazy, Suspense, useEffect, useState } from 'react';
 const Tester = lazy(() => import('@surgical-board-simulator/tester-ui'));
 const BASE = '/api/boards-tester';
 async function request(path: string, init?: RequestInit) {
@@ -9,13 +10,21 @@ async function request(path: string, init?: RequestInit) {
 }
 interface Entry { id: string; author: string; text: string; session: { scenario: string }; status?: string; category: string; }
 export default function BoardsTesterAccount({ token }: { token: string }) {
-  const [open, setOpen] = useState(false);
+  return <section className="panel"><button type="button" onClick={() => window.location.assign('/oral-boards')}>oral boards simulator</button><p>Open the simulator in its own page. Your account and the simulator password are required.</p></section>;
+}
+export function BoardsTesterPage({ token }: { token: string }) {
+  const [checking, setChecking] = useState(true);
   const [password, setPassword] = useState('');
   const [access, setAccess] = useState<{ displayName: string; reviewer: boolean }>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
+  useEffect(() => {
+    let active = true;
+    request('/access').then(value => { if (active) setAccess(value); }).catch(() => {}).finally(() => { if (active) setChecking(false); });
+    return () => { active = false; };
+  }, [token]);
   async function unlock(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try {
@@ -35,27 +44,29 @@ export default function BoardsTesterAccount({ token }: { token: string }) {
       await loadFeedback();
     } catch (error) { setError(error instanceof Error ? error.message : 'Could not update feedback'); }
   }
-  return <section className="panel">
-    <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>oral boards simulator</button>
-    {open && <>
-    <h2>Oral boards simulator</h2>
-    <p>Practice surgical boards and send feedback to the simulator team. Simulator access expires after two hours. Updates end active cases; saved feedback is retained.</p>
-    {error && <p role="alert">{error}</p>}
-    {!access ? <form onSubmit={unlock}>
-      <label>Additional simulator password <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off" required maxLength={1024} /></label>
-      <button disabled={busy} type="submit">{busy ? 'Checking…' : 'Unlock simulator'}</button>
-    </form> : <>
-      <div className="header-actions">
-        <button onClick={async () => { await request('/access', { method: 'DELETE' }).catch(() => undefined); setAccess(undefined); setReview(false); setOpen(false); }}>Lock simulator</button>
+  return <div className="boards-page">
+    {access ? <>
+      <nav className="boards-toolbar" aria-label="Simulator access">
+        <button onClick={async () => { await request('/access', { method: 'DELETE' }).catch(() => undefined); setAccess(undefined); setReview(false); }}>Lock simulator</button>
         {access.reviewer && <button onClick={() => void loadFeedback()}>Review global feedback</button>}
         {review && <button onClick={() => setReview(false)}>Return to tester</button>}
-      </div>
-      {review ? <div><h3>Feedback review</h3>{entries.map(entry => <FeedbackEntry key={entry.id} entry={entry} onTriage={triage} />)}</div> :
-        <Suspense fallback={<p>Loading simulator…</p>}><Tester apiBase={BASE} userName={access.displayName} backHref="/" /></Suspense>}
-    </>}
-    </>}
-  </section>;
+      </nav>
+      {error && <p role="alert">{error}</p>}
+      {review ? <section className="boards-access"><a href="/?section=account">← Account</a><h1>Feedback review</h1>{entries.map(entry => <FeedbackEntry key={entry.id} entry={entry} onTriage={triage} />)}</section> :
+        <Suspense fallback={<p className="boards-access">Loading simulator…</p>}><Tester apiBase={BASE} userName={access.displayName} backHref="/?section=account" /></Suspense>}
+    </> : <section className="boards-access">
+      <a href="/?section=account">← Back to Account</a>
+      <h1>Oral boards simulator</h1>
+      <p>Practice a case and leave feedback as you go.</p>
+      {error && <p role="alert">{error}</p>}
+      {checking ? <p>Checking simulator access…</p> : <form onSubmit={unlock}>
+        <label>Simulator password <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off" required maxLength={1024} autoFocus /></label>
+        <button disabled={busy} type="submit">{busy ? 'Checking…' : 'Open simulator'}</button>
+      </form>}
+    </section>}
+  </div>;
 }
+
 function FeedbackEntry({ entry, onTriage }: { entry: Entry; onTriage: (entry: Entry, status: string, note: string) => Promise<void> }) {
   const [status, setStatus] = useState(entry.status || 'open');
   const [note, setNote] = useState('');

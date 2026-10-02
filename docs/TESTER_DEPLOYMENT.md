@@ -1,7 +1,7 @@
 # Boards tester integration and production rollout
 
 Repositories stay separate: `aschroedermd/schedule_surgery` owns accounts, the Account launch button,
-password grants and the same-origin gateway; `aschroedermd/surgical-board-simulator-v2`
+the dedicated `/oral-boards` page, password grants and the same-origin gateway; `aschroedermd/surgical-board-simulator-v2`
 owns the UI package, restricted API, engine and scenarios. The webapp dependency is
 pinned to a full published commit. No clinical source or provider secrets enter the
 webapp bundle. `aschroeder91` was the simulator repository's former owner URL.
@@ -24,7 +24,9 @@ accounts' `accountId` values from `/data/users.json` (container) or the configur
 an account creates a new ID. Keep the migrated user store in backups.
 
 Users first sign in normally, then open **Account → oral boards simulator** and enter the additional
-password. The gateway issues a signed HttpOnly, Secure, SameSite=Strict cookie for
+password on the dedicated page. Returning from the simulator opens Account. Existing valid grants are revalidated when the page loads. Feedback opens in a modal side drawer on desktop and a bottom sheet on phones; successful saves dismiss it and closing it keeps an unsaved draft.
+
+The gateway issues a signed HttpOnly, Secure, SameSite=Strict cookie for
 two hours, bound to the account session and password-hash version. Every request
 revalidates the account, password revision, access expiry and reviewer allowlist.
 Rotating `SBS_ACCESS_PASSWORD_HASH` revokes every grant. Resetting an account password,
@@ -40,7 +42,7 @@ require the configured origin. Headers are constructed server-side from an allow
 user-supplied Authorization/X-SBS headers are never forwarded. Non-ASCII names get
 an HTTP-safe ASCII fallback; ownership always uses the UUID. POST SSE preserves
 status/type, disables buffering and cancels upstream work on client disconnect.
-The timeout is 90 seconds. Caddy flushes the tester route immediately. For nginx,
+The webapp proxy timeout is 90 seconds. The deployed tester uses `SBS_TURN_TIMEOUT_SECONDS=75` in `/opt/sbs-tester/.env`; keep the engine deadline below the proxy deadline. This runtime setting survives image updates. The current provider is OpenRouter with `deepseek/deepseek-v4-flash`; provider credentials remain server-only. In a real inflammatory bowel disease case, the first response took about 31–33 seconds, exceeding the default 30-second tester deadline. Caddy flushes the tester route immediately. For nginx,
 use `proxy_buffering off; proxy_cache off; proxy_read_timeout 95s;` on the existing
 webapp upstream, with no route to port 8005.
 
