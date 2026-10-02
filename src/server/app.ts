@@ -1,3 +1,4 @@
+import { boardsTesterRouter } from './boardsTester';
 import cors from "cors";
 import express from "express";
 import { randomUUID } from "node:crypto";
@@ -215,6 +216,7 @@ export function createApp(
   app.use(securityHeaders);
   app.use(cors(getCorsOptions()));
   app.use("/api/wiki/sources/:sourceId/file", express.raw({ type: "*/*", limit: "25mb" }));
+  app.use("/api/boards-tester", boardsTesterRouter(userStore));
   app.use(express.json({ limit: "12mb" }));
 
   function assistantActionPreparer(state: PlannerState, user: SessionUser, serviceLine: string) {

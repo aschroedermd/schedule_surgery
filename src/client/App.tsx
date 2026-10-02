@@ -1,3 +1,4 @@
+import BoardsTesterSettings from './BoardsTesterSettings';
 import {
   CalendarDays,
   ChevronLeft,
@@ -237,6 +238,7 @@ export function App() {
   }, [chatViewportActive]);
 
   function endSession() {
+    void fetch("/api/boards-tester/access", { method: "DELETE" }).catch(() => undefined);
     scheduleLoadIdRef.current += 1;
     clearStoredSession();
     setSession(undefined);
@@ -850,6 +852,7 @@ export function App() {
       {activeTab === "users" && isAdmin && (
         <UsersTab token={session.token} serviceLines={serviceLines} attendings={state.attendings} onToast={(message) => setToast(message)} />
       )}
+      {activeTab === "settings" && <BoardsTesterSettings token={session.token} />}
       {activeTab === "account" && (
         <AccountTab
           token={session.token}
@@ -4813,6 +4816,8 @@ function getTabTitle(tab: Tab): string {
       return "Activity 🛒";
     case "users":
       return "Users";
+    case "settings":
+      return "Settings";
     case "account":
       return "Account 🛠️";
   }

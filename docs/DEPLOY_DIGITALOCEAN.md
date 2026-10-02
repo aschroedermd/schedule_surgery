@@ -1,3 +1,11 @@
+# Current deployment
+
+Follow [TESTER_DEPLOYMENT.md](TESTER_DEPLOYMENT.md) for the prebuilt image pipeline,
+shared tester network, HTTPS password gate and activation requirements. Disable
+`schedule-surgery-update.timer` before migrating. Host rebuilds and the legacy
+updater described below are superseded for this deployment. The Docker/database
+provisioning examples remain useful; keep the existing project name and volumes.
+
 # DigitalOcean Deployment
 
 This deployment is designed for a small private group: roughly 20 total users and fewer than 10 concurrent users.
@@ -144,7 +152,7 @@ HTTPS requires a real domain pointing to the Droplet.
 ## Start Production
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+docker compose --env-file .env.production --env-file webapp-release.env -f docker-compose.production.yml up -d
 ```
 
 Check status:
@@ -184,7 +192,7 @@ docker compose --env-file .env.production -f docker-compose.production.yml exec 
 docker compose --env-file .env.production -f docker-compose.production.yml restart app
 ```
 
-## Automatic Updates (Recommended)
+## Legacy host build updater (superseded by prebuilt releases)
 
 The server can check `git@github.com:aschroedermd/schedule_surgery.git` on
 `origin/main` every 15 seconds without depending on GitHub Actions credentials.

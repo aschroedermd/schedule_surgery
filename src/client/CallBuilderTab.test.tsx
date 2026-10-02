@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createInitialState } from "../server/sampleData";
 import { CallBuilderTab } from "./CallBuilderTab";
 
 describe("Call Builder screen", () => {
+  beforeEach(() => vi.useFakeTimers({ now: new Date("2026-09-01T12:00:00") }));
+  afterEach(() => vi.useRealTimers());
   it("shows every scheduling input category before a schedule has been built", () => {
     const markup = renderToStaticMarkup(
       <CallBuilderTab

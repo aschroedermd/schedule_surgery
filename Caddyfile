@@ -1,4 +1,11 @@
 {$APP_DOMAIN} {
   encode gzip
+  @tester path /api/boards-tester/*
+  reverse_proxy @tester app:8787 {
+    flush_interval -1
+    transport http {
+      response_header_timeout 95s
+    }
+  }
   reverse_proxy app:8787
 }

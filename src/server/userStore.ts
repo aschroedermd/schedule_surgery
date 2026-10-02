@@ -16,6 +16,7 @@ interface PasswordHash {
 }
 
 interface StoredUser extends UserSummary {
+  accountId: string;
   passwordHash: PasswordHash;
   apiKeyHash?: string;
   apiKeyCreatedAt?: string;
@@ -49,6 +50,7 @@ export interface UserCreationResult {
 }
 
 export interface UserStore {
+  getAccountId(username: string): Promise<string | undefined>;
   authenticate(username: string, password: string): Promise<UserSummary | undefined>;
   getUser(username: string): Promise<UserSummary | undefined>;
   listUsers(): Promise<UserSummary[]>;
@@ -74,6 +76,10 @@ export class FileUserStore implements UserStore {
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath = getDefaultUserStorePath()) {}
+
+  async getAccountId(username: string): Promise<string | undefined> {
+    return findStoredUser(await this.load(), username)?.accountId;
+  }
 
   async authenticate(username: string, password: string): Promise<UserSummary | undefined> {
     const data = await this.load();
@@ -321,6 +327,7 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
     const username = normalizeUsername(user.username);
     users.set(username, {
       ...user,
+      accountId: user.accountId || crypto.randomUUID(),
       username,
       displayName: readOptionalString(user.displayName) ?? username,
       role: username === "admin" ? "admin" : normalizeRole(user.role),
@@ -376,6 +383,7 @@ function makeSeedUser(
   mustChangePassword = false
 ): StoredUser {
   return {
+    accountId: crypto.randomUUID(),
     username,
     displayName,
     role,
@@ -409,6 +417,7 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
 
   return {
     stored: {
+      accountId: crypto.randomUUID(),
       username,
       displayName: readOptionalString(input.displayName) ?? username,
       role,

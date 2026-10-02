@@ -1,0 +1,60 @@
+name: Update tester UI
+on:
+  repository_dispatch:
+    types: [sbs-tester-release]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: tester-ui-update
+  cancel-in-progress: false
+jobs:
+  update:
+    if: vars.SBS_UI_UPDATES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-call-builder.txt
+      - name: Find latest successful simulator release and update immutable pin
+        env:
+          GH_TOKEN: ${{ secrets.SBS_SOURCE_READ_TOKEN }}
+          SOURCE_TOKEN: ${{ secrets.SBS_SOURCE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_TOKEN"
+          sha="$(gh api repos/aschroedermd/surgical-board-simulator-v2/commits/main --jq '.sha')"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          # Ignore browser/dispatch supplied SHAs. Only a tested main release is eligible.
+          success="$(gh api "repos/aschroedermd/surgical-board-simulator-v2/actions/workflows/tester-release.yml/runs?branch=main&head_sha=$sha&status=success&per_page=1" --jq '.total_count')"
+          test "$success" -gt 0 || exit 0
+          current="$(node -p 'require("./package.json").dependencies["@surgical-board-simulator/tester-ui"]')"
+          [[ "$current" != *"#$sha" ]] || exit 0
+          git config --global credential.helper '!f() { echo username=x-access-token; echo "password=$SOURCE_TOKEN"; }; f'
+          git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/
+          git config --global --add url.https://github.com/.insteadOf git@github.com:
+          npm install "git+https://github.com/aschroedermd/surgical-board-simulator-v2.git#$sha"
+          git config --global --unset credential.helper
+          npm test
+          npm run build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git commit -m "Update tester UI to $sha"
+          git push origin HEAD:main
+          echo "RELEASE_SHA=$sha" >> "$GITHUB_ENV"
+      - name: Build and deploy the updated webapp
+        if: env.RELEASE_SHA != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-production.yml --ref main -f request_id="tester-ui-$RELEASE_SHA"

@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
+    mem_limit: 160m
     restart: unless-stopped
     environment:
       POSTGRES_DB: surgery_schedule
@@ -15,7 +16,7 @@ services:
       retries: 12
 
   app:
-    build: .
+    image: ${PLANNER_IMAGE:?Set PLANNER_IMAGE to the published immutable webapp image}
     restart: unless-stopped
     depends_on:
       db:
@@ -56,9 +57,18 @@ services:
       QGENDA_SYNC_ON_START: ${QGENDA_SYNC_ON_START:-true}
       QGENDA_PUBLIC_TASK_MAP_JSON: ${QGENDA_PUBLIC_TASK_MAP_JSON:-}
       QGENDA_PUBLIC_STAFF_MAP_JSON: ${QGENDA_PUBLIC_STAFF_MAP_JSON:-}
+      SBS_TESTER_URL: http://tester:8005
+      SBS_GATEWAY_TOKEN: ${SBS_GATEWAY_TOKEN:-}
+      SBS_ACCESS_PASSWORD_HASH: ${SBS_ACCESS_PASSWORD_HASH:-}
+      SBS_REVIEWER_ACCOUNT_IDS: ${SBS_REVIEWER_ACCOUNT_IDS:-}
+      NODE_OPTIONS: --max-old-space-size=192
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
     volumes:
       - planner-users:/data
+    networks:
+      - default
+      - tester-private
+    mem_limit: 320m
     expose:
       - "8787"
     healthcheck:
@@ -69,6 +79,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    mem_limit: 64m
     restart: unless-stopped
     depends_on:
       app:
@@ -82,6 +93,11 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+
+networks:
+  tester-private:
+    external: true
+    name: sbs-private
 
 volumes:
   planner-db:
