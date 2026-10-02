@@ -26,6 +26,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir -r requirement
 COPY package*.json ./
 COPY --from=production-deps /app/node_modules ./node_modules
 COPY src ./src
+COPY scripts/import-tester-comments.ts ./scripts/import-tester-comments.ts
 COPY --from=build /app/dist ./dist
 EXPOSE 8787
 CMD ["npm", "start"]

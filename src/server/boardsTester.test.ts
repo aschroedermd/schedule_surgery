@@ -25,6 +25,7 @@ async function cookie() {
 }
 beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tester-gateway-'));
+  vi.stubEnv('SBS_COMMENT_ARCHIVE_PATH', path.join(directory, 'comments'));
   vi.stubEnv('APP_SECRET', 'a'.repeat(32)); vi.stubEnv('ADMIN_PASSWORD', 'test-admin-password');
   vi.stubEnv('PUBLIC_BASE_URL', origin); vi.stubEnv('SBS_GATEWAY_TOKEN', 'gateway-test-only');
   vi.stubEnv('SBS_ACCESS_PASSWORD_HASH', await hashSimulatorPassword('simulator-secret'));
@@ -34,7 +35,7 @@ beforeEach(async () => {
   token = createToken(user); accountId = (await store.getAccountId('tester'))!;
   app = express(); app.use('/api/boards-tester', boardsTesterRouter(store));
 });
-afterEach(async () => { if (upstream) { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream!.close(() => resolve())); upstream = undefined; } vi.unstubAllEnvs(); await fs.rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { if (upstream) { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream!.close(() => resolve())); upstream = undefined; } vi.restoreAllMocks(); vi.unstubAllEnvs(); await fs.rm(directory, { recursive: true, force: true }); });
 async function startUpstream(handler: RequestListener) {
   upstream = createServer(handler); await new Promise<void>(resolve => upstream!.listen(0, '127.0.0.1', resolve));
   const address = upstream.address() as { port: number }; vi.stubEnv('SBS_TESTER_URL', `http://127.0.0.1:${address.port}`);
@@ -99,4 +100,37 @@ describe('tester gateway', () => {
     await request(app).get('/api/boards-tester/editor').set('Cookie', grant).expect(404);
     await request(app).post('/api/boards-tester/session/start').set('Cookie', grant).send({ scenario_name: 'case' }).expect(403);
   });
+});
+
+it('archives saved comments durably and restricts global downloads', async () => {
+  await startUpstream((_req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ id: 'comment-1', text: '=Example comment', author: 'forged', client: { user_id: 'forged' }, session: { id: 'case', scenario: 'liver_trauma' } })); });
+  const grant = await cookie();
+  await request(app).post('/api/boards-tester/session/case/feedback').set('Origin', origin).set('Cookie', grant).send({ text: '=Example comment' }).expect(200);
+  app = express(); app.use('/api/boards-tester', boardsTesterRouter(store));
+  const result = await request(app).get('/api/boards-tester/comments').set('Cookie', grant).expect(200);
+  expect(result.body.entries[0]).toMatchObject({ text: '=Example comment', accountId, author: 'Élodie 王' });
+  await request(app).get('/api/boards-tester/feedback/export').set('Cookie', grant).set('X-SBS-Reviewer','true').expect(403);
+  vi.stubEnv('SBS_REVIEWER_ACCOUNT_IDS', accountId);
+  const exported = await request(app).get('/api/boards-tester/feedback/export?format=csv').set('Cookie', grant).expect(200);
+  expect(exported.headers['content-disposition']).toContain('.csv'); expect(exported.text).toContain("'=Example comment");
+  const user = (await store.createUser({ username: 'other', password: 'test-other-password' })).user;
+  const other = await request(app).post('/api/boards-tester/access').set('Origin', origin).set('Authorization', `Bearer ${createToken(user)}`).send({ password: 'simulator-secret' });
+  const own = await request(app).get('/api/boards-tester/comments').set('Cookie', other.headers['set-cookie'][0].split(';')[0]).expect(200);
+  expect(own.body.entries).toEqual([]);
+});
+it('transcribes only authenticated audio through the fixed OpenRouter model', async () => {
+  vi.stubEnv('OPENROUTER_API_KEY', 'provider-test-key');
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    expect(String(url)).toBe('https://openrouter.ai/api/v1/audio/transcriptions');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'openai/gpt-transcribe', input_audio: { format: 'webm' } });
+    expect((init?.headers as any).authorization).toBe('Bearer provider-test-key');
+    return new Response(JSON.stringify({ text: 'A dictated comment.' }), { status: 200 });
+  });
+  await request(app).post('/api/boards-tester/transcribe').set('Origin', origin).set('Content-Type','audio/webm').send(Buffer.from('audio')).expect(401);
+  const grant = await cookie();
+  await request(app).post('/api/boards-tester/transcribe').set('Origin','https://evil.example').set('Cookie',grant).set('Content-Type','audio/webm').send(Buffer.from('audio')).expect(403);
+  await request(app).post('/api/boards-tester/transcribe').set('Origin',origin).set('Cookie',grant).send({ data:'audio' }).expect(400);
+  const result = await request(app).post('/api/boards-tester/transcribe').set('Origin',origin).set('Cookie',grant).set('Content-Type','audio/webm').send(Buffer.from('audio')).expect(200);
+  expect(result.body.text).toBe('A dictated comment.'); expect(fetcher).toHaveBeenCalledTimes(1);
+  await request(app).post('/api/boards-tester/transcribe').set('Origin',origin).set('Cookie',grant).set('Content-Type','audio/webm').send(Buffer.alloc(4 * 1024 * 1024 + 1)).expect(413);
 });
