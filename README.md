@@ -91,6 +91,7 @@ The separate private Git workspace opens directly as an Obsidian vault and is th
 
 ## Deployment And API
 
+- Automatic server updates: [15-second Git poller and setup](docs/DEPLOY_DIGITALOCEAN.md#automatic-updates-recommended)
 - DigitalOcean deployment guide: [docs/DEPLOY_DIGITALOCEAN.md](docs/DEPLOY_DIGITALOCEAN.md)
 - API/MCP guide: [docs/API.md](docs/API.md)
 - Agent API and remote rebuild guide: [docs/AGENT_API_GUIDE.md](docs/AGENT_API_GUIDE.md#rebuild-and-deploy-the-production-server)

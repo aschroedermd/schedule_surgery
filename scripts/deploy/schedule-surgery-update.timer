@@ -1,0 +1,11 @@
+[Unit]
+Description=Check schedule_surgery GitHub updates every 15 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+Unit=schedule-surgery-update.service
+
+[Install]
+WantedBy=timers.target

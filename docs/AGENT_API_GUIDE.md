@@ -20,7 +20,7 @@ Contract sources: start with the public `/agent` landing page or `GET /api` JSON
 
 ## Rebuild And Deploy The Production Server
 
-Deployment uses the GitHub Actions API as a separate control plane. Do not look for or add a rebuild endpoint under the app's `/api` routes: the process being replaced cannot reliably supervise its own deployment, and exposing a shell-capable route would unnecessarily increase risk. The checked-in `.github/workflows/deploy-production.yml` workflow connects as a restricted `deploy` user and may run only the root-owned `/usr/local/bin/rebuild` command. It also runs automatically after a push to `main`.
+Deployment uses the GitHub Actions API as a separate control plane. Do not look for or add a rebuild endpoint under the app's `/api` routes: the process being replaced cannot reliably supervise its own deployment, and exposing a shell-capable route would unnecessarily increase risk. The checked-in `.github/workflows/deploy-production.yml` workflow connects as a restricted `deploy` user and may run only the root-owned `/usr/local/bin/rebuild` command. It also runs automatically after a push to `main`. The [server-side updater](DEPLOY_DIGITALOCEAN.md#automatic-updates-recommended) can independently poll `origin/main` every 15 seconds; both use the same locked build/health-check/rollback implementation.
 
 An agent may trigger a rebuild when the user explicitly asks it to deploy or rebuild. It needs these secrets/configuration from its private runtime, never from this repository or planner state:
 

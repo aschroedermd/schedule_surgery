@@ -1,0 +1,9 @@
+{
+  "repository": "/opt/schedule_surgery",
+  "remote": "origin",
+  "branch": "main",
+  "env_file": "/opt/schedule_surgery/.env.production",
+  "state_directory": "/var/lib/schedule-surgery-updater",
+  "build_timeout": 900,
+  "health_timeout": 180
+}

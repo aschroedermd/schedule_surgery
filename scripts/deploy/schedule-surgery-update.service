@@ -1,0 +1,12 @@
+[Unit]
+Description=Fetch, build and health-check schedule_surgery updates
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/schedule-surgery/update.py
+User=root
+UMask=0077
+TimeoutStartSec=25min

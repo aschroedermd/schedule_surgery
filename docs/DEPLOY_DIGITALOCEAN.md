@@ -184,22 +184,117 @@ docker compose --env-file .env.production -f docker-compose.production.yml exec 
 docker compose --env-file .env.production -f docker-compose.production.yml restart app
 ```
 
-## Updating Later
+## Automatic Updates (Recommended)
 
-If using Git:
+The server can check `git@github.com:aschroedermd/schedule_surgery.git` on
+`origin/main` every 15 seconds without depending on GitHub Actions credentials.
+Install this after starting production successfully. This is an Ubuntu/systemd
+service outside the application container, so replacing the app does not stop
+its watcher. GitHub Actions may remain enabled for immediate push-triggered
+updates; both paths share a server lock.
+
+As root on the Droplet, from the checkout containing these scripts:
 
 ```bash
 cd /opt/schedule_surgery
-git pull
-docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+apt install -y python3 git
+install -d -m 755 /usr/local/lib/schedule-surgery
+install -m 644 scripts/deploy/update.py /usr/local/lib/schedule-surgery/update.py
+# Back up an existing custom rebuild command before replacing it.
+if [ -f /usr/local/bin/rebuild ]; then
+  cp -p /usr/local/bin/rebuild /usr/local/bin/rebuild.before-auto-update
+fi
+install -m 755 scripts/deploy/rebuild /usr/local/bin/rebuild
+# Create once; preserve your settings on subsequent installs.
+if [ ! -f /etc/schedule-surgery-updater.json ]; then
+  install -m 600 scripts/deploy/updater.example.json /etc/schedule-surgery-updater.json
+fi
+install -m 644 scripts/deploy/schedule-surgery-update.service /etc/systemd/system/
+install -m 644 scripts/deploy/schedule-surgery-update.timer /etc/systemd/system/
 ```
 
-If using rsync, upload the project again and run the same compose command.
+Review `/etc/schedule-surgery-updater.json` for the actual checkout and secrets
+file paths, remote and branch. Confirm `git -C /opt/schedule_surgery remote -v`
+points to the intended repository. For a private repository, root needs its own
+read-only GitHub deploy key and a verified GitHub host key in `/root/.ssh/known_hosts`.
+The updater uses noninteractive SSH with strict host-key checking. Test fetch
+as root before enabling the timer:
+
+```bash
+GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes' git -C /opt/schedule_surgery fetch --no-tags origin refs/heads/main
+/usr/local/bin/rebuild
+systemctl daemon-reload
+systemctl enable --now schedule-surgery-update.timer
+systemctl list-timers schedule-surgery-update.timer
+journalctl -u schedule-surgery-update.service -n 100 --no-pager
+```
+
+The first rebuild verifies installation by building and deploying the current
+remote tip. Use a recent Docker Compose plugin supporting `up --wait` and
+`--wait-timeout`. If the existing stack was started with `-p CUSTOM_NAME`, add
+`"project_name": "CUSTOM_NAME"` to the JSON configuration before the first run.
+Otherwise the updater derives the original project's name from its Compose
+configuration, preserving the named database/user volumes and network. It
+requires one existing app container and refuses a project-name change after
+its first successful deployment.
+
+### Update behavior and recovery
+
+- A check begins about every 15 seconds while idle (plus network latency).
+  Build time is additional. Updates pushed during a build are picked up on the
+  next check; the latest branch tip is fetched each time.
+- A host lock serializes the timer, manual rebuilds, and GitHub Actions.
+  Timer checks skip when busy; `/usr/local/bin/rebuild` waits and forces a build.
+- Git source is archived into root-private release directories under
+  `/var/lib/schedule-surgery-updater`. The checkout and `.env.production` are
+  never reset, overwritten, or copied into a candidate. Tracked local edits are
+  not included: production app changes must be pushed to the configured branch.
+- A separate candidate image is built while the current app serves traffic.
+  Build/fetch failure leaves it running. Activation recreates only `app` and
+  waits for its health check. A failed activation restores the previous image
+  and Compose configuration and returns failure. Successful SHA/source/project
+  state is recorded atomically in `deployed.json` only after health succeeds.
+- Failed commits are retried on the next tick; pushing a correction is detected
+  automatically. Sources are bounded to the current/previous successful
+  releases and the latest failed attempt. Docker build cache and old image tags
+  require occasional disk maintenance; never prune volumes or the images
+  needed for recovery. Logs appear in the system journal.
+- The Postgres, browser-user/wiki files, and Caddy containers/volumes persist.
+  Updating one app container causes a brief interruption; this is not a
+  zero-downtime deployment. Back up data before database migrations: rollback
+  restores app code/configuration, not database changes made by a newer app.
+- Changes to the database, Caddy, host configuration, updater code or systemd
+  units require explicit maintenance. The installed updater does not replace
+  itself from Git. Repeat the install steps to update it. Do not run the old
+  `git pull && compose up --build` path concurrently with this updater.
+
+Check `journalctl` for rollback errors; a failed rollback needs operator action.
+Stop automatic retries during investigation:
+
+```bash
+systemctl disable --now schedule-surgery-update.timer
+# Wait for an already-running update to finish; disabling the timer does not kill it.
+systemctl status schedule-surgery-update.service
+```
+
+Validate the updater locally with simulated Git/Docker lifecycle failures:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/deploy -p 'test_*.py'
+docker compose --env-file .env.production.example -f docker-compose.production.yml config --quiet
+```
+
+These tests do not activate a real server; the initial server rebuild and
+journal/HTTPS checks above are still needed to verify the installation.
+
+For rsync-only installations, clone the GitHub repository first and point the
+updater configuration at that checkout, or continue manual Compose rebuilds.
 
 ## Remote Deploys With GitHub Actions
 
 The repository includes `.github/workflows/deploy-production.yml`. After the
-one-time setup below, every push to `main` runs the server's existing
+one-time setup below (including installing the rebuild command in
+[Automatic Updates](#automatic-updates-recommended)), every push to `main` runs the server's existing
 `/usr/local/bin/rebuild` command from GitHub Actions. You can also run the
 workflow manually in the **Actions** tab or invoke it from the GitHub API. No
 public rebuild HTTP endpoint is added to the application.
