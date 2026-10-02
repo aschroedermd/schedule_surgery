@@ -1,3 +1,6 @@
+import { BoardsFeedbackStore, commentsCsv } from './boardsFeedbackStore';
+import { ChatRequestError, transcribeScheduleAudio } from './chat';
+import { getDefaultChatModelSettings } from './chatSettingsStore';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { Readable } from 'node:stream';
@@ -29,6 +32,8 @@ export function httpName(name: string) { return name.normalize('NFKD').replace(/
 
 export function boardsTesterRouter(store: UserStore) {
   const router = express.Router();
+  const archive = new BoardsFeedbackStore();
+  let transcribing = 0;
   const limits = new Map<string, { count: number; until: number }>();
   function consume(key: string, count: number, window: number) {
     const now = Date.now();
@@ -84,6 +89,38 @@ export function boardsTesterRouter(store: UserStore) {
   router.get('/access', async (req: AuthenticatedRequest, res, next) => {
     try { const id = await store.getAccountId(req.user!.username); res.json({ displayName: req.user!.displayName, reviewer: !!id && reviewer(id) }); } catch (error) { next(error); }
   });
+  router.post('/transcribe', express.raw({ type: 'audio/*', limit: '4mb' }), async (req: AuthenticatedRequest, res, next) => {
+    const accountId = await store.getAccountId(req.user!.username);
+    const formats: Record<string, string> = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/mpeg': 'mp3' };
+    const format = formats[(req.get('content-type') || '').split(';')[0].trim()];
+    if (!format || !Buffer.isBuffer(req.body) || !req.body.length) { res.status(400).json({ detail: 'An audio recording is required' }); return; }
+    if (transcribing >= 2 || !consume(`voice:${accountId}`, 10, 15 * 60_000)) { res.set('Retry-After','60').status(429).json({ detail: 'Too many recordings. Try again shortly.' }); return; }
+    transcribing++;
+    const controller = new AbortController();
+    const disconnect = () => { if (!res.writableEnded) controller.abort(); };
+    res.on('close', disconnect);
+    const deadline = setTimeout(() => controller.abort(), 75_000);
+    try {
+      const text = await transcribeScheduleAudio({ data: req.body.toString('base64'), format }, (url, init) => fetch(url, { ...init, signal: AbortSignal.any([init?.signal || controller.signal, controller.signal]) }), { ...getDefaultChatModelSettings(), transcriptionModel: 'openai/gpt-transcribe' });
+      res.json({ text });
+    } catch (error) {
+      if (error instanceof ChatRequestError) res.status(error.status).json({ detail: error.message });
+      else res.status(502).json({ detail: 'Recording could not be transcribed. Try again or type your comment.' });
+    } finally { transcribing--; clearTimeout(deadline); res.off('close', disconnect); }
+  });
+  router.get(['/comments', '/comments/export', '/feedback/export'], async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const accountId = await store.getAccountId(req.user!.username);
+      if (!accountId) { res.status(401).json({ detail: 'Account no longer exists' }); return; }
+      const global = req.path === '/feedback/export';
+      if (global && !reviewer(accountId)) { res.status(403).json({ detail: 'Reviewer authorization required' }); return; }
+      const entries = await archive.list(global ? undefined : accountId);
+      if (req.path === '/comments') { res.json({ entries }); return; }
+      const csv = req.query.format === 'csv';
+      res.set('Content-Disposition', `attachment; filename="simulator-comments.${csv ? 'csv' : 'json'}"`);
+      res.type(csv ? 'text/csv' : 'application/json').send(csv ? commentsCsv(entries) : JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), entries }, null, 2));
+    } catch (error) { next(error); }
+  });
   router.use(async (req: AuthenticatedRequest, res, next) => {
     let upstreamReader: Readable | undefined;
     const controller = new AbortController();
@@ -113,6 +150,12 @@ export function boardsTesterRouter(store: UserStore) {
       const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
       const base = (process.env.SBS_TESTER_URL || 'http://127.0.0.1:8005').replace(/\/$/, '');
       const upstream = await fetch(`${base}/v1${route}${query}`, { method: req.method, headers, body: req.method === 'POST' ? JSON.stringify(req.body) : undefined, signal: controller.signal, redirect: 'error' });
+      if (req.method === 'POST' && /^\/session\/[a-zA-Z0-9_-]+\/feedback$/.test(route) && upstream.ok) {
+        const entry = await upstream.json();
+        try { await archive.save(entry, accountId, req.user!.displayName); }
+        catch { res.status(503).json({ detail: 'Comment reached the simulator, but its webapp archive could not be saved. Contact the reviewer before submitting it again.' }); return; }
+        res.status(upstream.status).json(entry); return;
+      }
       res.status(upstream.status);
       for (const header of ['content-type', 'content-disposition', 'retry-after']) { const value = upstream.headers.get(header); if (value) res.set(header, value); }
       res.set('X-Accel-Buffering', 'no');
@@ -125,7 +168,7 @@ export function boardsTesterRouter(store: UserStore) {
     } finally { clearTimeout(timeout); res.off('close', disconnect); }
   });
   router.use((error: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (error?.type === 'entity.too.large') res.status(413).json({ detail: 'Simulator input exceeds 32 KB' });
+    if (error?.type === 'entity.too.large') res.status(413).json({ detail: 'Simulator input exceeds the allowed size' });
     else if (error?.type === 'entity.parse.failed') res.status(400).json({ detail: 'Invalid JSON' });
     else next(error);
   });

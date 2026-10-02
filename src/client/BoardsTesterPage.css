@@ -11,3 +11,5 @@
 .boards-page > main { flex: 1; min-height: 0; height: auto; }
 .boards-toolbar { flex: none; flex-wrap: wrap; }
 .boards-access { overflow-y: auto; width: 100%; }
+
+.boards-toolbar a { color: #1e5946; padding: 12px 8px; font-size: 13px; }

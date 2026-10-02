@@ -47,13 +47,15 @@ export function BoardsTesterPage({ token }: { token: string }) {
   return <div className="boards-page">
     {access ? <>
       <nav className="boards-toolbar" aria-label="Simulator access">
+        <a href={`${BASE}/comments/export`}>Download my comments</a>
+        {access.reviewer && <><a href={`${BASE}/feedback/export`}>All comments · JSON</a><a href={`${BASE}/feedback/export?format=csv`}>All comments · CSV</a></>}
         <button onClick={async () => { await request('/access', { method: 'DELETE' }).catch(() => undefined); setAccess(undefined); setReview(false); }}>Lock simulator</button>
         {access.reviewer && <button onClick={() => void loadFeedback()}>Review global feedback</button>}
         {review && <button onClick={() => setReview(false)}>Return to tester</button>}
       </nav>
       {error && <p role="alert">{error}</p>}
       {review ? <section className="boards-access"><a href="/?section=account">← Account</a><h1>Feedback review</h1>{entries.map(entry => <FeedbackEntry key={entry.id} entry={entry} onTriage={triage} />)}</section> :
-        <Suspense fallback={<p className="boards-access">Loading simulator…</p>}><Tester apiBase={BASE} userName={access.displayName} backHref="/?section=account" /></Suspense>}
+        <Suspense fallback={<p className="boards-access">Loading simulator…</p>}><Tester apiBase={BASE} userName={access.displayName} voiceComments backHref="/?section=account" /></Suspense>}
     </> : <section className="boards-access">
       <a href="/?section=account">← Back to Account</a>
       <h1>Oral boards simulator</h1>

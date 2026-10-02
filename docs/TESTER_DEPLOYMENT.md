@@ -136,3 +136,46 @@ DB/user volumes to an encrypted destination off the droplet. Define retention
 images per repository (both update scripts remove older commit tags after success). Avoid global `docker system prune -a`; never prune volumes.
 Secrets, provider choice, SSH access, offsite backup destination and retention
 approval are runtime configuration, absent from source control.
+
+## Comment dictation and webapp archive
+
+The comment drawer supports tap-to-start/tap-to-stop and press-and-hold/release dictation.
+Audio goes through authenticated, same-origin `POST /api/boards-tester/transcribe` as
+an `audio/webm`, `audio/mp4`, `audio/ogg` or WAV body (4 MB maximum). The server uses
+OpenRouter `openai/gpt-transcribe` with its server-only `OPENROUTER_API_KEY`.
+Recordings stop after two minutes. Closing the drawer cancels recording and
+transcription. The returned text is editable and must be saved explicitly.
+Raw audio is not retained in the comment archive.
+
+Successful feedback submissions are copied to atomic, fsynced JSON files in
+`<user-store-directory>/boards-feedback`, or `SBS_COMMENT_ARCHIVE_PATH`. In production
+this is `/data/boards-feedback` in the existing persistent webapp user volume.
+The saved response is returned only after that copy succeeds. The simulator retains
+its original entry and replay bundle. The webapp copy includes account ID, display
+name, comment, timestamp, scenario, exchange and surrounding context. Include this
+folder in encrypted offsite backups alongside the user store. This is durable storage
+on the droplet; it is not a replacement for an offsite backup.
+
+An unlocked account can access its persisted comments at:
+
+- `GET /api/boards-tester/comments`
+- `GET /api/boards-tester/comments/export` (JSON download)
+- `GET /api/boards-tester/comments/export?format=csv`
+
+Only accounts listed in `SBS_REVIEWER_ACCOUNT_IDS` can download every account's
+comments at `GET /api/boards-tester/feedback/export` or `?format=csv`.
+These exports work without active cases or a running simulator. CSV cells are
+escaped and formula-like text is neutralized; JSON preserves original text.
+The simulator's reviewer APIs continue to provide triage and replay bundles.
+
+For scripted retrieval, obtain an account session token through normal login, then
+POST the additional password to `/api/boards-tester/access` with that Bearer token,
+`Origin: https://schedule.andrewschroeder.org`, and a private cookie jar. Use that
+cookie jar for the export GET. Do not put passwords or tokens in URLs. API keys
+cannot bypass simulator-password or reviewer checks.
+
+To backfill existing simulator feedback, stream its `entries.jsonl` into
+`node --import tsx scripts/import-tester-comments.ts` inside the webapp container.
+The importer uses trusted server-side records and stable `client.user_id`, replacing
+records by ID so it is safe to rerun. Historical records without an account ID remain
+in the simulator archive and are skipped rather than attributed to another account.
