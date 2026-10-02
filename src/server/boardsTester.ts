@@ -151,10 +151,16 @@ export function boardsTesterRouter(store: UserStore) {
       const base = (process.env.SBS_TESTER_URL || 'http://127.0.0.1:8005').replace(/\/$/, '');
       const upstream = await fetch(`${base}/v1${route}${query}`, { method: req.method, headers, body: req.method === 'POST' ? JSON.stringify(req.body) : undefined, signal: controller.signal, redirect: 'error' });
       if (req.method === 'POST' && /^\/session\/[a-zA-Z0-9_-]+\/feedback$/.test(route) && upstream.ok) {
-        const entry = await upstream.json();
-        try { await archive.save(entry, accountId, req.user!.displayName); }
+        const acknowledgement = await upstream.json() as { id: string };
+        try {
+          const saved = await fetch(`${base}/v1${route}`, { headers, signal: controller.signal, redirect: 'error' });
+          if (!saved.ok) throw Error('Saved comment unavailable');
+          const record = await saved.json() as { entries: any[] };
+          const entry = record.entries?.find(entry => entry.id === acknowledgement.id);
+          await archive.save(entry, accountId, req.user!.displayName);
+        }
         catch { res.status(503).json({ detail: 'Comment reached the simulator, but its webapp archive could not be saved. Contact the reviewer before submitting it again.' }); return; }
-        res.status(upstream.status).json(entry); return;
+        res.status(upstream.status).json(acknowledgement); return;
       }
       res.status(upstream.status);
       for (const header of ['content-type', 'content-disposition', 'retry-after']) { const value = upstream.headers.get(header); if (value) res.set(header, value); }

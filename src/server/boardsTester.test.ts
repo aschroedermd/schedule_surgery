@@ -103,7 +103,11 @@ describe('tester gateway', () => {
 });
 
 it('archives saved comments durably and restricts global downloads', async () => {
-  await startUpstream((_req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ id: 'comment-1', text: '=Example comment', author: 'forged', client: { user_id: 'forged' }, session: { id: 'case', scenario: 'liver_trauma' } })); });
+  await startUpstream((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    const entry = { id: 'comment-1', text: '=Example comment', author: 'forged', client: { user_id: 'forged' }, session: { id: 'case', scenario: 'liver_trauma' } };
+    res.end(JSON.stringify(req.method === 'POST' ? { id: entry.id, turn: null, created_at: '2026-10-02' } : { entries: [entry] }));
+  });
   const grant = await cookie();
   await request(app).post('/api/boards-tester/session/case/feedback').set('Origin', origin).set('Cookie', grant).send({ text: '=Example comment' }).expect(200);
   app = express(); app.use('/api/boards-tester', boardsTesterRouter(store));
