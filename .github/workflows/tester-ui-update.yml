@@ -45,7 +45,7 @@ jobs:
           git config --global --add url.https://github.com/.insteadOf git@github.com:
           npm install "git+https://github.com/aschroedermd/surgical-board-simulator-v2.git#$sha"
           git config --global --unset credential.helper
-          npm test
+          npm test -- --maxWorkers=2
           npm run build
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
