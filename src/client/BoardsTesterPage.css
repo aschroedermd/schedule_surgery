@@ -1,0 +1,13 @@
+.boards-page { min-height: 100dvh; background: #f3f5f1; color: #20382f; }
+.boards-toolbar { display: flex; gap: 8px; justify-content: flex-end; padding: 10px max(16px, calc((100vw - 1120px) / 2)); background: #f3f5f1; }
+.boards-toolbar button { min-height: 44px; }
+.boards-access { max-width: 520px; margin: 0 auto; padding: 32px 20px; }
+.boards-access a { color: #1e5946; }
+.boards-access h1 { font-size: 28px; }
+.boards-access label { display: grid; gap: 8px; margin: 24px 0 16px; }
+.boards-access input { width: 100%; min-height: 48px; font-size: 16px; }
+.boards-access button { min-height: 48px; }
+.boards-page { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+.boards-page > main { flex: 1; min-height: 0; height: auto; }
+.boards-toolbar { flex: none; flex-wrap: wrap; }
+.boards-access { overflow-y: auto; width: 100%; }

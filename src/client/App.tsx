@@ -1,4 +1,4 @@
-import BoardsTesterAccount from './BoardsTesterAccount';
+import BoardsTesterAccount, { BoardsTesterPage } from './BoardsTesterAccount';
 import {
   CalendarDays,
   ChevronLeft,
@@ -190,7 +190,7 @@ export function App() {
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
   const [selectedWeekId, setSelectedWeekId] = useState("");
   const [selectedService, setSelectedService] = useState(() => getStoredServiceLine() ?? DEFAULT_SERVICE_LINE);
-  const [activeTab, setActiveTab] = useState<Tab>("chat");
+  const [activeTab, setActiveTab] = useState<Tab>(() => new URLSearchParams(window.location.search).get("section") === "account" ? "account" : "chat");
   const [isScheduleEditorOpen, setIsScheduleEditorOpen] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [toast, setToast] = useState<string | undefined>();
@@ -644,6 +644,10 @@ export function App() {
         onLogout={handleLogout}
       />
     );
+  }
+
+  if (window.location.pathname === '/oral-boards') {
+    return <BoardsTesterPage token={session.token} />;
   }
 
   if (!state || !schedule || !selectedWeek || !selectedWeekId) {
