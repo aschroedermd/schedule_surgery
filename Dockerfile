@@ -4,7 +4,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 # The read-only deploy key and verified GitHub host keys exist only in this step.
-RUN --mount=type=secret,id=source_ssh_key,required=true \
+RUN --mount=type=secret,id=source_ssh_key,required=true,mode=0400 \
     --mount=type=secret,id=source_known_hosts,required=true \
     GIT_SSH_COMMAND='ssh -i /run/secrets/source_ssh_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/run/secrets/source_known_hosts' npm ci
 

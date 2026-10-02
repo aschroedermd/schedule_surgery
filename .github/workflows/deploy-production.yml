@@ -56,9 +56,9 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ghcr.io/aschroedermd/schedule_surgery:sha-${{ github.sha }}
-          secrets: |
-            source_ssh_key=${{ secrets.SBS_SOURCE_SSH_KEY }}
-            source_known_hosts=${{ secrets.SBS_SOURCE_KNOWN_HOSTS }}
+          secret-files: |
+            source_ssh_key=/home/runner/.ssh/simulator_read_key
+            source_known_hosts=/home/runner/.ssh/simulator_known_hosts
           cache-from: type=gha
           cache-to: type=gha,mode=max
   deploy:
