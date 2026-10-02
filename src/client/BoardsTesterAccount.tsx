@@ -8,7 +8,8 @@ async function request(path: string, init?: RequestInit) {
   return body;
 }
 interface Entry { id: string; author: string; text: string; session: { scenario: string }; status?: string; category: string; }
-export default function BoardsTesterSettings({ token }: { token: string }) {
+export default function BoardsTesterAccount({ token }: { token: string }) {
+  const [open, setOpen] = useState(false);
   const [password, setPassword] = useState('');
   const [access, setAccess] = useState<{ displayName: string; reviewer: boolean }>();
   const [error, setError] = useState('');
@@ -35,20 +36,23 @@ export default function BoardsTesterSettings({ token }: { token: string }) {
     } catch (error) { setError(error instanceof Error ? error.message : 'Could not update feedback'); }
   }
   return <section className="panel">
-    <h2>Settings</h2>
+    <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>oral boards simulator</button>
+    {open && <>
+    <h2>Oral boards simulator</h2>
     <p>Practice surgical boards and send feedback to the simulator team. Simulator access expires after two hours. Updates end active cases; saved feedback is retained.</p>
     {error && <p role="alert">{error}</p>}
     {!access ? <form onSubmit={unlock}>
       <label>Additional simulator password <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off" required maxLength={1024} /></label>
-      <button disabled={busy} type="submit">{busy ? 'Checking…' : 'Open boards tester'}</button>
+      <button disabled={busy} type="submit">{busy ? 'Checking…' : 'Unlock simulator'}</button>
     </form> : <>
       <div className="header-actions">
-        <button onClick={async () => { await request('/access', { method: 'DELETE' }).catch(() => undefined); setAccess(undefined); setReview(false); }}>Lock simulator</button>
+        <button onClick={async () => { await request('/access', { method: 'DELETE' }).catch(() => undefined); setAccess(undefined); setReview(false); setOpen(false); }}>Lock simulator</button>
         {access.reviewer && <button onClick={() => void loadFeedback()}>Review global feedback</button>}
         {review && <button onClick={() => setReview(false)}>Return to tester</button>}
       </div>
       {review ? <div><h3>Feedback review</h3>{entries.map(entry => <FeedbackEntry key={entry.id} entry={entry} onTriage={triage} />)}</div> :
         <Suspense fallback={<p>Loading simulator…</p>}><Tester apiBase={BASE} userName={access.displayName} backHref="/" /></Suspense>}
+    </>}
     </>}
   </section>;
 }

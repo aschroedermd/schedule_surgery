@@ -1,6 +1,6 @@
 # Boards tester integration and production rollout
 
-Repositories stay separate: `aschroedermd/schedule_surgery` owns accounts, Settings,
+Repositories stay separate: `aschroedermd/schedule_surgery` owns accounts, the Account launch button,
 password grants and the same-origin gateway; `aschroedermd/surgical-board-simulator-v2`
 owns the UI package, restricted API, engine and scenarios. The webapp dependency is
 pinned to a full published commit. No clinical source or provider secrets enter the
@@ -23,7 +23,7 @@ accounts' `accountId` values from `/data/users.json` (container) or the configur
 `USER_STORE_PATH` (host). A changed display name keeps the ID; deleting/recreating
 an account creates a new ID. Keep the migrated user store in backups.
 
-Users first sign in normally, then open **Settings** and enter the additional
+Users first sign in normally, then open **Account → oral boards simulator** and enter the additional
 password. The gateway issues a signed HttpOnly, Secure, SameSite=Strict cookie for
 two hours, bound to the account session and password-hash version. Every request
 revalidates the account, password revision, access expiry and reviewer allowlist.

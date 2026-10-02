@@ -1,4 +1,4 @@
-import BoardsTesterSettings from './BoardsTesterSettings';
+import BoardsTesterAccount from './BoardsTesterAccount';
 import {
   CalendarDays,
   ChevronLeft,
@@ -852,7 +852,6 @@ export function App() {
       {activeTab === "users" && isAdmin && (
         <UsersTab token={session.token} serviceLines={serviceLines} attendings={state.attendings} onToast={(message) => setToast(message)} />
       )}
-      {activeTab === "settings" && <BoardsTesterSettings token={session.token} />}
       {activeTab === "account" && (
         <AccountTab
           token={session.token}
@@ -862,6 +861,7 @@ export function App() {
           onOpenTamagotchi={session.role === "student" ? undefined : () => setIsTamagotchiOpen(true)}
           eggLink={session.role === "student" ? "https://surgemon.com/" : undefined}
         >
+          <BoardsTesterAccount token={session.token} />
           {linkedResident && (
             <ResidentProfileRequestPanel
               state={state}
@@ -4816,8 +4816,6 @@ function getTabTitle(tab: Tab): string {
       return "Activity 🛒";
     case "users":
       return "Users";
-    case "settings":
-      return "Settings";
     case "account":
       return "Account 🛠️";
   }

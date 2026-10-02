@@ -79,7 +79,7 @@ export function boardsTesterRouter(store: UserStore) {
       if (!accountId || access.owner !== sign(accountId)) throw new Error('Account session expired');
       req.user = { ...user, authType: 'session' };
       next();
-    } catch { res.status(401).json({ detail: 'Simulator access expired. Open Settings and unlock again.' }); }
+    } catch { res.status(401).json({ detail: 'Simulator access expired. Open Account and unlock the oral boards simulator again.' }); }
   });
   router.get('/access', async (req: AuthenticatedRequest, res, next) => {
     try { const id = await store.getAccountId(req.user!.username); res.json({ displayName: req.user!.displayName, reviewer: !!id && reviewer(id) }); } catch (error) { next(error); }

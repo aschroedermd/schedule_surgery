@@ -3,5 +3,5 @@ import { hashSimulatorPassword } from '../src/server/boardsTester';
 let password = '';
 for await (const chunk of process.stdin) password += chunk;
 password = password.replace(/\r?\n$/, '');
-if (password.length < 12 || password.length > 1024) throw new Error('Use a simulator password of 12–1024 characters');
+if (password.length < 1 || password.length > 1024) throw new Error('Use a simulator password of 1–1024 characters');
 console.log(await hashSimulatorPassword(password));
