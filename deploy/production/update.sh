@@ -7,11 +7,13 @@ exec 9>.webapp-deploy.lock
 flock 9
 compose() { PLANNER_IMAGE="$1" docker compose --env-file .env.production -f docker-compose.production.yml "${@:2}"; }
 previous="$(docker inspect --format '{{.Config.Image}}' "$(compose "$image" ps -q app)" 2>/dev/null || true)"
+rollback() { if [[ -n "$previous" ]]; then compose "$previous" up -d --no-deps app; fi; }
 compose "$image" pull app
-compose "$image" up -d app caddy
+if ! compose "$image" up -d app caddy; then rollback; exit 1; fi
 for attempt in {1..30}; do
   id="$(compose "$image" ps -q app)"
   if [[ -n "$id" ]] && [[ "$(docker inspect --format '{{.State.Health.Status}}' "$id")" == healthy ]]; then
+    if ! compose "$image" exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then rollback; exit 1; fi
     printf 'PLANNER_IMAGE=%s\n' "$image" > webapp-release.env.tmp
     mv webapp-release.env.tmp webapp-release.env
     repository="${image%:*}"
@@ -25,5 +27,5 @@ for attempt in {1..30}; do
   fi
   sleep 3
 done
-if [[ -n "$previous" ]]; then compose "$previous" up -d app; fi
+rollback
 exit 1
