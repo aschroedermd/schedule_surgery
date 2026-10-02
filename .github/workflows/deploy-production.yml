@@ -1,33 +1,75 @@
 name: Deploy production
 run-name: Deploy production (${{ inputs.request_id || github.sha }})
-
 on:
+  pull_request:
+    branches: [main]
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
     inputs:
       request_id:
-        description: Correlation ID used by API callers to find this deployment run
+        description: Deployment correlation ID
         required: true
         default: manual
         type: string
-
 concurrency:
   group: production-deployment
   cancel-in-progress: false
-
 permissions:
   contents: read
-
+  packages: write
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure read-only simulator repository access
+        env:
+          SOURCE_SSH_KEY: ${{ secrets.SBS_SOURCE_SSH_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SBS_SOURCE_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SOURCE_SSH_KEY" > ~/.ssh/simulator_read_key
+          chmod 600 ~/.ssh/simulator_read_key
+          printf '%s\n' "$SOURCE_KNOWN_HOSTS" > ~/.ssh/simulator_known_hosts
+          echo 'GIT_SSH_COMMAND=ssh -i /home/runner/.ssh/simulator_read_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/runner/.ssh/simulator_known_hosts' >> "$GITHUB_ENV"
+      - run: npm ci
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-call-builder.txt
+      - run: npm test -- --maxWorkers=2
+      - run: npm run build
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ghcr.io/aschroedermd/schedule_surgery:sha-${{ github.sha }}
+          secret-files: |
+            source_ssh_key=/home/runner/.ssh/simulator_read_key
+            source_known_hosts=/home/runner/.ssh/simulator_known_hosts
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
   deploy:
-    name: Rebuild production server
+    needs: build
+    if: github.event_name != 'pull_request' && vars.SBS_WEBAPP_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - name: Configure SSH
+      - uses: actions/checkout@v4
+      - name: Configure verified SSH connection
         env:
           SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
@@ -37,15 +79,12 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-
-      - name: Run the server rebuild
+      - name: Deploy prebuilt image
         env:
           SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
           SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          COMMIT: ${{ github.sha }}
+          GHCR_TOKEN: ${{ github.token }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile=~/.ssh/known_hosts \
-            "$SSH_USER@$SSH_HOST" \
-            'sudo -n /usr/local/bin/rebuild'
+          printf '%s' "$GHCR_TOKEN" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
+            sudo -n /usr/local/bin/deploy-planner "ghcr.io/aschroedermd/schedule_surgery:sha-$COMMIT" --registry-login

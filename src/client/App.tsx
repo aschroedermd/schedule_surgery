@@ -1,3 +1,4 @@
+import BoardsTesterAccount from './BoardsTesterAccount';
 import {
   CalendarDays,
   ChevronLeft,
@@ -237,6 +238,7 @@ export function App() {
   }, [chatViewportActive]);
 
   function endSession() {
+    void fetch("/api/boards-tester/access", { method: "DELETE" }).catch(() => undefined);
     scheduleLoadIdRef.current += 1;
     clearStoredSession();
     setSession(undefined);
@@ -859,6 +861,7 @@ export function App() {
           onOpenTamagotchi={session.role === "student" ? undefined : () => setIsTamagotchiOpen(true)}
           eggLink={session.role === "student" ? "https://surgemon.com/" : undefined}
         >
+          <BoardsTesterAccount token={session.token} />
           {linkedResident && (
             <ResidentProfileRequestPanel
               state={state}

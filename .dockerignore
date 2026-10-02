@@ -9,3 +9,13 @@ src/**/*.test.tsx
 *.log
 .DS_Store
 .git
+
+.local
+.codex_tmp
+.wiki-workspace
+.api-key-server
+backups
+tmp
+*.sql
+*.dump
+*.backup

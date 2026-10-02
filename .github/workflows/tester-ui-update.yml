@@ -1,0 +1,63 @@
+name: Update tester UI
+on:
+  repository_dispatch:
+    types: [sbs-tester-release]
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: tester-ui-update
+  cancel-in-progress: false
+jobs:
+  update:
+    if: vars.SBS_UI_UPDATES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-call-builder.txt
+      - name: Configure read-only simulator repository access
+        env:
+          SOURCE_SSH_KEY: ${{ secrets.SBS_SOURCE_SSH_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SBS_SOURCE_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SOURCE_SSH_KEY" > ~/.ssh/simulator_read_key
+          chmod 600 ~/.ssh/simulator_read_key
+          printf '%s\n' "$SOURCE_KNOWN_HOSTS" > ~/.ssh/simulator_known_hosts
+          echo 'GIT_SSH_COMMAND=ssh -i /home/runner/.ssh/simulator_read_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/runner/.ssh/simulator_known_hosts' >> "$GITHUB_ENV"
+      - name: Find latest successful simulator release and update immutable pin
+        run: |
+          set -euo pipefail
+          source=git@github.com:aschroedermd/surgical-board-simulator-v2.git
+          sha="$(git ls-remote "$source" refs/heads/main | cut -f1)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          # This immutable marker is published only after tests and image publication pass.
+          release="$(git ls-remote "$source" "refs/tags/tester-release-$sha" | cut -f1)"
+          [[ "$release" == "$sha" ]] || exit 0
+          current="$(node -p 'require("./package.json").dependencies["@surgical-board-simulator/tester-ui"]')"
+          [[ "$current" != *"#$sha" ]] || exit 0
+          npm install "git+ssh://git@github.com/aschroedermd/surgical-board-simulator-v2.git#$sha"
+          npm test -- --maxWorkers=2
+          npm run build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git commit -m "Update tester UI to $sha"
+          git push origin HEAD:main
+          echo "RELEASE_SHA=$sha" >> "$GITHUB_ENV"
+      - name: Build and deploy the updated webapp
+        if: env.RELEASE_SHA != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-production.yml --ref main -f request_id="tester-ui-$RELEASE_SHA"

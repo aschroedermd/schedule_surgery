@@ -19,6 +19,7 @@
     "db:down": "docker compose down"
   },
   "dependencies": {
+    "@surgical-board-simulator/tester-ui": "github:aschroedermd/surgical-board-simulator-v2#e289b2e1a5ca90b40a61699d872b5140096e44ce",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "lucide-react": "^0.468.0",
@@ -29,7 +30,6 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
@@ -37,6 +37,7 @@
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
     "@types/supertest": "^6.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "jsdom": "^25.0.1",
     "supertest": "^7.0.0",
