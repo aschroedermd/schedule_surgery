@@ -1,6 +1,8 @@
 name: Deploy production
 run-name: Deploy production (${{ inputs.request_id || github.sha }})
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -25,16 +27,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Authenticate read-only simulator dependency
+      - name: Configure read-only simulator repository access
         env:
-          SOURCE_TOKEN: ${{ secrets.SBS_SOURCE_READ_TOKEN }}
+          SOURCE_SSH_KEY: ${{ secrets.SBS_SOURCE_SSH_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SBS_SOURCE_KNOWN_HOSTS }}
         run: |
-          test -n "$SOURCE_TOKEN"
-          git config --global credential.helper '!f() { echo username=x-access-token; echo "password=$SOURCE_TOKEN"; }; f'
-          git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/
-          git config --global --add url.https://github.com/.insteadOf git@github.com:
-          npm ci
-          git config --global --unset credential.helper
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SOURCE_SSH_KEY" > ~/.ssh/simulator_read_key
+          chmod 600 ~/.ssh/simulator_read_key
+          printf '%s\n' "$SOURCE_KNOWN_HOSTS" > ~/.ssh/simulator_known_hosts
+          echo 'GIT_SSH_COMMAND=ssh -i /home/runner/.ssh/simulator_read_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/runner/.ssh/simulator_known_hosts' >> "$GITHUB_ENV"
+      - run: npm ci
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -51,14 +54,16 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ghcr.io/aschroedermd/schedule_surgery:sha-${{ github.sha }}
-          secrets: github_token=${{ secrets.SBS_SOURCE_READ_TOKEN }}
+          secrets: |
+            source_ssh_key=${{ secrets.SBS_SOURCE_SSH_KEY }}
+            source_known_hosts=${{ secrets.SBS_SOURCE_KNOWN_HOSTS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
   deploy:
     needs: build
-    if: vars.SBS_WEBAPP_DEPLOY_ENABLED == 'true'
+    if: github.event_name != 'pull_request' && vars.SBS_WEBAPP_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 10
@@ -79,6 +84,7 @@ jobs:
           SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
           SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
           COMMIT: ${{ github.sha }}
+          GHCR_TOKEN: ${{ github.token }}
         run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
-            sudo -n /usr/local/bin/deploy-planner "ghcr.io/aschroedermd/schedule_surgery:sha-$COMMIT"
+          printf '%s' "$GHCR_TOKEN" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
+            sudo -n /usr/local/bin/deploy-planner "ghcr.io/aschroedermd/schedule_surgery:sha-$COMMIT" --registry-login

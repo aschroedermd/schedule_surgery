@@ -72,7 +72,9 @@ four sessions, cloud inference only.
    give `deploy` only the sudo rule:
    `deploy ALL=(root) NOPASSWD: /usr/local/bin/deploy-planner ghcr.io/aschroedermd/schedule_surgery:sha-*`.
    Docker-group membership is root-equivalent; restrict that key/account accordingly.
-5. Authenticate Docker on the host to GHCR with a read-only `read:packages` credential
+5. CI deployments authenticate GHCR using their short-lived job token, streamed
+   through SSH into a temporary Docker config that is deleted after the update.
+   For initial manual pulls, authenticate Docker to GHCR with a read-only `read:packages` credential
    authorized for both private repositories. Send its value via stdin to
    `docker login ghcr.io --username OWNER --password-stdin`; do not commit it.
 6. Deploy the simulator's immutable published image with
@@ -86,27 +88,31 @@ four sessions, cloud inference only.
 
 Webapp repository secrets:
 
-- `SBS_SOURCE_READ_TOKEN`: read-only contents + Actions-read access to the private
-  simulator repo. The dependency installer rewrites GitHub SSH URLs to HTTPS and
-  uses an ephemeral credential helper; Docker uses a BuildKit secret mount.
+- `SBS_SOURCE_SSH_KEY`: a dedicated read-only deploy key on the simulator repo.
+- `SBS_SOURCE_KNOWN_HOSTS`: verified GitHub SSH host keys. Both were configured during
+  integration; the image build uses temporary BuildKit secret mounts.
 - Environment `production`: `PRODUCTION_SSH_PRIVATE_KEY`, verified
   `PRODUCTION_SSH_KNOWN_HOSTS`; variables `PRODUCTION_SSH_HOST`, `PRODUCTION_SSH_USER`.
 
 Simulator environment `tester-production`: `SBS_SSH_HOST`, `SBS_SSH_USER`,
-`SBS_SSH_KEY`, verified `SBS_SSH_KNOWN_HOSTS`. Repository secret
-`SBS_WEBAPP_DISPATCH_TOKEN` needs Contents-write access to the webapp repository
-for `repository_dispatch`. Prefer a narrowly scoped GitHub App/token.
+`SBS_SSH_KEY`, verified `SBS_SSH_KNOWN_HOSTS`. Optional immediate notification: repository secret `SBS_WEBAPP_DISPATCH_TOKEN`
+needs Contents-write access to the webapp for `repository_dispatch`. The five-minute
+read-only release polling works without this secret.
 
 After the manual deployment and smoke test succeed, set webapp repository variables
 `SBS_WEBAPP_DEPLOY_ENABLED=true`, `SBS_UI_UPDATES_ENABLED=true`; simulator variables
-`SBS_DEPLOY_ENABLED=true`, `SBS_WEBAPP_UPDATES_ENABLED=true`. Do not activate before
+`SBS_DEPLOY_ENABLED=true`; optionally `SBS_WEBAPP_UPDATES_ENABLED=true` if the
+dispatch credential is configured. Do not activate before
 credentials, shared network, HTTPS and both installed update scripts are ready.
 Branch protection must permit the update bot to commit dependency updates to main,
 or adapt it to an approved dependency-update PR workflow.
 
-A successful simulator image release triggers `sbs-tester-release`. The webapp
-also checks hourly as recovery for missed dispatches. It ignores supplied SHAs,
-verifies the current simulator main commit has a successful tester-release run,
+With the optional dispatch credential, a successful simulator image release triggers
+`sbs-tester-release`. The webapp
+also checks every five minutes (GitHub scheduling can add delay) without needing
+a cross-repo API token. It ignores supplied SHAs and verifies the current simulator
+main commit has the immutable `tester-release-FULL_SHA` marker published only after
+tests and image publication succeed,
 updates package/lockfile, tests/builds, commits the pin, then dispatches the webapp
 build/deploy workflow. Engine releases deploy independently. Breaking APIs need
 a new API version and coordinated host release. Build/deploy concurrency is serialized.

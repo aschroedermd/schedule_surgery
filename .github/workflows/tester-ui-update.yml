@@ -3,7 +3,7 @@ on:
   repository_dispatch:
     types: [sbs-tester-release]
   schedule:
-    - cron: '17 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 permissions:
   contents: write
@@ -26,25 +26,28 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements-call-builder.txt
-      - name: Find latest successful simulator release and update immutable pin
+      - name: Configure read-only simulator repository access
         env:
-          GH_TOKEN: ${{ secrets.SBS_SOURCE_READ_TOKEN }}
-          SOURCE_TOKEN: ${{ secrets.SBS_SOURCE_READ_TOKEN }}
+          SOURCE_SSH_KEY: ${{ secrets.SBS_SOURCE_SSH_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SBS_SOURCE_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SOURCE_SSH_KEY" > ~/.ssh/simulator_read_key
+          chmod 600 ~/.ssh/simulator_read_key
+          printf '%s\n' "$SOURCE_KNOWN_HOSTS" > ~/.ssh/simulator_known_hosts
+          echo 'GIT_SSH_COMMAND=ssh -i /home/runner/.ssh/simulator_read_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/runner/.ssh/simulator_known_hosts' >> "$GITHUB_ENV"
+      - name: Find latest successful simulator release and update immutable pin
         run: |
           set -euo pipefail
-          test -n "$SOURCE_TOKEN"
-          sha="$(gh api repos/aschroedermd/surgical-board-simulator-v2/commits/main --jq '.sha')"
+          source=git@github.com:aschroedermd/surgical-board-simulator-v2.git
+          sha="$(git ls-remote "$source" refs/heads/main | cut -f1)"
           [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
-          # Ignore browser/dispatch supplied SHAs. Only a tested main release is eligible.
-          success="$(gh api "repos/aschroedermd/surgical-board-simulator-v2/actions/workflows/tester-release.yml/runs?branch=main&head_sha=$sha&status=success&per_page=1" --jq '.total_count')"
-          test "$success" -gt 0 || exit 0
+          # This immutable marker is published only after tests and image publication pass.
+          release="$(git ls-remote "$source" "refs/tags/tester-release-$sha" | cut -f1)"
+          [[ "$release" == "$sha" ]] || exit 0
           current="$(node -p 'require("./package.json").dependencies["@surgical-board-simulator/tester-ui"]')"
           [[ "$current" != *"#$sha" ]] || exit 0
-          git config --global credential.helper '!f() { echo username=x-access-token; echo "password=$SOURCE_TOKEN"; }; f'
-          git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/
-          git config --global --add url.https://github.com/.insteadOf git@github.com:
-          npm install "git+https://github.com/aschroedermd/surgical-board-simulator-v2.git#$sha"
-          git config --global --unset credential.helper
+          npm install "git+ssh://git@github.com/aschroedermd/surgical-board-simulator-v2.git#$sha"
           npm test -- --maxWorkers=2
           npm run build
           git config user.name 'github-actions[bot]'

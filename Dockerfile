@@ -1,14 +1,12 @@
 # syntax=docker/dockerfile:1
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
-# Read-only source-repo token exists only for this build step, never in a layer.
-RUN --mount=type=secret,id=github_token,required=true \
-    GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=credential.helper \
-    GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_1=ssh://git@github.com/ \
-    GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_2=git@github.com: \
-    GIT_CONFIG_VALUE_0='!f() { echo username=x-access-token; printf "password="; cat /run/secrets/github_token; }; f' npm ci
+# The read-only deploy key and verified GitHub host keys exist only in this step.
+RUN --mount=type=secret,id=source_ssh_key,required=true \
+    --mount=type=secret,id=source_known_hosts,required=true \
+    GIT_SSH_COMMAND='ssh -i /run/secrets/source_ssh_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/run/secrets/source_known_hosts' npm ci
 
 FROM deps AS build
 COPY . .

@@ -3,6 +3,14 @@ set -euo pipefail
 cd /opt/schedule_surgery
 image="${1:?Supply immutable webapp image}"
 [[ "$image" =~ ^ghcr\.io/aschroedermd/schedule_surgery:sha-[a-f0-9]{40}$ ]] || exit 2
+# CI supplies its short-lived package token over stdin; never retain it on disk.
+if [[ "${2:-}" == "--registry-login" ]]; then
+  registry_config="$(mktemp -d)"
+  chmod 700 "$registry_config"
+  export DOCKER_CONFIG="$registry_config"
+  trap 'rm -rf "$registry_config"' EXIT
+  docker login ghcr.io --username aschroedermd --password-stdin
+fi
 exec 9>.webapp-deploy.lock
 flock 9
 compose() { PLANNER_IMAGE="$1" docker compose --env-file .env.production -f docker-compose.production.yml "${@:2}"; }
