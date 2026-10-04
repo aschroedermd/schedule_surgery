@@ -2,9 +2,9 @@
 
 Use this guide when an AI agent, script, or MCP server needs to read or update the schedule or perform supported webapp administration.
 
-Live app/API base URL: `http://159.89.226.139`. Set `BASE_URL=http://159.89.226.139` when using the curl examples below. If a domain name or HTTPS endpoint is added later, prefer the current configured `PUBLIC_BASE_URL`.
+Live app/API base URL: `https://schedule.andrewschroeder.org`. Set `BASE_URL=https://schedule.andrewschroeder.org` when using the curl examples below.
 
-Security prerequisite: the numeric live URL currently shown here is plain HTTP. Do not send an admin API key, bearer token, or temporary password over it from an untrusted network. Configure the documented HTTPS domain first (preferred), or use a trusted SSH tunnel, then set `BASE_URL` to that protected endpoint.
+Send passwords, bearer tokens, and API keys only over HTTPS or a trusted tunnel.
 
 Contract sources: start with the public `/agent` landing page or `GET /api` JSON quick guide, then use the live `GET /api/openapi.json` response as the authoritative endpoint and request-schema contract. Use [API.md](API.md) for the complete human-readable API reference. This guide adds agent-specific safety, sequencing, fallback, and verification rules; if examples here disagree with the live OpenAPI schema, stop and follow the live schema rather than guessing.
 
@@ -17,6 +17,93 @@ Contract sources: start with the public `/agent` landing page or `GET /api` JSON
 - Prefer patching existing entities over creating duplicates. The API does not enforce uniqueness for names or ids.
 - Prefer the account's personal API key in `X-API-Key`. It uses that account's current service privileges and can be rotated or revoked from the Account tab. Use the configured admin API key only for authorized administration and the viewer API key for shared read-only tools.
 - After OR, clinic, resident-assignment, or rounding writes, read `GET /api/weeks/{weekId}/schedule` and `GET /api/weeks/{weekId}/warnings` to verify computed times, coverage, and risk warnings. After attending-call writes, verify with a ranged `GET /api/attending-coverage` and inspect `effectiveCoverage`.
+
+## Weekly schedule import
+
+The public [agent landing page](https://schedule.andrewschroeder.org/agent) and `GET /api/agent-guide` publish the same import rules. `/agents` redirects to `/agent`. Use this recipe for a few supplied cases or a whole week. Import only what the source supplies: an omitted attending may be on vacation and has no implied cases. An empty source day does not authorize deletion.
+
+1. `GET /api/session`: inspect `role`, `attendingId`, and `servicePrivileges`. A personal key has its owner's current permissions. A linked attending may post their own blocks and cases; clinics need an edit grant. A service editor may post blocks, cases, and clinics for that service.
+2. `GET /api/state`: record `version`; resolve the Monday `weeks[].startDate`, each attending and hospital ID, `settings.turnoverMinutes`, and existing blocks, cases, and clinics. Use the live IDs, never the illustrative IDs below.
+3. Reuse the matching week. If none exists, **an admin** creates it with `POST /api/entities/weeks`; a service editor must have an admin create the week before importing.
+4. Match each block by **week/date + attendingId + hospitalId + firstCaseStartTime**. Create only a missing parent block with `POST /api/entities/attendingBlocks`.
+5. Match each case by **blockId + zero-based order + procedureLabel**. `POST /api/entities/cases` for a new row or `PATCH /api/entities/cases/{id}` for a confirmed correction. Keep repeated identical procedures at different orders as separate cases.
+6. Match each clinic by **date + attendingId + startTime + endTime**. `POST /api/entities/clinicSessions` for a new session; set `service` explicitly.
+7. Each successful planner write returns the **full updated PlannerState** with a new `version`; put it in `X-State-Version` on the next write. On `409`, refetch state and compare the target. After timeout or interruption, read back before retrying because the write may already have succeeded. Keep a per-entity journal with source row, matching key, ID, outcome, and verified version.
+8. Verify with both `GET /api/weeks/{weekId}/schedule?service={service}` and `GET /api/weeks/{weekId}/warnings?service={service}`. Compare source counts, dates, attending IDs, hospitals, zero-based case order, clinic intervals, and exact endoscopy end times. Report uncovered work separately from warnings. Zero warnings does not prove completeness or resident coverage.
+
+Send `Content-Type: application/json`, either `Authorization: Bearer <token>` or a user-supplied `X-API-Key`, and `X-State-Version: <latest version>` on each planner write. For example, after resolving the real attending and hospital IDs from state:
+
+```json
+{"id":"week_2026_10_05","startDate":"2026-10-05","label":"Oct 5–11, 2026"}
+```
+
+`POST /api/entities/weeks` is admin-only. The block must exist before its cases:
+
+```json
+{"id":"block_2026_10_06_gerrish_rmh_0730","weekId":"week_2026_10_05","date":"2026-10-06","attendingId":"att_gerrish_FROM_STATE","hospitalId":"hosp_rmh_FROM_STATE","firstCaseStartTime":"07:30","notes":""}
+```
+
+Post the following two objects separately to `POST /api/entities/cases`. They represent two distinct source rows:
+
+```json
+{"id":"case_2026_10_06_gerrish_chole_0","blockId":"block_2026_10_06_gerrish_rmh_0730","procedureLabel":"Lap chole","durationMinutes":90,"priority":2,"tags":[],"notes":"Estimated duration: 90 minutes (lap chole default)","order":0}
+{"id":"case_2026_10_06_gerrish_chole_1","blockId":"block_2026_10_06_gerrish_rmh_0730","procedureLabel":"Lap chole","durationMinutes":90,"priority":2,"tags":[],"notes":"Estimated duration: 90 minutes (lap chole default)","order":1}
+```
+
+Post a clinic to `POST /api/entities/clinicSessions`:
+
+```json
+{"id":"clinic_2026_10_08_gerrish_1300","weekId":"week_2026_10_05","date":"2026-10-08","startTime":"13:00","endTime":"17:00","attendingId":"att_gerrish_FROM_STATE","service":"Davies","location":"Riverside 3","capacity":1,"isProcedure":false}
+```
+
+The clinic example omits optional `hospitalId`; include it only when that location's hospital is known. Create returns HTTP 201; patch returns HTTP 200. Both return the full planner state, beginning like `{"version":43,"updatedAt":"...","settings":{...},"weeks":[...],"attendingBlocks":[...],"cases":[...],"clinicSessions":[...]}`. Use the returned `version`, not the pre-write value, for the next mutation.
+
+### Names, services, and locations
+
+Cases inherit the service of their block's attending. Clinics require their own `service`. `Barry` means `Berry`; `S. Adkins` resolves to Stacie Adkins/Berry; `F. Adkins` resolves to Farrell Adkins/Fogel; Ashley Gerrish is Davies. These are name-resolution aliases, not instructions to rename roster records. Distinguish Curtis (`C.`) Bower from `K.` Bower; surname-only matching is unsafe. Resolve each name to exactly one live `attendingId` and verify its service.
+
+| Service | Attending name candidates |
+| --- | --- |
+| Berry | Stacie Adkins, John Hagy, Michael Nussbaum, Charles Paget, John Rudderow, Sanjoy Saha, Daniel Tershak |
+| Davies | Curtis Bower, Ashley Gerrish, Guy Katz, T. Lucktong, Arnold Salzberg, Sharon Williams |
+| Fogel | Terry Nickerson, Farrell Adkins |
+
+For Berry, Davies, and Fogel, match a supplied surgeon to one of these candidates; clarify an unmatched name rather than force-fitting it into a service. These names do not imply that every attending has a case every week. Ordinary clinic defaults to `Riverside 3`, except Stacie Adkins clinic defaults to `FMH`. Endoscopy may occur at RMH, CCASC, or FMH; preserve the supplied hospital and label the session Endo/Endoscopy. Ask when the Endo site is missing. `OR location to confirm` needs clarification before creating a block; do not guess from the attending's default hospital.
+
+### Durations and correction limits
+
+Use a source duration first. Otherwise use these approved estimates, even if an older `procedureDefaults` row differs. Whipple is **200 minutes**, superseding an older 360-minute seed value. Mark default-derived times in case `notes` as estimates.
+
+| Procedure | Minutes | Procedure | Minutes |
+| --- | ---: | --- | ---: |
+| Lap chole | 90 | Robotic chole | 90 |
+| Open inguinal | 60 | Laparoscopic inguinal | 90 |
+| Open umbilical | 30 | Soft tissue excision | 30 |
+| Colectomy | 120 | Whipple | 200 |
+| Rectal exam under anesthesia | 45 | Parathyroidectomy / parathyroid | 120 |
+| Total thyroidectomy | 120 | Altmeier procedure | 120 |
+
+For any other procedure without a source duration, use **90 minutes** and write `Estimated duration: 90 minutes (general default)` in `notes`. Case order is zero-based; sequential timing uses `firstCaseStartTime`, each case's `durationMinutes`, and `state.settings.turnoverMinutes`. Use optional `startTimeOverride: "HH:mm"` for an exact start. Represent a source endoscopy interval as one case with its exact duration and fixed start, then verify its computed end time. `isProcedure: true` distinguishes a procedure clinic from an ordinary clinic.
+
+For example, a sourced 07:30–09:30 Endoscopy interval at CCASC is one case under a CCASC block, with the actual live IDs substituted:
+
+```json
+{"id":"block_2026_10_07_katz_ccasc_0730","weekId":"week_2026_10_05","date":"2026-10-07","attendingId":"att_katz_FROM_STATE","hospitalId":"hosp_ccasc_FROM_STATE","firstCaseStartTime":"07:30","notes":"Endoscopy"}
+{"id":"case_2026_10_07_katz_endo_0","blockId":"block_2026_10_07_katz_ccasc_0730","procedureLabel":"Endoscopy interval","durationMinutes":120,"startTimeOverride":"07:30","priority":2,"tags":["endoscopy"],"notes":"Source interval 07:30–09:30","order":0}
+```
+
+Post the block and case as separate requests, in that order. In the computed schedule, the case must end at 09:30.
+
+“Add this” means add the supplied entries only. “Nothing scheduled” and omitted attendings never authorize deletion. A replacement request needs a separately confirmed scope and removal policy. Posting attending schedules alone does not authorize assigning residents, running suggestions, changing roster services, rotating keys, or deleting entries.
+
+| Identity | Relevant access |
+| --- | --- |
+| Browser session / personal key | Current account permissions; a key adds no privileges. Only the owner can create/rotate a personal key from a browser session. |
+| Service editor | Write blocks, cases, and clinics on granted services; no week or roster creation. |
+| Linked attending | Write own blocks and cases; clinics and resident assignments require service edit. |
+| Admin | Create weeks and edit all planner entities. |
+
+`400` means invalid request; `401` means missing or invalid credentials; `403` means password gate or insufficient privilege; `404` means missing route or entity; `409` means stale state version. After `409` or a timeout, refetch and inspect the target before retrying.
 
 ## Rebuild And Deploy The Production Server
 
@@ -309,7 +396,7 @@ The database stores one JSON planner state. Important collections:
 
 Browser-user records live in a separate protected user store, not in `PlannerState`. An attending account's `attendingId` is the explicit link to its planner `attendings[]` record; do not infer that link from a display name.
 
-Cases do not have independent start times. To change timing, patch the block `firstCaseStartTime`, or patch case `durationMinutes` / `order`. Sequential cases include `settings.turnoverMinutes` between cases.
+Cases may have an optional fixed `startTimeOverride: "HH:mm"`. Without one, the first case uses the block's `firstCaseStartTime` and later cases follow prior case durations plus `settings.turnoverMinutes`. Patch the block start, case duration/order, or fixed override as appropriate.
 
 Service lines are selected client-side and persisted by each browser. The built-in service lines are `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`.
 
@@ -787,7 +874,7 @@ When answering a user, summarize the article normally. If they request the guide
 - When a user says “covered by Adeleke,” resolve Adeleke from `residents` by substring/name, then preserve the actual `id`.
 - When a user is working in a service line, filter reads and suggestions with the same `service` query parameter. Davies is the default seeded service.
 - When a user says “Katz at RMH,” resolve Katz from `attendings` and RMH from `hospitals.shortName`.
-- When a user says “Bower clinic,” resolve Bower from `attendings`, set `clinicSessions.attendingId`, and use the attending's service unless the user explicitly chose another service line.
+- When a user says “Bower clinic,” clarify which Bower if the first name or initial is missing. Resolve the exact `attendingId`, set `clinicSessions.attendingId`, and use the attending's service unless the user explicitly chose another service line.
 - When a user says “Bower procedure clinic,” create or patch a `clinicSessions` row with `isProcedure: true`; do not model that as an OR `case`.
 - When creating an attending browser account, resolve the exact `attendingId` from `state.attendings`; never create an account based only on an attending name. Give the user the returned/generated temporary password once, through an approved private channel, and do not store it in planner notes or agent logs.
 - When the user says Practice or Elective call, use canonical coverage line `Practice` (the API accepts `Elective` as an input alias). Keep it separate from ACS, Vascular, Pediatrics, and NRV.

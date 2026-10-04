@@ -245,6 +245,10 @@ export function createApp(
     res.type("html").send(getAgentPageHtml());
   });
 
+  app.get("/agents", (_req, res) => {
+    res.redirect(301, "/agent");
+  });
+
   app.get(["/api", "/api/agent-guide"], (_req, res) => {
     res.json(getAgentGuideDocument());
   });

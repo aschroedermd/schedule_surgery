@@ -43,7 +43,7 @@ export function createInitialState(today = new Date()): PlannerState {
         : resident
     ),
     procedureDefaults: [
-      { id: "proc_whipple", label: "Whipple", durationMinutes: 360, priority: 5, tags: ["HPB", "chief-level", "complex open"] },
+      { id: "proc_whipple", label: "Whipple", durationMinutes: 200, priority: 5, tags: ["HPB", "chief-level", "complex open"] },
       { id: "proc_bypass", label: "Gastric bypass", durationMinutes: 180, priority: 4, tags: ["bariatrics", "fellow-priority"] },
       { id: "proc_chole", label: "Laparoscopic cholecystectomy", durationMinutes: 90, priority: 2, tags: ["general surgery"] },
       { id: "proc_hernia", label: "Ventral hernia repair", durationMinutes: 150, priority: 3, tags: ["general surgery", "abdominal wall"] }

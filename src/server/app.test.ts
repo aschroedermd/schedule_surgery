@@ -1762,11 +1762,18 @@ describe("planner API", () => {
     expect(response.body.writeRules).toContain("X-State-Version");
     expect(response.body.scheduleModel.residentCall).toContain("mid-level");
     expect(response.body.scheduleModel.attendingCall).toContain("Practice");
+    expect(response.body.weeklyScheduleImport.example.block.attendingId).toBe("att_gerrish_FROM_STATE");
+    expect(response.body.weeklyScheduleImport.durationDefaultsMinutes.Whipple).toBe(200);
+    expect(response.body.weeklyScheduleImport.workflow).toEqual(expect.arrayContaining([expect.stringContaining("parent block")]));
     const landing = await request(app).get("/agent").expect(200);
     expect(landing.headers["content-type"]).toMatch(/text\/html/);
     for (const phrase of ["senior/chief", "mid-level", "intern", "ACS", "Practice", "Berry", "Davies", "Fogel", "rotationSchedule", "/api/contacts"]) {
       expect(landing.text).toContain(phrase);
     }
+    for (const phrase of ["Weekly schedule import", "Riverside 3", "CCASC", "Whipple", "200", "X-State-Version", "startTimeOverride"]) {
+      expect(landing.text).toContain(phrase);
+    }
+    await request(app).get("/agents").expect(301).expect("Location", "/agent");
     await request(app).get("/api/agent-guide").expect(200)
       .expect((guide) => expect(guide.body).toEqual(response.body));
     await request(app).get("/api/healthz").expect(200)
