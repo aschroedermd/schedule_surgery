@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { addDays, displayDate } from "../shared/date";
 import { buildDailyGrandView } from "../shared/dailyGrand";
+import { OR_LOCATIONS } from "../shared/locations";
 import type { PlannerState } from "../shared/types";
 
 export function GrandDateControls({ date, onChange }: { date: string; onChange: (date: string) => void }) {
@@ -18,7 +19,7 @@ export function GrandDateControls({ date, onChange }: { date: string; onChange: 
 
 export function DailyGrandView({ state, date }: { state: PlannerState; date: string }) {
   const entries = useMemo(() => buildDailyGrandView(state, date), [state, date]);
-  const groups = [...new Set(["RMH", "FMH", "CCASE", "Clinic", ...entries.map(entry => entry.group)])];
+  const groups = [...new Set([...OR_LOCATIONS, "Clinic", ...entries.map(entry => entry.group)])];
   return <section className="daily-grand" aria-label="Daily grand view">
     {!entries.length && <p className="grand-empty">No OR, endoscopy, or clinic blocks scheduled for this day.</p>}
     <div className="grand-locations">{groups.map(group => {

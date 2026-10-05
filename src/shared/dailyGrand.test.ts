@@ -5,6 +5,27 @@ import { buildDailyGrandView } from "./dailyGrand";
 import { makeAssignment } from "./scheduler";
 
 describe("daily grand schedule", () => {
+  it.each(["CCASC", "Community", "RCH", "Roanoke Community Hospital"])("groups %s under CCASC", location => {
+    const state = createInitialState();
+    state.hospitals[0].shortName = location;
+    const entry = buildDailyGrandView(state, state.weeks[0].startDate).find(item => item.id === "block_chen_mon");
+    expect(entry).toMatchObject({ group: "CCASC", location: "CCASC" });
+  });
+
+  it("includes Rockbridge as an OR location", () => {
+    const state = createInitialState();
+    state.hospitals[0].shortName = "Rockbridge";
+    expect(buildDailyGrandView(state, state.weeks[0].startDate)[0]).toMatchObject({ group: "Rockbridge", location: "Rockbridge", kind: "OR" });
+  });
+
+  it.each(["CCR3", "Riverside 3", "Riverside"])("displays clinic location %s as Riverside 3", location => {
+    const state = createInitialState();
+    const date = state.clinicSessions[0].date;
+    state.clinicSessions[0].location = location;
+    expect(buildDailyGrandView(state, date).find(item => item.id === state.clinicSessions[0].id))
+      .toMatchObject({ location: "Riverside 3", group: "Clinic" });
+  });
+
   it("includes every service once, with endoscopy at its hospital and an inferred end", () => {
     const state = createInitialState();
     const date = state.weeks[0].startDate;
@@ -16,7 +37,7 @@ describe("daily grand schedule", () => {
     expect(entries).toHaveLength(2);
     expect(entries.map(item => item.service)).toEqual(["Davies", "Vascular"]);
     expect(entries[0]).toMatchObject({ group: "RMH", kind: "OR", startTime: "07:30", endTime: undefined });
-    expect(entries[1]).toMatchObject({ group: "CCASE", kind: "Endoscopy", calculatedEnd: true });
+    expect(entries[1]).toMatchObject({ group: "CCASC", kind: "Endoscopy", calculatedEnd: true });
     expect(entries[1].endTime).toBeTruthy();
     expect(new Set(entries.flatMap(item => item.coverage.map(item => item.id))).size)
       .toBe(entries.flatMap(item => item.coverage).length);
@@ -44,7 +65,7 @@ describe("daily grand schedule", () => {
     const clinics = buildDailyGrandView(state, date).filter(item => item.kind === "Clinic");
     expect(clinics).toHaveLength(2);
     expect(clinics.every(item => item.group === "Clinic")).toBe(true);
-    expect(clinics[0]).toMatchObject({ location: "Riverside", startTime: "08:00", endTime: "12:00" });
+    expect(clinics[0]).toMatchObject({ location: "Riverside 3", startTime: "08:00", endTime: "12:00" });
     expect(clinics[0].coverage[0].residentNames).toEqual([state.residents[0].name]);
   });
 

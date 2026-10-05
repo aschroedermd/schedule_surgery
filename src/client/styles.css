@@ -7596,7 +7596,8 @@ h2 {
 .grand-location { min-width: 0; border: 1px solid var(--border-color); border-top: 3px solid var(--border-hospital-default); border-radius: 8px; overflow: hidden; background: var(--bg-surface); }
 .grand-location-rmh { border-top-color: var(--border-hospital-rmh); }
 .grand-location-fmh { border-top-color: var(--border-hospital-fmh); }
-.grand-location-ccase { border-top-color: var(--border-hospital-ccasc); }
+.grand-location-ccasc { border-top-color: var(--border-hospital-ccasc); }
+.grand-location-rockbridge { border-top-color: #8b78b8; }
 .grand-location-clinic { border-top-color: #16856d; }
 .grand-location > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; background: var(--bg-surface-hover); }
 .grand-location h3 { margin: 0; font-size: 14px; }

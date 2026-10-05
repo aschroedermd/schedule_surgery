@@ -58,6 +58,7 @@ import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { ChatTab } from "./ChatTab";
 import { ContactsTab } from "./ContactsTab";
 import { DailyGrandView, GrandDateControls } from "./DailyGrandView";
+import { normalizeOrLocation, OR_LOCATIONS } from "../shared/locations";
 import { CallBuilderTab, CallOffRequestForm } from "./CallBuilderTab";
 import { canSeeDiagnosticErrors, presentActionError, presentBackgroundError } from "./errorPresentation";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
@@ -3065,14 +3066,12 @@ function ClinicView({
   );
 }
 
-const QUICK_EDIT_LOCATION_CODES = ["RMH", "CCASC", "FMH", "NRV"] as const;
-
 export function normalizeQuickCaseDuration(value: number | ""): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 90;
 }
 
 export function getQuickEditHospitals(hospitals: Hospital[], currentHospitalId: string): Hospital[] {
-  const preferred = hospitals.filter((hospital) => QUICK_EDIT_LOCATION_CODES.includes(hospital.shortName.toUpperCase() as typeof QUICK_EDIT_LOCATION_CODES[number]));
+  const preferred = hospitals.filter((hospital) => OR_LOCATIONS.some(code => code === normalizeOrLocation(hospital.shortName)));
   if (!preferred.length) return hospitals;
   const current = hospitals.find((hospital) => hospital.id === currentHospitalId);
   return current && !preferred.some((hospital) => hospital.id === current.id) ? [current, ...preferred] : preferred;

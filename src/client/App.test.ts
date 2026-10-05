@@ -212,16 +212,16 @@ describe("OR / clinic quick editing", () => {
     expect(normalizeQuickCaseDuration(75)).toBe(75);
   });
 
-  it("offers the configured RMH, CCASC, FMH, and NRV locations", () => {
+  it("offers the configured RMH, CCASC, FMH, and Rockbridge locations", () => {
     const hospitals = [
       { id: "other", name: "Other", shortName: "OTHER", color: "#000" },
       { id: "rmh", name: "RMH", shortName: "RMH", color: "#111" },
       { id: "ccasc", name: "CCASC", shortName: "CCASC", color: "#222" },
       { id: "fmh", name: "FMH", shortName: "FMH", color: "#333" },
-      { id: "nrv", name: "NRV", shortName: "NRV", color: "#444" }
+      { id: "rockbridge", name: "Rockbridge", shortName: "Rockbridge", color: "#444" }
     ];
 
-    expect(getQuickEditHospitals(hospitals, "rmh").map((hospital) => hospital.shortName)).toEqual(["RMH", "CCASC", "FMH", "NRV"]);
+    expect(getQuickEditHospitals(hospitals, "rmh").map((hospital) => hospital.shortName)).toEqual(["RMH", "CCASC", "FMH", "Rockbridge"]);
   });
 
   it("preserves clinic duration when its start time changes", () => {

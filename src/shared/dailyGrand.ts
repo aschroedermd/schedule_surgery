@@ -1,5 +1,6 @@
 import { computeScheduledCases } from "./scheduler";
 import { isEndoscopyBlock, isEndoscopyText } from "./services";
+import { normalizeClinicLocation, normalizeOrLocation } from "./locations";
 import type { Assignment, PlannerState } from "./types";
 
 export interface GrandCoverage {
@@ -25,13 +26,7 @@ export function buildDailyGrandView(state: PlannerState, date: string): GrandEnt
   const names = (assignments: Assignment[]) => [...new Set(assignments.map(assignment =>
     state.residents.find(resident => resident.id === assignment.residentId)?.name ?? "Unknown resident"
   ))];
-  const groupFor = (location: string) => {
-    const code = location.trim().toUpperCase();
-    if (/\bCCAS[CE]\b/.test(code)) return "CCASE";
-    if (/\bRMH\b/.test(code)) return "RMH";
-    if (/\bFMH\b/.test(code)) return "FMH";
-    return location || "Other locations";
-  };
+  const groupFor = (location: string) => normalizeOrLocation(location) || "Other locations";
   const blocks = state.attendingBlocks.filter(block => block.date === date);
   // ENDO is a virtual projection of these same blocks. Read the source once,
   // without concatenating schedules filtered by service.
@@ -45,7 +40,7 @@ export function buildDailyGrandView(state: PlannerState, date: string): GrandEnt
     const endTime = blockCases.length ? blockCases.reduce((last, item) => item.endMinutes > last.endMinutes ? item : last).endTime : undefined;
     return {
       id: block.id, surgeon: attending.name, service: attending.service,
-      location: hospital.shortName, group: groupFor(hospital.shortName),
+      location: groupFor(hospital.shortName), group: groupFor(hospital.shortName),
       kind: endoscopy ? "Endoscopy" : "OR", startTime: block.firstCaseStartTime,
       endTime: endoscopy ? endTime : undefined, calculatedEnd: endoscopy && Boolean(endTime),
       coverage: blockCases.length ? blockCases.map(item => ({ id: item.id, label: item.procedureLabel, residentNames: names(item.assignments) }))
@@ -57,7 +52,8 @@ export function buildDailyGrandView(state: PlannerState, date: string): GrandEnt
     const endoscopy = isEndoscopyText(clinic.service) || isEndoscopyText(clinic.location);
     entries.push({
       id: clinic.id, surgeon: state.attendings.find(item => item.id === clinic.attendingId)?.name ?? "Surgeon not specified",
-      service: clinic.service, location: clinic.location || hospital?.shortName || "Clinic",
+      service: clinic.service, location: endoscopy ? normalizeOrLocation(clinic.location || hospital?.shortName || "Clinic")
+        : normalizeClinicLocation(clinic.location || hospital?.shortName || "Clinic"),
       group: endoscopy ? groupFor(hospital?.shortName ?? clinic.location) : "Clinic",
       kind: endoscopy ? "Endoscopy" : "Clinic", startTime: clinic.startTime, endTime: clinic.endTime,
       coverage: [{ id: clinic.id, label: endoscopy ? "Endoscopy block" : "Clinic block", residentNames: names(state.assignments.filter(item => item.kind === "clinic" && item.targetId === clinic.id)) }]
