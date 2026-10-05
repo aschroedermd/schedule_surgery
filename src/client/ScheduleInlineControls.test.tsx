@@ -56,12 +56,15 @@ describe("inline schedule editing", () => {
     expect(grand.textContent).toContain("🚩 Unassigned");
     expect(grand.textContent).not.toContain("200 min");
     expect(container.querySelector('.board-grid')).toBeNull();
-    const dateInput = grand.querySelector<HTMLInputElement>('input[type="date"]')!;
+    const dateInput = container.querySelector<HTMLInputElement>('input[type="date"]')!;
     const initialDate = dateInput.value;
     await click("Next grand view day");
     expect(dateInput.value).not.toBe(initialDate);
     await click("Previous grand view day");
     expect(dateInput.value).toBe(initialDate);
+    fill(dateInput, "2026-10-04");
+    expect(container.querySelector(".grand-date-controls time")?.getAttribute("datetime")).toBe("2026-10-04");
+    expect(container.textContent).not.toContain("All services together");
     await click("Service week");
     expect(container.querySelector('.daily-grand')).toBeNull();
     expect(container.querySelector('.board-grid')).not.toBeNull();

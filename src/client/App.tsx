@@ -57,7 +57,7 @@ import { AddScheduleItem, AddCaseControl, CaseEditingControls, DeleteScheduleIte
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { ChatTab } from "./ChatTab";
 import { ContactsTab } from "./ContactsTab";
-import { DailyGrandView } from "./DailyGrandView";
+import { DailyGrandView, GrandDateControls } from "./DailyGrandView";
 import { CallBuilderTab, CallOffRequestForm } from "./CallBuilderTab";
 import { canSeeDiagnosticErrors, presentActionError, presentBackgroundError } from "./errorPresentation";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
@@ -749,13 +749,6 @@ export function App() {
         onSelect={handleSelectTab}
       />
 
-      {activeTab === "board" && (canEditSelectedService || isAttending || canStudentSelfAssign) && (
-        <nav className="schedule-mode-tabs" aria-label="OR / Clinic mode">
-          <button type="button" aria-pressed={!isScheduleEditorOpen} onClick={() => setIsScheduleEditorOpen(false)}>View</button>
-          <button type="button" aria-pressed={isScheduleEditorOpen} onClick={() => setIsScheduleEditorOpen(true)}>Edit</button>
-        </nav>
-      )}
-
       <div className="chat-tab-host" hidden={activeTab !== "chat"}>
         <ChatTab
           token={session.token}
@@ -779,6 +772,7 @@ export function App() {
           currentResidentId={linkedResident?.id}
           editableAttendingId={isAttending ? session.attendingId : undefined}
           showScheduleEditor={isScheduleEditorOpen}
+          onScheduleModeChange={(canEditSelectedService || isAttending || canStudentSelfAssign) ? setIsScheduleEditorOpen : undefined}
           onMutate={runMutation}
           onCopied={(message) => setToast(message)}
         />
@@ -1311,6 +1305,7 @@ export function BoardTab({
   currentResidentId,
   editableAttendingId,
   showScheduleEditor,
+  onScheduleModeChange,
   onMutate,
   onCopied
 }: {
@@ -1323,11 +1318,17 @@ export function BoardTab({
   currentResidentId?: string;
   editableAttendingId?: string;
   showScheduleEditor: boolean;
+  onScheduleModeChange?: (edit: boolean) => void;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
   onCopied: (message: string) => void;
 }) {
   const [activeDayIdx, setActiveDayIdx] = useState<number>(() => getPreferredMobileDayIndex(schedule));
   const [showDailyGrand, setShowDailyGrand] = useState(false);
+  const [grandDate, setGrandDate] = useState(() => schedule.days[getPreferredMobileDayIndex(schedule)]?.date ?? schedule.week.startDate);
+
+  useEffect(() => {
+    setGrandDate(schedule.days[getPreferredMobileDayIndex(schedule)]?.date ?? schedule.week.startDate);
+  }, [schedule.week.id]);
 
   const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -1337,11 +1338,21 @@ export function BoardTab({
 
   return (
     <>
-      <nav className="grand-view-switch" aria-label="Schedule view">
-        <button type="button" className="secondary-button" aria-pressed={!showDailyGrand} onClick={() => setShowDailyGrand(false)}>Service week</button>
-        <button type="button" className="secondary-button" aria-pressed={showDailyGrand} onClick={() => setShowDailyGrand(true)}><CalendarDays size={17} />Daily grand view</button>
-      </nav>
-      {showDailyGrand ? <DailyGrandView key={schedule.week.id} state={state} initialDate={schedule.days[activeDayIdx]?.date ?? schedule.week.startDate} /> : <>
+      <div className="board-view-toolbar">
+        {onScheduleModeChange ? <nav className="schedule-mode-tabs" aria-label="OR / Clinic mode">
+          <button type="button" aria-pressed={showDailyGrand || !showScheduleEditor} onClick={() => onScheduleModeChange(false)}>View</button>
+          <button type="button" aria-pressed={!showDailyGrand && showScheduleEditor} onClick={() => { setShowDailyGrand(false); onScheduleModeChange(true); }}>Edit</button>
+        </nav> : <span />}
+        {showDailyGrand ? <GrandDateControls date={grandDate} onChange={setGrandDate} /> : <span />}
+        <nav className="grand-view-switch" aria-label="Schedule view">
+          <button type="button" aria-pressed={!showDailyGrand} onClick={() => setShowDailyGrand(false)}>Service week</button>
+          <button type="button" aria-pressed={showDailyGrand} onClick={() => {
+            setGrandDate(schedule.days[activeDayIdx]?.date ?? schedule.week.startDate);
+            setShowDailyGrand(true);
+          }}><CalendarDays size={16} />Daily grand view</button>
+        </nav>
+      </div>
+      {showDailyGrand ? <DailyGrandView state={state} date={grandDate} /> : <>
       <div className="mobile-day-selector" role="tablist" aria-label="Select day of week">
         {dayNames.map((name, idx) => {
           const day = schedule.days[idx];
