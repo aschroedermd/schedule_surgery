@@ -48,6 +48,21 @@ describe("resident call builder", () => {
     }
   });
 
+  it("treats Breast and Fogel residents as one team for weekend call separation", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const residents = state.residents.filter((resident) => getCallPositionForResident(resident) === "senior").slice(0, 2);
+    residents.forEach((resident, index) => {
+      resident.rotationSchedule = [{ id: `rotation_${index}`, blockNumber: 3, startDate: "2026-08-31", endDate: "2026-09-27", service: index === 0 ? "Breast" : "Fogel" }];
+    });
+    const evaluation = evaluateCallSchedule(state, 3, [
+      { date: "2026-09-04", callPosition: "senior", residentId: residents[0].id },
+      { date: "2026-09-05", callPosition: "senior", residentId: residents[1].id }
+    ]);
+    expect(evaluation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: "same-service", residentIds: residents.map((resident) => resident.id), message: expect.stringContaining("Fogel/Breast") })
+    ]));
+  });
+
   it("publishes the revised hierarchy in the requested order", () => {
     expect(CALL_BUILDER_GOALS).toHaveLength(15);
     expect(CALL_BUILDER_GOALS[0]).toContain("absolutely no call on consecutive days");

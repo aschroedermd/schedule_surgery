@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isGeneralOrPlasticSurgeryResident } from "./services";
+import { isGeneralOrPlasticSurgeryResident, isResidentOnService, toKnownServiceLine } from "./services";
 
 describe("resident program filtering", () => {
   it("includes primary General Surgery residents", () => {
@@ -31,5 +31,18 @@ describe("resident program filtering", () => {
         sourceProgramAbbreviation: "IM"
       })
     ).toBe(false);
+  });
+});
+
+describe("Breast service designation", () => {
+  it("recognizes Breast rotations without placing residents on Fogel for OR/clinic work", () => {
+    const resident = {
+      serviceTags: ["Fogel"],
+      rotationSchedule: [{ id: "rotation_breast", blockNumber: 4, startDate: "2026-09-28", endDate: "2026-10-25", service: "Breast" }]
+    };
+    expect(toKnownServiceLine("Breast")).toBe("Breast");
+    expect(toKnownServiceLine("Breast Surgery")).toBe("Breast");
+    expect(isResidentOnService(resident, "Breast", "2026-10-04")).toBe(true);
+    expect(isResidentOnService(resident, "Fogel", "2026-10-04")).toBe(false);
   });
 });

@@ -6,7 +6,7 @@ export type ServicePrivileges = Record<string, ServicePrivilege>;
 
 export type ServiceStatus = "on-service" | "off-service";
 
-export const SERVICE_LINES = ["ICU", "Gilbert", "Vascular", "Davies", "Berry", "Ferrara", "Fogel", "NRV", "Peds", "ENDO"] as const;
+export const SERVICE_LINES = ["ICU", "Gilbert", "Vascular", "Davies", "Berry", "Ferrara", "Fogel", "Breast", "NRV", "Peds", "ENDO"] as const;
 
 export type ServiceLine = (typeof SERVICE_LINES)[number];
 

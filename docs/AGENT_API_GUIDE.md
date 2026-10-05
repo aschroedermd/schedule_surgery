@@ -398,7 +398,9 @@ Browser-user records live in a separate protected user store, not in `PlannerSta
 
 Cases may have an optional fixed `startTimeOverride: "HH:mm"`. Without one, the first case uses the block's `firstCaseStartTime` and later cases follow prior case durations plus `settings.turnoverMinutes`. Patch the block start, case duration/order, or fixed override as appropriate.
 
-Service lines are selected client-side and persisted by each browser. The built-in service lines are `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `NRV`, and `Peds`.
+Service lines are selected client-side and persisted by each browser. The built-in service lines are `ICU`, `Gilbert`, `Vascular`, `Davies`, `Berry`, `Ferrara`, `Fogel`, `Breast`, `NRV`, `Peds`, and `ENDO`.
+
+Breast is a separate OR/clinic service designation. For resident call scheduling, Breast and Fogel are treated as one team in weekend service-separation rules.
 
 - `attendings[].service` stores the attending's service line.
 - `residents[].rotationSchedule` stores dated resident block rotations; `residents[].serviceTags` remains a fallback for residents without a schedule. `residents[].vacation` is an optional list of inclusive `{ id, startDate, endDate }` intervals, kept separate from general `unavailable` blocks. `rosterKind: "off-service"` plus `sourceProgramAbbreviation` marks outside rotators from the MedHub side label, and `accountEligible: false` means selectable without seeded browser login.

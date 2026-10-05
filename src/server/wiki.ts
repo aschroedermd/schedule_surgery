@@ -139,7 +139,7 @@ Omit FMH cases and endoscopy blocks from general coverage-gap answers unless the
         "service-breast",
         "service-endoscopy"
       ],
-      body: `The planner service names are ICU, Gilbert, Vascular, Davies, Berry, Ferrara, Fogel, NRV, and Peds. Rotation schedules may also use Breast and Endoscopy. Use both the planner name and familiar clinical name when that improves clarity, such as “Fogel/Colorectal” or “ICU/SCC.” See the linked service articles for local descriptions.`
+      body: `The planner service names are ICU, Gilbert, Vascular, Davies, Berry, Ferrara, Fogel, Breast, NRV, Peds, and ENDO. Breast is separate from Fogel for OR/clinic work; resident call scheduling combines them as one team. Rotation schedules may also use Endoscopy. Use both the planner name and familiar clinical name when that improves clarity, such as “Fogel/Colorectal” or “ICU/SCC.” See the linked service articles for local descriptions.`
     }),
     seedArticle({
       slug: "service-icu",

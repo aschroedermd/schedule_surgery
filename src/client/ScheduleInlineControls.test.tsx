@@ -45,6 +45,28 @@ function fill(input: HTMLInputElement, value: string) {
 async function submit(form: HTMLFormElement) { await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); }
 
 describe("inline schedule editing", () => {
+  it("opens a grand view across services, navigates dates, and returns to the service week", async () => {
+    state.attendings[1].service = "Vascular";
+    render(false);
+    expect(container.querySelector(".day-column")?.textContent).not.toContain("Dr. Patel");
+    await click("Daily grand view");
+    const grand = container.querySelector('.daily-grand')!;
+    expect(grand.textContent).toContain("Dr. Patel");
+    expect(grand.textContent).toContain("Vascular");
+    expect(grand.textContent).toContain("🚩 Unassigned");
+    expect(grand.textContent).not.toContain("200 min");
+    expect(container.querySelector('.board-grid')).toBeNull();
+    const dateInput = grand.querySelector<HTMLInputElement>('input[type="date"]')!;
+    const initialDate = dateInput.value;
+    await click("Next grand view day");
+    expect(dateInput.value).not.toBe(initialDate);
+    await click("Previous grand view day");
+    expect(dateInput.value).toBe(initialDate);
+    await click("Service week");
+    expect(container.querySelector('.daily-grand')).toBeNull();
+    expect(container.querySelector('.board-grid')).not.toBeNull();
+  });
+
   it("shows names without assignment or schedule controls in View and removes open forms when leaving Edit", async () => {
     render(false);
     expect(container.querySelector(".assignment-summary")?.textContent).toBeTruthy();

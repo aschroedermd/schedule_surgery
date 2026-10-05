@@ -617,7 +617,7 @@ function getCandidateCost(
   }
   const sameServiceCount = sameWeekend.filter((assignment) => {
     const assignedResident = state.residents.find((candidate) => candidate.id === assignment.residentId);
-    return assignedResident && assignedResident.id !== resident.id && normalizeService(getResidentService(assignedResident, assignment.date)) === normalizeService(service);
+    return assignedResident && assignedResident.id !== resident.id && getCallSchedulingService(getResidentService(assignedResident, assignment.date)) === getCallSchedulingService(service);
   }).length;
   cost += sameServiceCount * 700;
 
@@ -763,17 +763,17 @@ function evaluateWeekendServiceSeparation(
       const resident = residentsById.get(assignment.residentId);
       if (!resident) continue;
       const service = getResidentService(resident, assignment.date);
-      const key = normalizeService(service);
+      const key = getCallSchedulingService(service);
       if (!key) continue;
       const residentIds = residentsByService.get(key) ?? new Set<string>();
       residentIds.add(resident.id);
       residentsByService.set(key, residentIds);
     }
-    for (const residentIds of residentsByService.values()) {
+    for (const [serviceKey, residentIds] of residentsByService) {
       if (residentIds.size <= 1) continue;
       const ids = [...residentIds];
       const names = ids.map((id) => residentsById.get(id)?.name ?? id);
-      const service = getResidentService(residentsById.get(ids[0])!, anchor);
+      const service = serviceKey === "Fogel" ? "Fogel/Breast" : getResidentService(residentsById.get(ids[0])!, anchor);
       addIssue(
         accumulator,
         "warning",
@@ -782,7 +782,7 @@ function evaluateWeekendServiceSeparation(
         Math.max(1, ids.length - 1) * 600,
         anchor,
         ids,
-        `same-service:${anchor}:${normalizeService(service)}`
+        `same-service:${anchor}:${serviceKey}`
       );
     }
   }
@@ -1019,6 +1019,12 @@ function isRestrictedRotation(service: string): boolean {
 
 function getResidentService(resident: Resident, date: string): string {
   return getRotationForDate(resident, date)?.service ?? resident.serviceTags[0] ?? "Not listed";
+}
+
+/** Breast and Fogel share a team for call scheduling, while OR/clinic services stay distinct. */
+export function getCallSchedulingService(service: string): string {
+  const serviceLine = normalizeRotationServiceToServiceLine(service);
+  return serviceLine === "Breast" ? "Fogel" : serviceLine ?? normalizeService(service);
 }
 
 export function normalizeService(service: string): string {

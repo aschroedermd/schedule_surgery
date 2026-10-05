@@ -11,6 +11,18 @@ import { getCallBuilderSlots, getCallBuilderWeekendAnchor, getCallPositionForRes
 import { parseLocalDate } from "../shared/date";
 
 describe("call-off request solver hierarchy", () => {
+  it("passes Breast and Fogel as a combined team to the solver", () => {
+    const state = createInitialState(new Date("2026-08-30T12:00:00"));
+    const residents = state.residents.filter((resident) => getCallPositionForResident(resident) === "senior").slice(0, 2);
+    residents.forEach((resident, index) => {
+      resident.rotationSchedule = [{ id: `rotation_${index}`, blockNumber: 3, startDate: "2026-08-31", endDate: "2026-09-27", service: index === 0 ? "Breast" : "Fogel" }];
+    });
+    const problem = buildSolverProblem(state, 3);
+    for (const resident of residents) {
+      expect(problem.residents.find((candidate) => candidate.id === resident.id)!.serviceByDate["2026-09-04"]).toBe("Fogel");
+    }
+  });
+
   it("makes senior residents eligible for exceptional mid-level coverage", () => {
     const state = createInitialState(new Date("2026-08-30T12:00:00"));
     const senior = buildSolverProblem(state, 3).residents.find((resident) => resident.position === "senior")!;

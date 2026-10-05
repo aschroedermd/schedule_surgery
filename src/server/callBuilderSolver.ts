@@ -25,11 +25,11 @@ import {
   isRegularPoolResidentForState,
   isTraumaChief,
   isVacationAdjacent,
-  normalizeService
+  getCallSchedulingService
 } from "../shared/callBuilder";
 import { parseLocalDate } from "../shared/date";
 import { compareCallOffRequestPrecedence, getCallOffRequestSeniority } from "../shared/callOffRequests";
-import { getRotationForDate, normalizeRotationServiceToServiceLine } from "../shared/rotations";
+import { getRotationForDate } from "../shared/rotations";
 import {
   CALL_POSITIONS,
   CallBuilderAssignment,
@@ -171,7 +171,7 @@ export function buildSolverProblem(state: PlannerState, blockNumber: number, opt
         crossBlockSaturdayDates: dateValues.filter((date) => isCrossBlockSaturday(state, blockNumber, resident.id, date)),
         serviceByDate: Object.fromEntries(dateValues.map((date) => {
           const rawService = getRotationForDate(resident, date)?.service ?? resident.serviceTags[0] ?? "";
-          const service = normalizeRotationServiceToServiceLine(rawService) ?? normalizeService(rawService);
+          const service = getCallSchedulingService(rawService);
           return [date, service];
         })),
         tieBreakBySlot: Object.fromEntries(slots.map((slot) => [slot.id, stableTieBreak(blockNumber, slot.id, resident.id)]))

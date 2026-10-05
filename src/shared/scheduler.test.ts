@@ -333,6 +333,27 @@ describe("scheduler core", () => {
     expect(arrangementWarning?.message).toBe("check arrangement");
   });
 
+  it("keeps Breast and Fogel OR blocks and clinics separate", () => {
+    const state = createInitialState();
+    const breastBlock = state.attendingBlocks[0];
+    const fogelBlock = state.attendingBlocks.find((block) => block.attendingId !== breastBlock.attendingId)!;
+    state.attendings.find((attending) => attending.id === breastBlock.attendingId)!.service = "Breast";
+    state.attendings.find((attending) => attending.id === fogelBlock.attendingId)!.service = "Fogel";
+    state.clinicSessions = [
+      { ...state.clinicSessions[0], id: "clinic_breast", service: "Breast" },
+      { ...state.clinicSessions[0], id: "clinic_fogel", service: "Fogel" }
+    ];
+
+    for (const service of ["Breast", "Fogel"]) {
+      const schedule = buildWeekSchedule(state, "week_current", service);
+      const blocks = schedule.days.flatMap((day) => day.blocks);
+      expect(blocks.length).toBeGreaterThan(0);
+      expect(blocks.every((block) => block.attending.service === service)).toBe(true);
+      expect(schedule.days.flatMap((day) => day.clinics).map((clinic) => clinic.id))
+        .toEqual([service === "Breast" ? "clinic_breast" : "clinic_fogel"]);
+    }
+  });
+
   it("filters weekly schedules by service line", () => {
     const state = createInitialState();
 

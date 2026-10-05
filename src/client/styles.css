@@ -61,6 +61,10 @@
   --bg-case-ccasc: #fffdf2;
   --border-hospital-ccasc: #d2a833;
 
+  --bg-hospital-fmh: #f3e4eb;
+  --bg-case-fmh: #fbf2f6;
+  --border-hospital-fmh: #b87994;
+
   --bg-hospital-default: #ffffff;
   --bg-case-default: #fcfdff;
   --border-hospital-default: #cbd5e1;
@@ -135,6 +139,10 @@
     --bg-hospital-ccasc: #452a03;
     --bg-case-ccasc: #78350f;
     --border-hospital-ccasc: #fbbf24;
+
+    --bg-hospital-fmh: #4a3344;
+    --bg-case-fmh: #624357;
+    --border-hospital-fmh: #d39ab5;
 
     --bg-hospital-default: #1e293b;
     --bg-case-default: #0f172a;
@@ -7533,4 +7541,77 @@ h2 {
 @media (min-width: 1101px) {
   .board-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .board-grid .day-column { min-width: 0; }
+}
+
+/* Give identity its own line; coverage and editing share a compact toolbar. */
+.board-grid .block-title { display: block; }
+.board-grid .attending-label { overflow-wrap: normal; }
+.board-grid .attending-label strong { min-width: 0; overflow-wrap: break-word; }
+.block-toolbar, .case-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.block-toolbar:empty { display: none; }
+.case-toolbar > .schedule-inline-form { flex-basis: 100%; }
+.board-grid .block-toolbar > .block-actions { display: block; flex: 1 1 110px; min-width: 0; }
+.board-grid .block-toolbar .assign-control,
+.board-grid .case-toolbar .assign-control { display: flex; flex-wrap: wrap; align-items: center; width: auto; }
+.board-grid .block-toolbar .assignment-select,
+.board-grid .case-toolbar .assignment-select,
+.schedule-edit-mode .clinic-assignments .assignment-select {
+  width: 160px; max-width: 100%; min-width: 0; font-size: .8rem; font-weight: 600;
+}
+.board-grid .block-toolbar .assignment-select { width: 100%; max-width: 160px; }
+.board-grid .block-edit-actions { margin-left: auto; }
+.board-grid .block-edit-actions:has(.schedule-inline-form),
+.board-grid .block-edit-actions:has(.schedule-delete-confirm) { flex-basis: 100%; }
+.board-grid .case-toolbar > .case-assignment-stack { flex: 1 1 140px; }
+.board-grid .case-toolbar > .schedule-edit-actions { margin-left: auto; }
+.board-grid .case-toolbar > .schedule-edit-actions:has(.schedule-inline-form),
+.board-grid .case-toolbar > .schedule-edit-actions:has(.schedule-delete-confirm) { flex-basis: 100%; }
+@media (min-width: 761px) and (pointer: fine) {
+  .schedule-edit-mode .schedule-edit-actions .icon-button,
+  .schedule-edit-mode .assign-control .icon-button {
+    width: 30px; height: 30px; min-width: 30px; min-height: 30px; padding: 6px;
+  }
+  .schedule-edit-mode .assignment-select { min-height: 30px; padding: 4px 7px; }
+}
+@media (max-width: 760px), (pointer: coarse) {
+  .board-grid .block-toolbar .assignment-select,
+  .board-grid .case-toolbar .assignment-select,
+  .schedule-edit-mode .clinic-assignments .assignment-select { font-size: 16px; min-height: 44px; width: 180px; }
+}
+
+/* Daily grand schedule: one row per surgeon block, coverage beside each case. */
+.grand-view-switch { display: flex; gap: 8px; margin: 14px 0; flex-wrap: wrap; }
+.grand-view-switch button[aria-pressed="true"] { background: var(--color-accent); border-color: var(--color-accent); color: var(--text-inverse); }
+.daily-grand { margin-bottom: 24px; }
+.grand-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 14px; }
+.grand-eyebrow { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.grand-header h2 { margin: 6px 0; font-size: 24px; }
+.grand-header p { margin: 0; font-size: 13px; color: var(--text-muted); }
+.grand-date-controls { display: flex; gap: 8px; align-items: center; }
+.grand-date-controls label { display: grid; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.grand-date-controls input { min-width: 145px; }
+.grand-note { color: var(--text-muted); font-size: 12px; margin: 12px 2px; }
+.grand-locations { display: grid; gap: 14px; }
+.grand-location { border: 1px solid var(--border-color); border-left: 4px solid var(--border-hospital-default); border-radius: 12px; overflow: hidden; background: var(--bg-surface); }
+.grand-location-rmh { border-left-color: var(--border-hospital-rmh); }
+.grand-location-fmh { border-left-color: var(--border-hospital-fmh); }
+.grand-location-ccase { border-left-color: var(--border-hospital-ccasc); }
+.grand-location-clinic { border-left-color: #16856d; }
+.grand-location > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: var(--bg-surface-hover); }
+.grand-location h3 { margin: 0; font-size: 16px; }
+.grand-location > header > span { font-size: 12px; color: var(--text-muted); }
+.grand-entry { display: grid; grid-template-columns: 145px minmax(170px, .8fr) minmax(280px, 2fr); gap: 16px; padding: 12px 16px; border-top: 1px solid var(--border-color); align-items: start; }
+.grand-time, .grand-surgeon { display: grid; gap: 4px; font-size: 13px; }
+.grand-time strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.grand-time > span, .grand-surgeon > span { font-size: 11px; color: var(--text-muted); }
+.grand-cases { list-style: none; display: grid; gap: 5px; margin: 0; padding: 0; font-size: 13px; }
+.grand-cases li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, .65fr); gap: 12px; align-items: start; }
+.grand-assigned, .grand-unassigned { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.grand-unassigned { color: var(--text-chip-off); }
+.grand-empty { padding: 12px 16px; color: var(--text-muted); font-size: 13px; margin: 0; }
+@media (max-width: 800px) {
+  .grand-header { align-items: start; flex-direction: column; padding: 16px; }
+  .grand-entry { grid-template-columns: 120px minmax(0, 1fr); gap: 10px; padding: 12px; }
+  .grand-cases { grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 8px; }
+  .grand-cases li { grid-template-columns: minmax(0, 1fr) minmax(110px, .7fr); }
 }

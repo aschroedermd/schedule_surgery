@@ -57,6 +57,7 @@ import { AddScheduleItem, AddCaseControl, CaseEditingControls, DeleteScheduleIte
 import { CalendarTab, RequestsTab } from "./CoverageCalendar";
 import { ChatTab } from "./ChatTab";
 import { ContactsTab } from "./ContactsTab";
+import { DailyGrandView } from "./DailyGrandView";
 import { CallBuilderTab, CallOffRequestForm } from "./CallBuilderTab";
 import { canSeeDiagnosticErrors, presentActionError, presentBackgroundError } from "./errorPresentation";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
@@ -1326,6 +1327,7 @@ export function BoardTab({
   onCopied: (message: string) => void;
 }) {
   const [activeDayIdx, setActiveDayIdx] = useState<number>(() => getPreferredMobileDayIndex(schedule));
+  const [showDailyGrand, setShowDailyGrand] = useState(false);
 
   const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -1335,6 +1337,11 @@ export function BoardTab({
 
   return (
     <>
+      <nav className="grand-view-switch" aria-label="Schedule view">
+        <button type="button" className="secondary-button" aria-pressed={!showDailyGrand} onClick={() => setShowDailyGrand(false)}>Service week</button>
+        <button type="button" className="secondary-button" aria-pressed={showDailyGrand} onClick={() => setShowDailyGrand(true)}><CalendarDays size={17} />Daily grand view</button>
+      </nav>
+      {showDailyGrand ? <DailyGrandView key={schedule.week.id} state={state} initialDate={schedule.days[activeDayIdx]?.date ?? schedule.week.startDate} /> : <>
       <div className="mobile-day-selector" role="tablist" aria-label="Select day of week">
         {dayNames.map((name, idx) => {
           const day = schedule.days[idx];
@@ -1366,7 +1373,7 @@ export function BoardTab({
         </button>
       </div>
 
-      <section className={`board-grid${showScheduleEditor ? "" : " schedule-view-mode"}`}>
+      <section className={`board-grid${showScheduleEditor ? " schedule-edit-mode" : " schedule-view-mode"}`}>
         {schedule.days.map((day, idx) => (
           <article
             key={day.date}
@@ -1426,6 +1433,7 @@ export function BoardTab({
           </article>
         ))}
       </section>
+      </>}
     </>
   );
 }
@@ -2798,6 +2806,8 @@ function BlockView({
             {selectedService === ENDOSCOPY_SERVICE_LINE ? ` · ${block.attending.service}` : ""}
           </span>
         </div>
+      </div>
+      <div className="block-toolbar">
         {(canEdit || block.assignment) && <div className="block-actions">
           <AssignmentControl
             state={state}
@@ -2814,11 +2824,11 @@ function BlockView({
             onMutate={onMutate}
           />
         </div>}
+        {canEditSchedule && <div className="schedule-edit-actions block-edit-actions">
+          <InlineBlockSettings state={state} block={block} token={token} onMutate={onMutate} />
+          <DeleteScheduleItem token={token} onMutate={onMutate} collection="attendingBlocks" id={block.id} label={`${block.attending.name} block`} />
+        </div>}
       </div>
-      {canEditSchedule && <div className="schedule-edit-actions block-edit-actions">
-        <InlineBlockSettings state={state} block={block} token={token} onMutate={onMutate} />
-        <DeleteScheduleItem token={token} onMutate={onMutate} collection="attendingBlocks" id={block.id} label={`${block.attending.name} block`} />
-      </div>}
       <Warnings warnings={block.warningMessages} />
       <div className="case-list">
         {block.cases.map((surgeryCase, index) => (
@@ -2907,46 +2917,48 @@ function CaseRow({
         <span className="time-pill">{surgeryCase.startTime}-{surgeryCase.endTime}</span>
         <strong>{surgeryCase.procedureLabel}</strong>
       </div>
-      <div className="case-assignment-stack">
-        {assignmentControls.map((control, index) => (
-          <AssignmentControl
-            key={control.assignment?.id ?? `${surgeryCase.id}-unassigned`}
-            state={state}
-            token={token}
-            kind={control.kind}
-            targetId={control.targetId}
-            assignment={control.assignment}
-            disabled={!canEdit}
-            claimable={false}
-            arrangementWarnings={index === 0 ? arrangementWarnings : []}
-            selectedService={selectedService}
-            currentResidentId={currentResidentId}
-            excludedResidentIds={assignedResidentIds}
-            showLock={control.showLock}
-            onMutate={onMutate}
-          />
-        ))}
-        {isAddingResident && (canEdit || canStudentSelfAssign) && (
-          <PersonAssignmentPicker
-            state={state}
-            token={token}
-            kind="case"
-            targetId={surgeryCase.id}
-            selectedService={selectedService}
-            currentResidentId={currentResidentId}
-            selfAssignmentOnly={canStudentSelfAssign}
-            excludedResidentIds={assignedResidentIds}
-            onMutate={onAdditionalResidentMutate}
-            onCancel={() => setIsAddingResident(false)}
-          />
-        )}
-        {canAddResident && (
-          <button type="button" className="secondary-button add-resident-button" onClick={() => setIsAddingResident(true)}>
-            +person
-          </button>
-        )}
+      <div className="case-toolbar">
+        <div className="case-assignment-stack">
+          {assignmentControls.map((control, index) => (
+            <AssignmentControl
+              key={control.assignment?.id ?? `${surgeryCase.id}-unassigned`}
+              state={state}
+              token={token}
+              kind={control.kind}
+              targetId={control.targetId}
+              assignment={control.assignment}
+              disabled={!canEdit}
+              claimable={false}
+              arrangementWarnings={index === 0 ? arrangementWarnings : []}
+              selectedService={selectedService}
+              currentResidentId={currentResidentId}
+              excludedResidentIds={assignedResidentIds}
+              showLock={control.showLock}
+              onMutate={onMutate}
+            />
+          ))}
+          {isAddingResident && (canEdit || canStudentSelfAssign) && (
+            <PersonAssignmentPicker
+              state={state}
+              token={token}
+              kind="case"
+              targetId={surgeryCase.id}
+              selectedService={selectedService}
+              currentResidentId={currentResidentId}
+              selfAssignmentOnly={canStudentSelfAssign}
+              excludedResidentIds={assignedResidentIds}
+              onMutate={onAdditionalResidentMutate}
+              onCancel={() => setIsAddingResident(false)}
+            />
+          )}
+          {canAddResident && (
+            <button type="button" className="secondary-button add-resident-button" onClick={() => setIsAddingResident(true)}>
+              +person
+            </button>
+          )}
+        </div>
+        {canEditSchedule && <CaseEditingControls surgeryCase={surgeryCase} isFirst={isFirst} isLast={isLast} token={token} onMutate={onMutate} />}
       </div>
-      {canEditSchedule && <CaseEditingControls surgeryCase={surgeryCase} isFirst={isFirst} isLast={isLast} token={token} onMutate={onMutate} />}
       <Warnings warnings={caseWarnings} />
     </div>
   );
@@ -4937,6 +4949,14 @@ function getHospitalTone(hospital: Hospital) {
       border: "var(--border-hospital-ccasc)",
       background: "var(--bg-hospital-ccasc)",
       caseBackground: "var(--bg-case-ccasc)"
+    };
+  }
+
+  if (key.includes("fmh") || key.includes("franklin")) {
+    return {
+      border: "var(--border-hospital-fmh)",
+      background: "var(--bg-hospital-fmh)",
+      caseBackground: "var(--bg-case-fmh)"
     };
   }
 
