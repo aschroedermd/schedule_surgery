@@ -425,6 +425,18 @@ describe("schedule assistant", () => {
     expect(prompt).not.toContain("<FAST_CALL_SCHEDULE");
   });
 
+  it("preloads residency conference occurrences and links across service boundaries", async () => {
+    const state = createInitialState(FAST_CONTEXT_NOW);
+    state.calendarEvents.push({ id: "journal", title: "Journal Club", date: "2026-07-31", startTime: "17:00",
+      meetingUrl: `https://teams.microsoft.com/l/meetup-join/journal?context=${"x".repeat(220)}`, recurrence: { frequency: "weekly" }, createdAt: "", updatedAt: "" });
+    const prompt = await captureSystemPrompt("What conferences are on the calendar this weekend?", state);
+    expect(prompt).toContain("<FAST_RESIDENCY_EVENTS");
+    const fridayPrompt = await captureSystemPrompt("What conferences are on 2026-07-31?", state);
+    expect(fridayPrompt).toContain("date=2026-07-31|title=Journal Club|start=17:00");
+    expect(fridayPrompt).toContain(`meeting_url=https://teams.microsoft.com/l/meetup-join/journal?context=${"x".repeat(220)}`);
+    expect(fridayPrompt).toContain("Morbidity & mortality conference");
+  });
+
   it("injects vacations, off entries, and unavailable dates for absence questions", async () => {
     const state = createInitialState(FAST_CONTEXT_NOW);
     state.residents[0].vacation = [

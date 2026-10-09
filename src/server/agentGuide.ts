@@ -20,6 +20,9 @@ export function getAgentGuideDocument() {
     commonRequests: [
       { method: "GET", path: "/api/state", purpose: "Read visible weeks, blocks, cases, people, assignments, and state.version." },
       { method: "GET", path: "/api/weeks/{weekId}/schedule", purpose: "Read computed block and case timing." },
+      { method: "GET", path: "/api/calendar-events?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD", purpose: "Read residency conferences, meeting links, and expanded recurring occurrences." },
+      { method: "POST", path: "/api/calendar-events", purpose: "Admin: publish a residency-wide conference with title/date and optional times, location, meetingUrl, description and weekly/monthly recurrence." },
+      { method: "PATCH", path: "/api/calendar-events/{id}", purpose: "Admin: correct a conference or recurring series. Patch calendar_friday_mm to add supplied Friday M&M details." },
       { method: "GET", path: "/api/contacts", purpose: "Look up authoritative directory phone numbers." },
       { method: "GET", path: "/api/attending-coverage?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD", purpose: "Read attending effectiveCoverage, including day/night and weekend fallback." },
       {
@@ -35,6 +38,12 @@ export function getAgentGuideDocument() {
       rotations: "Residents have dated rotationSchedule blocks on services such as Berry, Davies, and Fogel. Active service shapes expected OR/clinic work; actual coverage comes from block, case, clinic, and resident assignments."
     },
     writeRules: "Resolve ids from GET /api/state and send its version as X-State-Version on planner writes. A 403 means the account lacks the required privilege. Keep patient identifiers and other PHI out of all requests.",
+    residencyCalendar: {
+      read: "GET /api/calendar-events returns definitions and version; startDate/endDate also returns occurrences. Events also appear in state.calendarEvents and on Main residency calendar for all services.",
+      write: "Admin account or admin API key required; send X-State-Version. POST title/date, omit unknown optional location/endTime, preserve supplied Teams URLs in meetingUrl. Read back after posting; saved elsewhere does not mean posted to this app.",
+      recurrence: "weekly or monthly; daysOfWeek uses 0=Sunday through 6=Saturday. Monthly weekOfMonth 1–5 or -1 (last). date is first eligible day; untilDate is inclusive. Omit recurrence for a single event.",
+      absences: "A conference event does not mark anyone unavailable. Goldman or another resident's vacation/conference absence requires exact date(s); resolve residentId from state and update vacation/unavailable or create dated kind: off coverage entries. Do not invent absence dates."
+    },
     weeklyScheduleImport: {
       workflow: [
         "1. GET /api/session: inspect role, attendingId, and servicePrivileges. A personal key has its owner's current rights. A linked attending may write only their own blocks/cases without a service edit grant; a service editor can write that service's blocks/cases/clinics.",

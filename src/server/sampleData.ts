@@ -1,3 +1,4 @@
+import { createDefaultCalendarEvents } from "../shared/calendarEvents";
 import { addDays, formatDate, getMondayForDate } from "../shared/date";
 import { CoverageEntry, DirectoryContact, PlannerState } from "../shared/types";
 import { createRotationResidents } from "./residentRotationSeed";
@@ -10,6 +11,7 @@ export function createInitialState(today = new Date()): PlannerState {
 
   return {
     version: 1,
+    calendarEvents: createDefaultCalendarEvents(),
     updatedAt: seedCreatedAt,
     settings: {
       splitBufferMinutes: 90,

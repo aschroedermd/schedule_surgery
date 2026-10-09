@@ -100,6 +100,12 @@ export function getAgentPageHtml(): string {
 {"serviceLine":"Davies","messages":[{"role":"user","content":"Who is on call this weekend?"}]}</code></pre>
       </section>
 
+      <section class="panel" aria-labelledby="calendar-title">
+        <h2 id="calendar-title">Residency conferences and calendar events</h2>
+        <p><code>GET /api/calendar-events</code> returns event definitions and the planner version. Supply <code>startDate</code> and <code>endDate</code> to expand weekly or monthly recurrences. An admin may publish with <code>POST /api/calendar-events</code> using <code>title</code> and <code>date</code>, plus optional <code>startTime</code>, <code>endTime</code>, <code>location</code>, <code>meetingUrl</code>, <code>description</code>, and <code>recurrence</code>. Send <code>X-State-Version</code> and verify the saved event by reading it back.</p>
+        <p>Unknown locations and end times may be omitted. Preserve supplied Teams links. These events appear on the Main residency calendar for all services. Use <code>PATCH /api/calendar-events/{id}</code> to update an existing event or series, including <code>calendar_friday_mm</code> for Friday M&amp;M details. Resident vacation/conference absence is separate and requires exact dates before updating vacation, unavailable time, or dated off entries.</p>
+      </section>
+
       <section aria-labelledby="call-title">
         <h2 id="call-title">How call is organized</h2>
         <div class="rules">

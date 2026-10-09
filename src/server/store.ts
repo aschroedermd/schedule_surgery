@@ -1,3 +1,4 @@
+import { createDefaultCalendarEvents } from "../shared/calendarEvents";
 import { Pool } from "pg";
 import { buildResidentUsername, isPlaceholderResidentUsername } from "../shared/id";
 import { normalizeServiceLine, toKnownServiceLine } from "../shared/services";
@@ -339,6 +340,7 @@ export function normalizePlannerState(
       ...partial.qgendaSync
     },
     coverageEntries: partial.coverageEntries ?? createSeedCoverageEntries(),
+    calendarEvents: partial.calendarEvents ?? createDefaultCalendarEvents(),
     callOffRequests: normalizeCallOffRequests(partial.callOffRequests ?? []),
     callScheduleDrafts: normalizeCallScheduleDrafts(partial.callScheduleDrafts ?? []),
     coverageRequests: partial.coverageRequests ?? [],

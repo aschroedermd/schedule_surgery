@@ -1,3 +1,5 @@
+import { calendarEventOccursOn } from "../shared/calendarEvents";
+import { assertCalendarDate, buildCalendarEvent, CalendarEventValidationError } from "./calendarEvents";
 import { boardsTesterRouter } from './boardsTester';
 import cors from "cors";
 import express from "express";
@@ -2106,6 +2108,63 @@ export function createApp(
     }
   });
 
+  app.get("/api/calendar-events", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const start = req.query.startDate === undefined ? undefined : assertCalendarDate(req.query.startDate, "startDate");
+      const end = req.query.endDate === undefined ? undefined : assertCalendarDate(req.query.endDate, "endDate");
+      if (Boolean(start) !== Boolean(end)) throw new HttpError(400, "Supply both startDate and endDate");
+      if (start && end && (end < start || (Date.parse(end) - Date.parse(start)) / 86_400_000 > 366)) throw new HttpError(400, "Date range must be ordered and at most 366 days");
+      const occurrences = start && end ? state.calendarEvents.flatMap((event) => {
+        const rows = [];
+        for (let date = start; date <= end; date = addDays(date, 1)) {
+          if (calendarEventOccursOn(event, date)) rows.push({ ...event, date, eventId: event.id });
+        }
+        return rows;
+      }).sort((a, b) => a.date.localeCompare(b.date) || (a.startTime ?? "").localeCompare(b.startTime ?? "") || a.title.localeCompare(b.title)) : undefined;
+      res.json({ version: state.version, calendarEvents: state.calendarEvents, ...(occurrences ? { occurrences } : {}) });
+    } catch (error) { next(error); }
+  });
+
+  app.post("/api/calendar-events", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const event = buildCalendarEvent(req.body);
+      if (state.calendarEvents.some((candidate) => candidate.id === event.id)) throw new HttpError(409, "Calendar event id already exists; PATCH it or read back before retrying");
+      assertNoPhiText(`${event.title} ${event.location ?? ""} ${event.description ?? ""}`, "calendar event");
+      const saved = await commitState(req, addActivity({ ...state, calendarEvents: [...state.calendarEvents, event] }, {
+        ...requestActivityActor(req), activityType: "calendar", action: "added residency event", details: event.title, entityType: "calendarEvent", entityId: event.id
+      }));
+      res.status(201).json(filterStateForUser(saved, req.user));
+    } catch (error) { next(error); }
+  });
+
+  app.patch("/api/calendar-events/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const existing = state.calendarEvents.find((event) => event.id === req.params.id);
+      if (!existing) throw new HttpError(404, "Calendar event not found");
+      const event = buildCalendarEvent(req.body, existing);
+      assertNoPhiText(`${event.title} ${event.location ?? ""} ${event.description ?? ""}`, "calendar event");
+      const saved = await commitState(req, addActivity({ ...state, calendarEvents: state.calendarEvents.map((candidate) => candidate.id === event.id ? event : candidate) }, {
+        ...requestActivityActor(req), activityType: "calendar", action: "updated residency event", details: event.title, entityType: "calendarEvent", entityId: event.id
+      }));
+      res.json(filterStateForUser(saved, req.user));
+    } catch (error) { next(error); }
+  });
+
+  app.delete("/api/calendar-events/:id", requireAuth, requirePasswordReady, requireAdmin, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const existing = state.calendarEvents.find((event) => event.id === req.params.id);
+      if (!existing) throw new HttpError(404, "Calendar event not found");
+      const saved = await commitState(req, addActivity({ ...state, calendarEvents: state.calendarEvents.filter((event) => event.id !== existing.id) }, {
+        ...requestActivityActor(req), activityType: "calendar", action: "removed residency event", details: existing.title, entityType: "calendarEvent", entityId: existing.id
+      }));
+      res.json(filterStateForUser(saved, req.user));
+    } catch (error) { next(error); }
+  });
+
   app.post("/api/coverage-entries", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
@@ -2535,7 +2594,7 @@ export function createApp(
       res.status(error.status).json({ error: error.message });
       return;
     }
-    if (error instanceof ChatSettingsValidationError) {
+    if (error instanceof ChatSettingsValidationError || error instanceof CalendarEventValidationError) {
       res.status(400).json({ error: error.message });
       return;
     }

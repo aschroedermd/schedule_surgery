@@ -351,6 +351,26 @@ export interface Assignment {
   updatedAt: string;
 }
 
+export interface ResidencyCalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+  location?: string;
+  meetingUrl?: string;
+  description?: string;
+  recurrence?: {
+    frequency: "weekly" | "monthly";
+    interval?: number;
+    daysOfWeek?: number[];
+    weekOfMonth?: number;
+    untilDate?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CoverageEntry {
   id: string;
   date: string;
@@ -675,6 +695,7 @@ export interface PlannerState {
   attendingCoverageAssignments: AttendingCoverageAssignment[];
   qgendaSync: QgendaSyncStatus;
   coverageEntries: CoverageEntry[];
+  calendarEvents: ResidencyCalendarEvent[];
   callOffRequests: CallOffRequest[];
   callScheduleDrafts: CallScheduleDraft[];
   coverageRequests: CoverageChangeRequest[];

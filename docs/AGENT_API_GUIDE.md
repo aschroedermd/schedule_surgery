@@ -105,6 +105,12 @@ Post the block and case as separate requests, in that order. In the computed sch
 
 `400` means invalid request; `401` means missing or invalid credentials; `403` means password gate or insufficient privilege; `404` means missing route or entity; `409` means stale state version. After `409` or a timeout, refetch and inspect the target before retrying.
 
+## Residency conferences and absences
+
+Use `GET /api/calendar-events` to reconcile saved conference definitions and `GET /api/calendar-events?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` to verify actual occurrences. An admin may `POST /api/calendar-events` with `title` and `date`, optional local start/end times, `location`, `meetingUrl` (preserve supplied Teams links), `description`, and weekly/monthly `recurrence`. Send the latest `X-State-Version`. Unknown location/end time can be omitted. PATCH matching events, especially the default `calendar_friday_mm` series, rather than adding duplicates. See [API.md](API.md#main-residency-calendar-events-and-conferences) and live OpenAPI for the exact schema.
+
+Read back after each write. Saving details in an agent's notes does not publish them to this app. Do not invent missing conference dates or resident absence dates. Goldman or another resident's vacation/conference notice is separate from a global conference: resolve the resident's ID from state and use dated vacation, unavailable, or off entries only after dates are known.
+
 ## Rebuild And Deploy The Production Server
 
 Deployment uses the GitHub Actions API as a separate control plane. Do not look for or add a rebuild endpoint under the app's `/api` routes: the process being replaced cannot reliably supervise its own deployment, and exposing a shell-capable route would unnecessarily increase risk. The checked-in `.github/workflows/deploy-production.yml` workflow connects as a restricted `deploy` user and may run only the root-owned `/usr/local/bin/rebuild` command. It also runs automatically after a push to `main`. The [server-side updater](DEPLOY_DIGITALOCEAN.md#automatic-updates-recommended) can independently poll `origin/main` every 15 seconds; both use the same locked build/health-check/rollback implementation.

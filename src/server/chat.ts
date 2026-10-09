@@ -1,3 +1,4 @@
+import { calendarEventOccursOn } from "../shared/calendarEvents";
 import { buildWeekSchedule } from "../shared/scheduler";
 import {
   getCalendarNightResidentsForDate,
@@ -1136,6 +1137,20 @@ function buildFastScheduleContext(latestQuestion: string, context: AssistantCont
   if (wantsCases) sections.push(buildFastCaseContext(context, scope));
   if (wantsClinics || /\bprocedures?\b/i.test(latestQuestion)) sections.push(buildFastClinicContext(context, scope));
   if (wantsAbsences) sections.push(buildFastAbsenceContext(context, scope));
+  if (/\bconferences?\b|\bjournal club\b|\bgrand rounds\b|\bmorbidity\b|\bM\s*&\s*M\b|\bcalendar\b/i.test(latestQuestion)) {
+    const range = scope.range ?? readDateRange({}, context.now, 14, 62);
+    const events = (context.state.calendarEvents ?? []).flatMap((event) =>
+      isoDatesInRange(range.start, range.end).filter((date) => calendarEventOccursOn(event, date))
+        .map((date) => [
+          `date=${date}`, `title=${fastValue(event.title)}`,
+          `start=${fastValue(event.startTime ?? "not specified")}`, `end=${fastValue(event.endTime ?? "not specified")}`,
+          `location=${fastValue(event.location ?? "not specified")}`, `meeting_url=${event.meetingUrl ?? "not specified"}`,
+          event.description ? `description=${fastValue(event.description)}` : ""
+        ].filter(Boolean).join("|"))
+    );
+    sections.push([`<FAST_RESIDENCY_EVENTS start="${range.start}" end="${range.end}" events="${events.length}">`,
+      ...(events.length ? events : ["No residency conference events are listed in this range."]), "</FAST_RESIDENCY_EVENTS>"].join("\n"));
+  }
   if (/\bround(?:ing|s)?\b/i.test(latestQuestion)) sections.push(buildFastRoundingContext(context, scope));
   if (/\buncovered\b|\bcoverage (?:gap|gaps|needed|missing)\b|\bmissing coverage\b|\bopen (?:cases?|clinics?|coverage)\b/i.test(latestQuestion)) {
     sections.push(buildFastCoverageGapContext(context, scope));
@@ -2440,7 +2455,11 @@ function getCalendarEntries(
           : entry.serviceLine ?? service
     }))
     .filter((entry) => !requestedResident || entry.resident?.toLowerCase().includes(requestedResident.toLowerCase()));
-  return { service, range, entries };
+  const residencyEvents = kinds.includes("note") ? (context.state.calendarEvents ?? []).flatMap((event) =>
+    isoDatesInRange(range.start, range.end).filter((date) => calendarEventOccursOn(event, date))
+      .map((date) => ({ ...event, date, event_ref: event.id }))
+  ) : [];
+  return { service, range, entries, residencyEvents };
 }
 
 function getVacations(context: AssistantContext, args: Record<string, unknown>) {
@@ -2779,7 +2798,7 @@ const SCHEDULE_TOOLS = [
     function: {
       name: "get_calendar",
       strict: true,
-      description: "Read call, rounding, off, and note entries from the staffing calendar.",
+      description: "Read residency conferences/events with times, locations, meeting links and recurring occurrences, plus call, rounding, off, and note entries from the calendar.",
       parameters: {
         type: "object",
         properties: {

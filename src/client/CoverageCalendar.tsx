@@ -1,3 +1,4 @@
+import { calendarEventOccursOn } from "../shared/calendarEvents";
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -95,29 +96,34 @@ export function CalendarTab({
   servicePrivileges,
   onMutate
 }: CalendarTabProps) {
+  const [calendarView, setCalendarView] = useState<"main" | "service">("main");
   const [editing, setEditing] = useState(false);
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCoverageMonth(state));
-  const [visibleServices, setVisibleServices] = useState(() => getStoredCalendarServices(serviceLines, selectedService, username));
+  const [roundingService, setRoundingService] = useState(() => getDefaultCalendarServices(serviceLines, selectedService)[0] ?? selectedService);
+  const visibleServices = useMemo(() => calendarView === "main" ? serviceLines : [roundingService], [calendarView, serviceLines, roundingService]);
   const dates = useMemo(() => getMonthGridDates(month), [month]);
   const serviceLineKey = serviceLines.join("\u0000");
   const visibleResidents = useMemo(
     () => state.residents
-      .filter((resident) => dates.some((date) => residentMatchesServices(resident, visibleServices, date)))
+      .filter((resident) => calendarView === "main"
+        ? isGeneralSurgeryResident(resident)
+        : dates.some((date) => residentMatchesServices(resident, visibleServices, date)))
       .sort((left, right) => comparePersonNames(left.name, right.name)),
-    [dates, state.residents, visibleServices]
+    [calendarView, dates, state.residents, visibleServices]
   );
   const visibleCoverageEntries = useMemo(
-    () =>
-      [
-        ...state.coverageEntries.filter(
-          (entry) =>
-            entry.kind !== "call" &&
-            entry.kind !== "attending-call" &&
-            coverageEntryMatchesServices(state, entry, visibleServices)
-        ),
-        ...getVacationCalendarEntries(state.residents, dates).filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices))
-      ].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
-    [dates, state, visibleServices]
+    () => [
+      ...state.coverageEntries.filter((entry) => calendarView === "main"
+        ? entry.kind === "note"
+        : (entry.kind === "rounding" || entry.kind === "off")
+          && (entry.residentId || (entry.serviceLine && serviceIsVisible(visibleServices, entry.serviceLine)))
+          && coverageEntryMatchesServices(state, entry, visibleServices)),
+      ...getVacationCalendarEntries(calendarView === "main" ? visibleResidents : state.residents, dates)
+        .filter((entry) => calendarView === "main" || coverageEntryMatchesServices(state, entry, visibleServices)),
+      ...(calendarView === "service" ? getUnavailableCalendarEntries(state, dates)
+        .filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices)) : [])
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
+    [calendarView, dates, state, visibleResidents, visibleServices]
   );
   const callEntries = useMemo(
     () => state.coverageEntries.filter((entry) => entry.kind === "call"),
@@ -127,11 +133,10 @@ export function CalendarTab({
   const canEditCalendar = visibleServices.some((service) => canEditService(isAdmin, servicePrivileges, service));
   const canRequestCalendar = visibleServices.some((service) => canRequestService(isAdmin, servicePrivileges, service)) || Boolean(currentResident);
   const editMode = editing && (canEditCalendar || canRequestCalendar);
-  useEffect(() => { setEditing(false); }, [selectedService, username]);
+  useEffect(() => { setEditing(false); }, [calendarView, roundingService, selectedService, username]);
   const pendingCount = state.coverageRequests.filter(
     (request) => request.status === "pending" && coverageRequestMatchesServices(state, request, visibleServices)
   ).length;
-  const allServicesChecked = serviceLines.length > 0 && serviceLines.every((serviceLine) => serviceIsVisible(visibleServices, serviceLine));
   const nightResidents = getCalendarNightResidentsForDate(state.residents, getTodayDate());
 
   useEffect(() => {
@@ -139,27 +144,14 @@ export function CalendarTab({
   }, [month]);
 
   useEffect(() => {
-    setVisibleServices(getStoredCalendarServices(serviceLines, selectedService, username));
+    setRoundingService(getDefaultCalendarServices(serviceLines, selectedService)[0] ?? selectedService);
   }, [selectedService, serviceLineKey, username]);
-
-  useEffect(() => {
-    storeCalendarServices(username, selectedService, visibleServices);
-  }, [selectedService, username, visibleServices]);
-
-  function updateVisibleService(serviceLine: string, checked: boolean) {
-    setVisibleServices((current) => {
-      const next = checked
-        ? [...current, serviceLine]
-        : current.filter((candidate) => !servicesMatch(candidate, serviceLine));
-      return normalizeCalendarServices(next, serviceLines, selectedService);
-    });
-  }
 
   return (
     <section className={`coverage-page${editMode ? "" : " calendar-view-mode"}`}>
       <div className="coverage-toolbar">
         <div>
-          <p className="eyebrow">Call & Rounding</p>
+          <p className="eyebrow">{calendarView === "main" ? "Main residency calendar" : `${roundingService} service rounding calendar`}</p>
           <h2>{formatMonthLabel(month)}</h2>
         </div>
         <div className="coverage-toolbar-actions">
@@ -182,39 +174,34 @@ export function CalendarTab({
         <button type="button" aria-pressed={!editMode} onClick={() => setEditing(false)}>View</button>
         <button type="button" aria-pressed={editMode} onClick={() => setEditing(true)}>{canEditCalendar ? "Edit" : "Requests"}</button>
       </nav>}
-      <div className="coverage-service-filter" aria-label="Calendar services">
-        <label className="service-filter-option">
-          <input
-            type="checkbox"
-            checked={allServicesChecked}
-            onChange={(event) => setVisibleServices(event.target.checked ? [...serviceLines] : getDefaultCalendarServices(serviceLines, selectedService))}
-          />
-          <span>All services</span>
+      <div className="coverage-service-filter">
+        <label className="calendar-view-choice">
+          Calendar
+          <select aria-label="Calendar view" value={calendarView} onChange={(event) => setCalendarView(event.target.value as "main" | "service")}>
+            <option value="main">Main residency calendar</option>
+            <option value="service">Service rounding calendar</option>
+          </select>
         </label>
-        {serviceLines.map((serviceLine) => (
-          <label key={serviceLine} className="service-filter-option">
-            <input
-              type="checkbox"
-              checked={serviceIsVisible(visibleServices, serviceLine)}
-              onChange={(event) => updateVisibleService(serviceLine, event.target.checked)}
-            />
-            <span>{serviceLine}</span>
-          </label>
-        ))}
+        {calendarView === "service" && <label className="calendar-view-choice">
+          Service
+          <select aria-label="Rounding service" value={roundingService} onChange={(event) => setRoundingService(event.target.value)}>
+            {serviceLines.map((service) => <option key={service} value={service}>{service}</option>)}
+          </select>
+        </label>}
       </div>
 
       <div className="coverage-summary">
         <div className="coverage-legend">
-          {visibleResidents.map((resident) => (
+          {(calendarView === "service" ? visibleResidents : []).map((resident) => (
             <span key={resident.id} className="resident-legend-item">
               <span className="resident-dot" style={{ backgroundColor: getResidentColor(resident) }} />
               {formatResidentName(resident)}
             </span>
           ))}
         </div>
-        <span className="nights-summary">
+        {calendarView === "main" && <span className="nights-summary">
           🌙 NIGHTS: {nightResidents.length ? nightResidents.map((resident) => getResidentLastName(resident.name)).join(", ") : "None listed"}
-        </span>
+        </span>}
         <span className={pendingCount ? "request-count active" : "request-count"}>
           {pendingCount} pending request{pendingCount === 1 ? "" : "s"}
         </span>
@@ -229,7 +216,8 @@ export function CalendarTab({
       <div className="coverage-calendar-grid">
         {dates.map((date) => (
           <CoverageDay
-            key={`${date}-${editMode}`}
+            key={`${date}-${editMode}-${calendarView}-${roundingService}`}
+            calendarView={calendarView}
             editing={editMode}
             state={state}
             token={token}
@@ -252,6 +240,7 @@ export function CalendarTab({
 }
 
 function CoverageDay({
+  calendarView,
   editing,
   state,
   token,
@@ -267,6 +256,7 @@ function CoverageDay({
   date,
   onMutate
 }: CalendarAccessProps & {
+  calendarView: "main" | "service";
   editing: boolean;
   visibleResidents: Resident[];
   coverageEntries: CoverageEntry[];
@@ -276,11 +266,15 @@ function CoverageDay({
   date: string;
 }) {
   const inMonth = getMonthFromDate(date) === month;
-  const dayVisibleResidents = visibleResidents.filter((resident) => residentMatchesServices(resident, visibleServices, date));
+  const dayVisibleResidents = calendarView === "main" ? visibleResidents : visibleResidents.filter((resident) => residentMatchesServices(resident, visibleServices, date));
   const entries = coverageEntries.filter((entry) => entry.date === date);
   const dayCallEntries = getCoverageEntries(callEntries, date, "call");
   const roundingEntries = getCoverageEntries(coverageEntries, date, "rounding");
-  const required = inMonth && isWeekendCoverageRequired(date);
+  const onServiceCallResidents = calendarView === "service" && isRoundingDate(date)
+    ? dayVisibleResidents.filter((resident) => dayCallEntries.some((entry) => entry.residentId === resident.id)
+      && !roundingEntries.some((entry) => entry.residentId === resident.id))
+    : [];
+  const required = calendarView === "service" && inMonth && isWeekendCoverageRequired(date);
   const uncoveredRoundingServices = required
     ? visibleServices.filter((serviceLine) => !hasServiceRoundingCoverage(state.coverageEntries, state.residents, date, serviceLine))
     : [];
@@ -299,13 +293,14 @@ function CoverageDay({
   );
   const dayNumber = parseLocalDate(date).getDate();
   const [noteDraft, setNoteDraft] = useState({
-    residentId: dayVisibleResidents[0]?.id ?? "",
-    kind: "off" as Extract<CoverageKind, "off" | "note">,
+    residentId: calendarView === "main" ? "" : dayVisibleResidents[0]?.id ?? "",
+    kind: (calendarView === "main" ? "note" : "off") as Extract<CoverageKind, "off" | "note">,
     note: ""
   });
   const [showNoteForm, setShowNoteForm] = useState(false);
 
   useEffect(() => {
+    if (calendarView === "main") return;
     if (!noteDraft.residentId) {
       if (dayVisibleResidents[0]) {
         setNoteDraft((current) => ({ ...current, residentId: dayVisibleResidents[0]?.id ?? "" }));
@@ -318,7 +313,10 @@ function CoverageDay({
 
   async function addNote(event: FormEvent) {
     event.preventDefault();
-    const entry = makeClientCoverageEntry(date, noteDraft.kind, noteDraft.residentId || undefined, noteDraft.note);
+    const entry = {
+      ...makeClientCoverageEntry(date, noteDraft.kind, noteDraft.residentId || undefined, noteDraft.note),
+      ...(calendarView === "service" ? { serviceLine: visibleServices[0] } : {})
+    };
     const serviceLine = resolveEntryMutationService(state, entry, visibleServices, selectedService);
     const canEdit = canEditService(isAdmin, servicePrivileges, serviceLine);
     const canRequest = canRequestService(isAdmin, servicePrivileges, serviceLine);
@@ -358,8 +356,13 @@ function CoverageDay({
         </div>
       </header>
 
-      {isRoundingDate(date) && (
+      {calendarView === "service" && (isRoundingDate(date) || roundingEntries.length > 0) && (
         <div className="coverage-rounding-list">
+          {onServiceCallResidents.map((resident) => (
+            <div key={resident.id} className="calendar-rounder-summary">
+              <span>Round · on call</span><strong>{formatResidentName(resident)}</strong>
+            </div>
+          ))}
           {roundingEntries.length > 0 && (
             <div className="coverage-slots">
               {roundingEntries.map((entry) => (
@@ -374,7 +377,7 @@ function CoverageDay({
                   token={token}
                   selectedService={selectedService}
                   visibleServices={visibleServices}
-                  visibleResidents={state.residents}
+                  visibleResidents={dayVisibleResidents}
                   currentResident={currentResident}
                   isAdmin={isAdmin}
                   servicePrivileges={servicePrivileges}
@@ -400,13 +403,25 @@ function CoverageDay({
         </div>
       )}
 
+      {calendarView === "main" && (state.calendarEvents ?? []).filter((event) => calendarEventOccursOn(event, date))
+        .sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "") || a.title.localeCompare(b.title))
+        .map((event) => (
+          <div key={event.id} className="residency-calendar-event">
+            <strong>{event.title}</strong>
+            {event.startTime && <span>{event.startTime}{event.endTime ? `–${event.endTime}` : ""}</span>}
+            {event.location && <span>{event.location}</span>}
+            {event.description && <span>{event.description}</span>}
+            {event.meetingUrl && <a href={event.meetingUrl} target="_blank" rel="noopener noreferrer">Join meeting</a>}
+          </div>
+        ))}
       <div className="coverage-chip-list">
         {otherEntries.map((entry) => (
           <CoverageChip
             key={entry.id}
             entry={entry}
-            residents={visibleResidents}
-            canDelete={editing && inMonth && !isVacationCalendarEntry(entry)}
+            residents={state.residents}
+            compactVacation={calendarView === "main"}
+            canDelete={editing && inMonth && !isVacationCalendarEntry(entry) && !entry.id.startsWith("unavailable_calendar_")}
             isVacation={isVacationCalendarEntry(entry)}
             selectedService={selectedService}
             visibleServices={visibleServices}
@@ -419,13 +434,13 @@ function CoverageDay({
         ))}
       </div>
 
-      {editing && inMonth && canCreateForVisibleServices && !isRoundingDate(date) && !showNoteForm && (
+      {editing && inMonth && canCreateForVisibleServices && !showNoteForm && (
         <button type="button" className="secondary-button coverage-add-note-button" onClick={() => setShowNoteForm(true)}>
           add+
         </button>
       )}
 
-      {editing && inMonth && !isRoundingDate(date) && showNoteForm && (
+      {editing && inMonth && showNoteForm && (
         <form className="coverage-note-form" onSubmit={addNote}>
           <select
             aria-label="Note resident"
@@ -444,8 +459,8 @@ function CoverageDay({
             value={noteDraft.kind}
             onChange={(event) => setNoteDraft({ ...noteDraft, kind: event.target.value as "off" | "note" })}
           >
-            <option value="off">Off</option>
-            <option value="note">Note</option>
+            {calendarView === "service" && <option value="off">Off</option>}
+            {calendarView === "main" && <option value="note">Event / note</option>}
           </select>
           <input
             aria-label="Note"
@@ -459,8 +474,8 @@ function CoverageDay({
         </form>
       )}
 
-      {isCallDate(date) && <CallTeamSummary state={state} entries={dayCallEntries} />}
-      {inMonth && <IndependentAttendingCallSummary state={state} date={date} />}
+      {calendarView === "main" && isCallDate(date) && <CallTeamSummary state={state} entries={dayCallEntries} />}
+      {calendarView === "main" && inMonth && <IndependentAttendingCallSummary state={state} date={date} />}
     </article>
   );
 }
@@ -497,9 +512,10 @@ function AddRounderControl({
   const availableResidents = useMemo(
     () =>
       state.residents
-        .filter((resident) => !assignedResidentIds.has(resident.id) && isResidentAvailableForWork(state, resident, date))
+        .filter((resident) => isResidentOnService(resident, rounderServiceLine, date)
+          && !assignedResidentIds.has(resident.id) && isResidentAvailableForWork(state, resident, date))
         .sort((a, b) => comparePersonNames(a.name, b.name)),
-    [assignedResidentIds, date, state]
+    [assignedResidentIds, date, rounderServiceLine, state]
   );
   const [showPicker, setShowPicker] = useState(false);
   const [residentFilter, setResidentFilter] = useState("");
@@ -975,6 +991,7 @@ function CoverageChip({
   residents,
   canDelete,
   isVacation,
+  compactVacation = false,
   selectedService,
   visibleServices,
   state,
@@ -987,6 +1004,7 @@ function CoverageChip({
   residents: Resident[];
   canDelete: boolean;
   isVacation: boolean;
+  compactVacation?: boolean;
   selectedService: string;
   visibleServices: string[];
   state: PlannerState;
@@ -1070,11 +1088,11 @@ function CoverageChip({
   }
 
   return (
-    <div className={`coverage-chip ${entry.kind}${showActions || isEditing ? " expanded" : ""}`} style={style}>
+    <div className={`coverage-chip ${entry.kind}${isVacation && compactVacation ? " compact-vacation" : ""}${showActions || isEditing ? " expanded" : ""}`} style={style}>
       <div className="coverage-chip-main">
         <span>{isVacation ? "VAC" : entry.kind}</span>
         <strong>{residentName}</strong>
-        {(entry.note || isVacation) && <em>{isVacation ? "Vacation" : entry.note}</em>}
+        {!(isVacation && compactVacation) && (entry.note || isVacation) && <em>{isVacation ? "Vacation" : entry.note}</em>}
       </div>
       {canDelete && (canEdit || canRequest) && (
         <button
@@ -1242,6 +1260,27 @@ function makeClientCoverageEntry(
   };
 }
 
+function isGeneralSurgeryResident(resident: Resident): boolean {
+  const program = `${resident.sourceProgram ?? ""} ${resident.sourceProgramAbbreviation ?? ""}`.toLowerCase();
+  if (program.includes("plastic") || /\bplsx\b/.test(program)) return false;
+  return resident.rosterKind === "primary" || (!resident.rosterKind && !program.trim());
+}
+
+function getUnavailableCalendarEntries(state: PlannerState, dates: string[]): CoverageEntry[] {
+  return state.residents.flatMap((resident) => (resident.unavailable ?? []).flatMap((block) => dates
+    .filter((date) => block.date <= date && date <= (block.endDate ?? block.date)
+      && !state.coverageEntries.some((entry) => entry.kind === "off" && entry.residentId === resident.id && entry.date === date))
+    .map((date) => ({
+      id: `unavailable_calendar_${resident.id}_${block.id}_${date}`,
+      date,
+      kind: "off" as const,
+      residentId: resident.id,
+      note: `${block.label}${block.startTime || block.endTime ? ` (${block.startTime ?? ""}–${block.endTime ?? ""})` : ""}`,
+      createdAt: "",
+      updatedAt: ""
+    }))));
+}
+
 function getVacationCalendarEntries(residents: Resident[], dates: string[]): CoverageEntry[] {
   const visibleDates = new Set(dates);
   return residents.flatMap((resident) =>
@@ -1307,41 +1346,11 @@ function serviceIsVisible(visibleServices: string[], serviceLine: string): boole
   return visibleServices.some((candidate) => servicesMatch(candidate, serviceLine));
 }
 
-function getStoredCalendarServices(serviceLines: string[], selectedService: string, username: string): string[] {
-  const stored = localStorage.getItem(getCalendarServicesStorageKey(username, selectedService));
-  if (!stored) return getDefaultCalendarServices(serviceLines, selectedService);
-  try {
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed)
-      ? normalizeCalendarServices(parsed.filter((item) => typeof item === "string"), serviceLines, selectedService)
-      : getDefaultCalendarServices(serviceLines, selectedService);
-  } catch {
-    return getDefaultCalendarServices(serviceLines, selectedService);
-  }
-}
-
-function storeCalendarServices(username: string, selectedService: string, visibleServices: string[]) {
-  localStorage.setItem(getCalendarServicesStorageKey(username, selectedService), JSON.stringify(visibleServices));
-}
-
-function getCalendarServicesStorageKey(username: string, selectedService: string): string {
-  return `coverageCalendarServices:${normalizeStorageSegment(username)}:${normalizeStorageSegment(selectedService)}`;
-}
-
-function normalizeStorageSegment(value: string): string {
-  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
-}
-
 function getDefaultCalendarServices(serviceLines: string[], selectedService: string): string[] {
   const defaultService =
     serviceLines.find((serviceLine) => servicesMatch(serviceLine, selectedService)) ??
     serviceLines.find((serviceLine) => servicesMatch(serviceLine, DEFAULT_SERVICE_LINE));
   return defaultService ? [defaultService] : serviceLines.slice(0, 1);
-}
-
-function normalizeCalendarServices(selectedServices: string[], serviceLines: string[], selectedService: string): string[] {
-  const normalized = serviceLines.filter((serviceLine) => selectedServices.some((candidate) => servicesMatch(candidate, serviceLine)));
-  return normalized.length > 0 ? normalized : getDefaultCalendarServices(serviceLines, selectedService);
 }
 
 function formatUncoveredRounderLabel(uncoveredServices: string[]): string {

@@ -155,6 +155,39 @@ Human landing page:
 GET /api/docs
 ```
 
+## Main residency calendar events and conferences
+
+```text
+GET    /api/calendar-events
+GET    /api/calendar-events?startDate=2026-10-01&endDate=2026-10-31
+POST   /api/calendar-events
+PATCH  /api/calendar-events/:id
+DELETE /api/calendar-events/:id
+```
+
+Authenticated users can read all residency events. Writes require an admin account or admin API key because the calendar is residency-wide. Send `X-State-Version`. POST/PATCH/DELETE return updated `PlannerState`, including `calendarEvents` and the next `version`. GET returns `{ version, calendarEvents }`; with both date parameters it also returns expanded `occurrences`, each with `eventId` and its occurrence date. The inclusive range must be ordered and at most 366 days apart.
+
+Example POST body (illustrative, not actual conference details):
+
+```json
+{
+  "id": "conference_example",
+  "title": "Journal Club",
+  "date": "2026-10-14",
+  "startTime": "17:00",
+  "meetingUrl": "https://teams.microsoft.com/l/meetup-join/EXAMPLE",
+  "recurrence": { "frequency": "monthly", "weekOfMonth": 2, "daysOfWeek": [3] }
+}
+```
+
+Only `title` and `date` are required. Omit unknown `location`, `startTime`, `endTime`, `meetingUrl`, and `description`; do not invent values. Times are 24-hour `HH:mm` in `America/New_York`. A supplied end time requires a start time and must be later that same day. Meeting URLs must use HTTPS. Optional stable `id` values help imports recover from timeouts: duplicate ids return 409; read back before retrying and PATCH a matched event instead of duplicating it.
+
+Recurrence supports `weekly` and `monthly`, optional `interval` (default 1), and inclusive `untilDate`. `daysOfWeek` uses Sunday=0 through Saturday=6; omitted weekdays default to the weekday of `date`. Weekly intervals are anchored to the Sunday of the date's week. Monthly without `weekOfMonth` repeats on the same day number (and skips months lacking that day). Monthly `weekOfMonth` 1–5 or -1 (last) selects the nth weekday; the example is the second Wednesday. `date` is the first eligible day; occurrences never precede it.
+
+PATCH preserves omitted fields; `null` clears optional fields, including recurrence. Changes apply to the entire series. The default Friday M&M series is stored as `calendar_friday_mm`; PATCH that event to add supplied times/location/Teams link. Deleting the series removes it permanently. Events render on **Main residency calendar**, alongside existing generic `kind: "note"` coverage entries; they do not appear on **Service rounding calendar**.
+
+A conference event does not mark a resident absent. Resident vacation/conference leave uses existing dated `residents[].vacation`, `residents[].unavailable`, or `kind: "off"` coverage entries. Resolve resident IDs from state and require exact absence dates. An unknown Journal Club end time/location does not prevent posting that event, but unknown Goldman absence dates prevent entering that absence.
+
 ## Contacts Directory
 
 Published contacts are available to signed-in users and API keys. A normal browser account creates a pending request; admins and accounts granted `canAddContacts: true` publish immediately. The admin API key also publishes immediately.

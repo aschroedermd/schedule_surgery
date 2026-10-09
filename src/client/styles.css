@@ -7647,3 +7647,20 @@ h2 {
 @media print {
   .board-view-toolbar { display: none !important; }
 }
+
+/* Separate residency events from service rounding, with stackable vacation rows. */
+.calendar-view-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; font-size: .8rem; }
+.calendar-view-choice select { min-width: 0; max-width: 100%; }
+.residency-calendar-event { border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-chip-note); color: var(--text-chip-note); padding: 6px; font-size: .78rem; font-weight: 700; overflow-wrap: anywhere; }
+.coverage-page .coverage-chip.compact-vacation { padding: 1px 5px; border-left-width: 3px; border-radius: 4px; }
+.compact-vacation .coverage-chip-main { display: flex; align-items: baseline; gap: 5px; font-size: .7rem; line-height: 1.2; }
+.compact-vacation .coverage-chip-main span { font-size: .6rem; }
+@media (max-width: 760px) {
+  .coverage-service-filter:has(.calendar-view-choice) { flex-wrap: wrap; }
+  .calendar-view-choice { flex: 1 1 200px; }
+  .calendar-view-choice select { flex: 1; }
+}
+
+.residency-calendar-event { display: grid; gap: 3px; }
+.residency-calendar-event > span { font-size: .72rem; font-weight: 400; white-space: pre-wrap; }
+.residency-calendar-event > a { width: fit-content; font-size: .75rem; }

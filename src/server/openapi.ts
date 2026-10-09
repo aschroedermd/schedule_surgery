@@ -485,6 +485,8 @@ export function getOpenApiDocument() {
             recipientResidentId: { type: "string", description: "Resident receiving this week's gold star." }
           }
         },
+        ResidencyCalendarEventInput: calendarEventSchema(true),
+        ResidencyCalendarEventPatch: calendarEventSchema(false),
         CoverageEntryInput: {
           type: "object",
           required: ["date", "kind"],
@@ -1578,6 +1580,38 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/calendar-events": {
+        get: {
+          summary: "Read main residency calendar events and conferences",
+          description: "All authenticated accounts may read. Without dates returns stored event definitions. Supply both dates to also return expanded recurring occurrences (at most 366 days apart). Includes state version. Times use America/New_York.",
+          parameters: [
+            { name: "startDate", in: "query", schema: { type: "string", format: "date" } },
+            { name: "endDate", in: "query", schema: { type: "string", format: "date" } }
+          ],
+          responses: { "200": { description: "Object with version, calendarEvents, and optional occurrences; each occurrence has eventId and its date." }, "400": { description: "Invalid date range" } }
+        },
+        post: {
+          summary: "Publish a residency conference or calendar event",
+          description: "Admin account or admin API key required because events are residency-wide. No residentId or serviceLine is needed. Unknown location and endTime do not block publication. Conferences are distinct from dated resident vacations/unavailable time. Creates a persisted event shown on the Main residency calendar; generic note entries remain supported by /api/coverage-entries.",
+          parameters: [{ $ref: "#/components/parameters/StateVersionHeader" }],
+          requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/ResidencyCalendarEventInput" } } } },
+          responses: { "201": { description: "Updated PlannerState with calendarEvents and version" }, "400": { description: "Invalid event" }, "403": { description: "Admin access required" }, "409": { description: "Stale version or duplicate id; read back before retrying" } }
+        }
+      },
+      "/api/calendar-events/{id}": {
+        patch: {
+          summary: "Update a residency calendar event or recurring series",
+          description: "Admin required. Changes the whole series. Omitted fields are preserved; null clears optional fields. To add details to the default Friday M&M event, PATCH calendar_friday_mm rather than creating a duplicate.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }, { $ref: "#/components/parameters/StateVersionHeader" }],
+          requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/ResidencyCalendarEventPatch" } } } },
+          responses: { "200": { description: "Updated PlannerState" }, "400": { description: "Invalid event patch" }, "403": { description: "Admin required" }, "404": { description: "Event not found" }, "409": { description: "Stale version" } }
+        },
+        delete: {
+          summary: "Delete a residency calendar event or recurring series",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }, { $ref: "#/components/parameters/StateVersionHeader" }],
+          responses: { "200": { description: "Updated PlannerState" }, "403": { description: "Admin required" }, "404": { description: "Event not found" }, "409": { description: "Stale version" } }
+        }
+      },
       "/api/coverage-entries": {
         post: {
           summary: "Create a call calendar entry",
@@ -1746,6 +1780,35 @@ export function getOpenApiDocument() {
             "200": { description: "Updated PlannerState" },
             "403": { description: "Edit privilege required" }
           }
+        }
+      }
+    }
+  };
+}
+
+function calendarEventSchema(required: boolean) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: required ? ["title", "date"] : [],
+    properties: {
+      id: { type: "string", description: "Optional stable import id; duplicate ids return 409. Use PATCH for an existing event." },
+      title: { type: "string", maxLength: 200 },
+      date: { type: "string", format: "date", description: "Event date or first eligible date of a recurrence." },
+      startTime: { type: ["string", "null"], pattern: "^([01]\\d|2[0-3]):[0-5]\\d$", description: "Optional HH:mm in America/New_York." },
+      endTime: { type: ["string", "null"], description: "Optional HH:mm; requires startTime and must be later on the same day. Unknown end times may be omitted." },
+      location: { type: ["string", "null"], maxLength: 500, description: "Optional; omit when unknown." },
+      meetingUrl: { type: ["string", "null"], format: "uri", description: "Optional HTTPS Teams or other meeting link; credentials in URLs are rejected." },
+      description: { type: ["string", "null"], maxLength: 10000 },
+      recurrence: {
+        type: ["object", "null"], additionalProperties: false, required: ["frequency"],
+        description: "Omit for a single date; PATCH null to stop recurrence. Uses local calendar dates in America/New_York.",
+        properties: {
+          frequency: { type: "string", enum: ["weekly", "monthly"] },
+          interval: { type: "integer", minimum: 1, maximum: 52, default: 1 },
+          daysOfWeek: { type: "array", minItems: 1, uniqueItems: true, items: { type: "integer", minimum: 0, maximum: 6 }, description: "0=Sunday, 6=Saturday. Defaults to date's weekday; monthly rules require weekOfMonth when supplied." },
+          weekOfMonth: { type: "integer", enum: [-1, 1, 2, 3, 4, 5], description: "Monthly only: nth weekday or -1 for last. Omit to repeat on date's day of month." },
+          untilDate: { type: ["string", "null"], format: "date", description: "Inclusive recurrence end; omit for ongoing." }
         }
       }
     }
