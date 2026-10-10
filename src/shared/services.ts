@@ -88,3 +88,24 @@ export function isEndoscopyBlock(
 export function isEndoscopyText(value: string | undefined): boolean {
   return /\b(?:endo|endoscop(?:e|es|ic|ies|y))\b/i.test(value ?? "");
 }
+
+/** Assignment eligibility follows the home specialty, never the trauma rotation. */
+export function isOperativeResident(resident: Pick<Resident, "rosterKind" | "sourceProgram" | "sourceProgramAbbreviation">): boolean {
+  const program = (resident.sourceProgram ?? "").toLowerCase();
+  const abbreviation = (resident.sourceProgramAbbreviation ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (/emergency medicine|pulmonary|internal medicine/.test(program) || ["em", "im", "ccm", "pulmedfel", "pccm"].includes(abbreviation)) return false;
+  if (/critical care/.test(program) && !/surgical/.test(program)) return false;
+  if (isGeneralOrPlasticSurgeryResident(resident)) return true;
+  return /surgery|surgical|ortho|podiatr|pediatric|dentistry/.test(program) || ["pmsr", "peds", "dent", "scc", "neurosurg", "orthopaedics"].includes(abbreviation);
+}
+
+export function getAssignmentService(state: PlannerState, kind: "case" | "block" | "clinic", targetId: string, fallback: string): string {
+  if (kind === "clinic") {
+    const clinic = state.clinicSessions.find(item => item.id === targetId);
+    return clinic ? (clinicMatchesService(clinic, ENDOSCOPY_SERVICE_LINE) ? ENDOSCOPY_SERVICE_LINE : clinic.service) : fallback;
+  }
+  const blockId = kind === "case" ? state.cases.find(item => item.id === targetId)?.blockId : targetId;
+  const block = state.attendingBlocks.find(item => item.id === blockId);
+  if (!block) return fallback;
+  return isEndoscopyBlock(state, block) ? ENDOSCOPY_SERVICE_LINE : state.attendings.find(item => item.id === block.attendingId)?.service ?? fallback;
+}

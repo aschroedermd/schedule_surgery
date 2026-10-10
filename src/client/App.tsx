@@ -1,3 +1,5 @@
+import { ResidentPicker } from "./ResidentPicker";
+import { getAssignmentService, isOperativeResident } from "../shared/services";
 import BoardsTesterAccount, { BoardsTesterPage } from './BoardsTesterAccount';
 import {
   CalendarDays,
@@ -3112,13 +3114,15 @@ function PersonAssignmentPicker({
 }) {
   const [showStudents, setShowStudents] = useState(false);
   const [manualStudentName, setManualStudentName] = useState("");
+  selectedService = getAssignmentService(state, kind, targetId, selectedService);
+  const [searchName, setSearchName] = useState("");
   const assignmentDate = getAssignmentDate(state, kind, targetId);
   const residentChoices = orderAssignmentResidents(
     state.residents.filter((resident) => {
       if (selfAssignmentOnly) return resident.id === currentResidentId && resident.trainingLevel === "Student";
       return (
         resident.trainingLevel !== "Student" &&
-        isGeneralOrPlasticSurgeryResident(resident) &&
+        isOperativeResident(resident) &&
         !excludedResidentIds.includes(resident.id) &&
         (kind === "clinic" || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
       );
@@ -3188,8 +3192,9 @@ function PersonAssignmentPicker({
           </form>
         </div>
       )}
+      <input type="search" aria-label="Search additional residents" placeholder="Search by name…" value={searchName} onChange={event => setSearchName(event.target.value)} />
       <div className="person-choice-list" aria-label={selfAssignmentOnly ? "Add yourself" : "Residents"}>
-        {residentChoices.map((resident) => {
+        {residentChoices.filter(resident => resident.name.toLowerCase().includes(searchName.toLowerCase())).map((resident) => {
           const isCurrentResident = resident.id === currentResidentId;
           const isCurrentTeam = isResidentOnService(resident, selectedService, assignmentDate);
           return (
@@ -3259,13 +3264,14 @@ function AssignmentControl({
   quietEmpty?: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
+  selectedService = getAssignmentService(state, kind, targetId, selectedService);
   const displayedAssignment = assignment ?? inheritedAssignment;
   const isCovered = Boolean(displayedAssignment || coveredWithoutDirectAssignment);
   const assignmentDate = getAssignmentDate(state, kind, targetId);
   const residents = orderAssignmentResidents(
     sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
       (resident) =>
-        (isGeneralOrPlasticSurgeryResident(resident) || resident.id === assignment?.residentId) &&
+        isOperativeResident(resident) &&
         (kind !== "block" || resident.trainingLevel !== "Student") &&
         (!excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId) &&
         (kind === "clinic" || resident.id === assignment?.residentId || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
@@ -3291,15 +3297,12 @@ function AssignmentControl({
   if (claimable && kind !== "clinic") {
     return (
       <div className="assign-control">
-        <select value={claimResidentId} onChange={(event) => setClaimResidentId(event.target.value)}>
-          {residents.map((resident) => (
-            <option key={resident.id} value={resident.id}>
-              {formatResidentOption(resident, selectedService, assignmentDate)}
-            </option>
-          ))}
-        </select>
+        <ResidentPicker state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
+          value={claimResidentId} label={residentLabel(state, claimResidentId)}
+          onSelect={async (id, close) => { setClaimResidentId(id); close(); }} />
         <button
           title="Claim coverage"
+          disabled={!claimResidentId}
           className="icon-button"
           onClick={() =>
             onMutate(
@@ -3316,34 +3319,20 @@ function AssignmentControl({
 
   return (
     <div className="assign-control">
-      <select
-        className={isCovered ? "assignment-select assigned" : quietEmpty ? "assignment-select" : "assignment-select unassigned"}
-        disabled={disabled}
-        value={assignment?.residentId ?? ""}
-        onChange={(event) => {
-          const residentId = event.target.value;
-          if (!residentId && assignment) {
-            onMutate(() => deleteAssignment(token, assignment.id), "Assignment cleared");
-            return;
-          }
-          if (residentId) {
-            onMutate(
-              () =>
-                assignment
-                  ? updateAssignment(token, assignment.id, { residentId })
-                  : createAssignment(token, { kind, targetId, residentId, locked: false }),
-              "Assignment saved"
-            );
-          }
-        }}
-      >
-        <option value="">{emptyLabel ?? (inheritedAssignment ? residentLabel(state, inheritedAssignment.residentId) : "Unassigned")}</option>
-        {residents.map((resident) => (
-          <option key={resident.id} value={resident.id}>
-            {formatResidentOption(resident, selectedService, assignmentDate)}
-          </option>
-        ))}
-      </select>
+      <ResidentPicker state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
+        value={assignment?.residentId} label={displayedAssignment ? residentLabel(state, displayedAssignment.residentId) : emptyLabel ?? "Unassigned"}
+        className={isCovered ? "assigned" : quietEmpty ? "" : "unassigned"}
+        emptyLabel={inheritedAssignment ? `Use block assignment · ${residentLabel(state, inheritedAssignment.residentId)}` : assignment ? "Clear assignment" : "Leave unassigned"}
+        onSelect={async (residentId, close) => {
+          if (!residentId && !assignment) { close(); return; }
+          await onMutate(async () => {
+            const result = !residentId && assignment ? await deleteAssignment(token, assignment.id)
+              : assignment ? await updateAssignment(token, assignment.id, { residentId })
+              : await createAssignment(token, { kind, targetId, residentId, locked: false });
+            close();
+            return result;
+          }, residentId ? "Assignment saved" : "Assignment cleared");
+        }} />
       {assignment && !disabled && showLock && (
         <button
           title={assignment.locked ? "Unlock" : "Lock"}
