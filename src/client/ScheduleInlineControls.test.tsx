@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardTab } from "./App";
 import { createInitialState } from "../server/sampleData";
 import { buildWeekSchedule, makeAssignment } from "../shared/scheduler";
-import { createEntity, deleteEntity, moveCase, updateEntity } from "./api";
+import { createEntity, deleteEntity, moveCase, updateEntity, updateAssignment } from "./api";
 import type { PlannerState } from "../shared/types";
 
 vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(),
-  createEntity: vi.fn(), deleteEntity: vi.fn(), moveCase: vi.fn(), updateEntity: vi.fn()
+  createEntity: vi.fn(), deleteEntity: vi.fn(), moveCase: vi.fn(), updateEntity: vi.fn(), updateAssignment: vi.fn()
 }));
 let root: Root;
 let container: HTMLDivElement;
@@ -23,6 +23,7 @@ beforeEach(() => {
   vi.mocked(deleteEntity).mockResolvedValue(state);
   vi.mocked(updateEntity).mockResolvedValue(state);
   vi.mocked(moveCase).mockResolvedValue(state);
+  vi.mocked(updateAssignment).mockResolvedValue(state);
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
 function render(edit: boolean, editableAttendingId?: string) {
@@ -143,4 +144,35 @@ describe("inline schedule editing", () => {
     await click("Add block");
     expect(container.querySelector(".schedule-add-options")?.textContent).not.toContain("Clinic");
   });
+});
+
+function QuickAssignmentBoard() {
+  const [editing, setEditing] = useState(false);
+  return <BoardTab state={state} schedule={buildWeekSchedule(state, "week_current", "Davies")}
+    token="test" selectedService="Davies" canEdit canStudentSelfAssign={false}
+    showScheduleEditor={editing} onScheduleModeChange={setEditing}
+    onMutate={async action => { await action(); }} onCopied={() => {}} />;
+}
+it("keeps assignment pencils in View while the switch gates schedule editing", async () => {
+  act(() => root.render(<QuickAssignmentBoard />));
+  expect(container.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+  expect(container.querySelector(".resident-quick-trigger")).not.toBeNull();
+  expect(container.querySelector(".schedule-edit-actions, .schedule-day-add, .assignment-select")).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>(".resident-quick-trigger")!.click());
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  await click("Close resident picker", document);
+  await click("Edit schedule");
+  expect(container.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+  expect(container.querySelector(".schedule-day-add")).not.toBeNull();
+  expect(container.querySelector(".assignment-select")).not.toBeNull();
+  await click("Edit schedule");
+  expect(container.querySelector(".schedule-edit-actions, .schedule-day-add")).toBeNull();
+});
+it("uses case-only coverage when the case pencil edits inherited block coverage", async () => {
+  state.assignments = [makeAssignment("block", "block_chen_mon", state.residents[0].id, "admin", false)];
+  act(() => root.render(<QuickAssignmentBoard />));
+  await act(async () => container.querySelector<HTMLButtonElement>(".case-row .resident-quick-trigger")!.click());
+  expect(document.querySelector(".resident-picker-target")?.textContent).toContain("Whipple");
+  await act(async () => document.querySelector<HTMLButtonElement>(".resident-picker-option")!.click());
+  expect(updateAssignment).toHaveBeenCalledWith("test", state.assignments[0].id, expect.objectContaining({caseId:"case_chen_whipple",residentId:expect.any(String)}));
 });

@@ -7759,3 +7759,22 @@ h2 {
 
 .resident-inspect { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
 .resident-inspect span { font-size: 10px; }
+
+.schedule-edit-switch { display: inline-flex; align-items: center; gap: 8px; justify-self: start; min-height: 44px; padding: 4px 8px; border: 0; background: transparent; color: var(--text-main); font: inherit; font-size: 13px; font-weight: 600; }
+.schedule-switch-track { display: flex; align-items: center; width: 38px; height: 22px; padding: 3px; border: 1px solid #b97c7c; border-radius: 20px; background: #cda5a5; }
+.schedule-switch-track > span { width: 14px; height: 14px; border-radius: 50%; background: white; box-shadow: 0 1px 3px #0002; transition: transform .15s; }
+.schedule-edit-switch[aria-checked="true"] .schedule-switch-track { border-color: #668f78; background: #90b19c; }
+.schedule-edit-switch[aria-checked="true"] .schedule-switch-track > span { transform: translateX(16px); }
+.schedule-switch-state { min-width: 20px; font-size: 11px; color: var(--text-muted); }
+.resident-quick-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 9px; max-width: 100%; min-height: 32px; padding: 2px 4px; border: 0; border-radius: 5px; background: transparent; color: var(--text-main); text-align: left; font: inherit; font-size: 12px; }
+.resident-quick-trigger > span { overflow-wrap: anywhere; }
+.resident-quick-trigger > svg { flex-shrink: 0; color: var(--text-muted); opacity: .7; }
+.resident-quick-trigger.unassigned { color: var(--color-danger-hover); }
+.resident-quick-trigger:hover { background: var(--bg-surface-hover); }
+.resident-quick-trigger:focus-visible, .schedule-edit-switch:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+@media (max-width: 760px), (pointer: coarse) { .resident-quick-trigger { min-height: 44px; padding: 6px 4px; font-size: 14px; } }
+@media (prefers-reduced-motion: reduce) { .schedule-switch-track > span { transition: none; } }
+@media print { .schedule-edit-switch, .resident-quick-trigger > svg { display: none; } }
+@media (max-width: 760px), (pointer: coarse) {
+  .board-grid .add-resident-button { min-height: 44px; min-width: 80px; padding: 8px 10px; }
+}

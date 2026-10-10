@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search, X, CalendarDays, AlertTriangle } from "lucide-react";
+import { Check, ChevronDown, Search, X, CalendarDays, AlertTriangle, Pencil } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isResidentOnService } from "../shared/services";
@@ -6,7 +6,8 @@ import { displayDate } from "../shared/date";
 import { buildResidentPickerContext, getResidentPickerWorkload, type PickerActivity } from "./residentPickerContext";
 import type { PlannerState, Resident } from "../shared/types";
 
-export function ResidentPicker({ residents, service, date, value, label, className, emptyLabel = "Clear assignment", state, kind, targetId, onSelect }: {
+export function ResidentPicker({ residents, service, date, value, label, className, emptyLabel = "Clear assignment", state, kind, targetId, compact = false, onSelect }: {
+  compact?: boolean;
   state?: PlannerState; kind?: "case" | "block" | "clinic"; targetId?: string;
   residents: Resident[]; service: string; date?: string; value?: string; label: string;
   className?: string; emptyLabel?: string; onSelect: (id: string, close: () => void) => Promise<void>;
@@ -73,9 +74,9 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
     </div>;
   }
   return <>
-    <button ref={trigger} type="button" className={`assignment-select resident-picker-trigger ${className ?? ""}`}
-      aria-label={`Choose resident: ${label}`} aria-haspopup="dialog" aria-expanded={open}
-      onClick={() => { setQuery(""); setInspectedId(undefined); setShowDay(false); setError(""); setOpen(true); }}><span>{label}</span><ChevronDown size={14} /></button>
+    <button ref={trigger} type="button" className={`${compact ? "resident-quick-trigger" : "assignment-select resident-picker-trigger"} ${className ?? ""}`}
+      aria-label={`${compact ? "Change coverage" : "Choose resident"}: ${label}`} title={compact ? kind === "block" ? "Change coverage for entire block" : kind === "case" ? "Change coverage for this case" : "Change clinic coverage" : undefined} aria-haspopup="dialog" aria-expanded={open}
+      onClick={() => { setQuery(""); setInspectedId(undefined); setShowDay(false); setError(""); setOpen(true); }}><span>{label}</span>{compact ? <Pencil size={14} /> : <ChevronDown size={14} />}</button>
     {open && createPortal(<div className="resident-picker-backdrop" onClick={event => {
       if (event.target === event.currentTarget && !busy) close();
     }}>

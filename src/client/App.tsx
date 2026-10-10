@@ -770,7 +770,7 @@ export function App() {
           schedule={schedule}
           token={session.token}
           selectedService={selectedService}
-          canEdit={canEditSelectedService && isScheduleEditorOpen}
+          canEdit={canEditSelectedService}
           canStudentSelfAssign={canStudentSelfAssign && isScheduleEditorOpen}
           currentResidentId={linkedResident?.id}
           editableAttendingId={isAttending ? session.attendingId : undefined}
@@ -1342,10 +1342,13 @@ export function BoardTab({
   return (
     <>
       <div className="board-view-toolbar">
-        {onScheduleModeChange ? <nav className="schedule-mode-tabs" aria-label="OR / Clinic mode">
-          <button type="button" aria-pressed={showDailyGrand || !showScheduleEditor} onClick={() => onScheduleModeChange(false)}>View</button>
-          <button type="button" aria-pressed={!showDailyGrand && showScheduleEditor} onClick={() => { setShowDailyGrand(false); onScheduleModeChange(true); }}>Edit</button>
-        </nav> : <span />}
+        {onScheduleModeChange ? <button type="button" className="schedule-edit-switch" role="switch" aria-label="Edit schedule"
+          aria-checked={!showDailyGrand && showScheduleEditor} onClick={() => {
+            const next = showDailyGrand || !showScheduleEditor;
+            if (next) setShowDailyGrand(false);
+            onScheduleModeChange(next);
+          }}><span>Edit</span><span className="schedule-switch-track" aria-hidden="true"><span /></span>
+          <span className="schedule-switch-state">{!showDailyGrand && showScheduleEditor ? "On" : "Off"}</span></button> : <span />}
         {showDailyGrand ? <GrandDateControls date={grandDate} onChange={setGrandDate} /> : <span />}
         <nav className="grand-view-switch" aria-label="Schedule view">
           <button type="button" aria-pressed={!showDailyGrand} onClick={() => setShowDailyGrand(false)}>Service week</button>
@@ -1422,6 +1425,7 @@ export function BoardTab({
                 state={state}
                 block={block}
                 canEditSchedule={showScheduleEditor && (canEdit || block.attendingId === editableAttendingId)}
+                compactAssignments={!showScheduleEditor}
                 canEdit={canEdit}
                 canStudentSelfAssign={canStudentSelfAssign}
                 currentResidentId={currentResidentId}
@@ -1436,6 +1440,8 @@ export function BoardTab({
                 key={clinic.id}
                 state={state}
                 clinic={clinic}
+                canEditSchedule={showScheduleEditor && canEdit}
+                compactAssignments={!showScheduleEditor}
                 canEdit={canEdit}
                 canStudentSelfAssign={canStudentSelfAssign}
                 currentResidentId={currentResidentId}
@@ -2782,6 +2788,7 @@ function BlockView({
   block,
   canEdit,
   canEditSchedule,
+  compactAssignments,
   canStudentSelfAssign,
   currentResidentId,
   token,
@@ -2792,6 +2799,7 @@ function BlockView({
   block: ScheduledBlock;
   canEdit: boolean;
   canEditSchedule: boolean;
+  compactAssignments: boolean;
   canStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
@@ -2831,7 +2839,8 @@ function BlockView({
             assignment={block.assignment}
             coveredWithoutDirectAssignment={allCasesCoveredIndividually}
             emptyLabel={allCasesCoveredIndividually ? "Individually assigned" : undefined}
-            disabled={!canEdit}
+            compact={compactAssignments}
+              disabled={!canEdit}
             claimable={false}
             selectedService={selectedService}
             currentResidentId={currentResidentId}
@@ -2852,6 +2861,7 @@ function BlockView({
             surgeryCase={surgeryCase}
             canEdit={canEdit}
             canEditSchedule={canEditSchedule}
+            compactAssignments={compactAssignments}
             isFirst={index === 0}
             isLast={index === block.cases.length - 1}
             canStudentSelfAssign={canStudentSelfAssign}
@@ -2874,6 +2884,7 @@ function CaseRow({
   isLast,
   canEdit,
   canEditSchedule,
+  compactAssignments,
   canStudentSelfAssign,
   currentResidentId,
   token,
@@ -2886,6 +2897,7 @@ function CaseRow({
   isLast: boolean;
   canEdit: boolean;
   canEditSchedule: boolean;
+  compactAssignments: boolean;
   canStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
@@ -2897,6 +2909,7 @@ function CaseRow({
   const directAssignments = surgeryCase.assignments.filter((assignment) => assignment.kind === "case");
   const inheritedAssignment = surgeryCase.assignments.find((assignment) => assignment.kind === "block");
   const [isAddingResident, setIsAddingResident] = useState(false);
+  useEffect(() => { if (compactAssignments) setIsAddingResident(false); }, [compactAssignments]);
   const assignedResidentIds = surgeryCase.assignments.map((assignment) => assignment.residentId);
   const assignmentControls: Array<{
     assignment?: Assignment;
@@ -2915,7 +2928,7 @@ function CaseRow({
   ];
   const canAddResident =
     !isAddingResident &&
-    ((canEdit && assignedResidentIds.length === 1) ||
+    ((canEdit && !compactAssignments && assignedResidentIds.length === 1) ||
       (canStudentSelfAssign &&
         currentResidentId !== undefined &&
         !assignedResidentIds.includes(currentResidentId) &&
@@ -2938,9 +2951,11 @@ function CaseRow({
               key={control.assignment?.id ?? `${surgeryCase.id}-unassigned`}
               state={state}
               token={token}
-              kind={control.kind}
-              targetId={control.targetId}
+              kind={control.kind === "block" ? "case" : control.kind}
+              targetId={surgeryCase.id}
+              scopeCaseId={control.kind === "block" ? surgeryCase.id : undefined}
               assignment={control.assignment}
+              compact={compactAssignments}
               disabled={!canEdit}
               claimable={false}
               arrangementWarnings={index === 0 ? arrangementWarnings : []}
@@ -2982,6 +2997,8 @@ function ClinicView({
   state,
   clinic,
   canEdit,
+  canEditSchedule,
+  compactAssignments,
   canStudentSelfAssign,
   currentResidentId,
   token,
@@ -2991,6 +3008,8 @@ function ClinicView({
   state: PlannerState;
   clinic: ScheduledClinicSession;
   canEdit: boolean;
+  canEditSchedule: boolean;
+  compactAssignments: boolean;
   canStudentSelfAssign: boolean;
   currentResidentId?: string;
   token: string;
@@ -2998,6 +3017,7 @@ function ClinicView({
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   const [isAddingResident, setIsAddingResident] = useState(false);
+  useEffect(() => { if (compactAssignments) setIsAddingResident(false); }, [compactAssignments]);
   const assignedResidentIds = clinic.assignments.map((assignment) => assignment.residentId);
   const canAddResident =
     !isAddingResident &&
@@ -3021,12 +3041,15 @@ function ClinicView({
         </div>
 
       </div>
-      {canEdit && <div className="schedule-edit-actions">
+      {canEditSchedule && <div className="schedule-edit-actions">
         <InlineClinicSettings clinic={clinic} token={token} onMutate={onMutate} />
         <DeleteScheduleItem token={token} onMutate={onMutate} collection="clinicSessions" id={clinic.id} label="clinic block" />
       </div>}
       <div className="clinic-assignments">
         {!canEdit && clinic.assignments.length === 0 && <span className="coverage-needed">Unassigned</span>}
+        {canEdit && clinic.assignments.length === 0 && compactAssignments && <AssignmentControl
+          state={state} token={token} kind="clinic" targetId={clinic.id} disabled={false} compact claimable={false}
+          selectedService={selectedService} onMutate={onMutate} />}
         {clinic.assignments.map((assignment) => (
           <AssignmentControl
             key={assignment.id}
@@ -3035,6 +3058,7 @@ function ClinicView({
             kind="clinic"
             targetId={clinic.id}
             assignment={assignment}
+            compact={compactAssignments}
             disabled={!canEdit}
             claimable={false}
             selectedService={selectedService}
@@ -3057,7 +3081,7 @@ function ClinicView({
             onCancel={() => setIsAddingResident(false)}
           />
         )}
-        {canAddResident && (
+        {canAddResident && (!compactAssignments || canStudentSelfAssign) && (
           <button type="button" className="secondary-button add-resident-button" onClick={() => setIsAddingResident(true)}>
             +person
           </button>
@@ -3244,6 +3268,8 @@ function AssignmentControl({
   excludedResidentIds = [],
   showLock = true,
   quietEmpty = false,
+  compact = false,
+  scopeCaseId,
   onMutate
 }: {
   state: PlannerState;
@@ -3262,6 +3288,8 @@ function AssignmentControl({
   excludedResidentIds?: string[];
   showLock?: boolean;
   quietEmpty?: boolean;
+  compact?: boolean;
+  scopeCaseId?: string;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   selectedService = getAssignmentService(state, kind, targetId, selectedService);
@@ -3297,7 +3325,7 @@ function AssignmentControl({
   if (claimable && kind !== "clinic") {
     return (
       <div className="assign-control">
-        <ResidentPicker state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
+        <ResidentPicker compact={compact} state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
           value={claimResidentId} label={residentLabel(state, claimResidentId)}
           onSelect={async (id, close) => { setClaimResidentId(id); close(); }} />
         <button
@@ -3319,21 +3347,22 @@ function AssignmentControl({
 
   return (
     <div className="assign-control">
-      <ResidentPicker state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
+      <ResidentPicker compact={compact} state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
         value={assignment?.residentId} label={displayedAssignment ? residentLabel(state, displayedAssignment.residentId) : emptyLabel ?? "Unassigned"}
         className={isCovered ? "assigned" : quietEmpty ? "" : "unassigned"}
         emptyLabel={inheritedAssignment ? `Use block assignment · ${residentLabel(state, inheritedAssignment.residentId)}` : assignment ? "Clear assignment" : "Leave unassigned"}
         onSelect={async (residentId, close) => {
           if (!residentId && !assignment) { close(); return; }
           await onMutate(async () => {
-            const result = !residentId && assignment ? await deleteAssignment(token, assignment.id)
+            const result = scopeCaseId && assignment ? await updateAssignment(token, assignment.id, { residentId, caseId: scopeCaseId })
+              : !residentId && assignment ? await deleteAssignment(token, assignment.id)
               : assignment ? await updateAssignment(token, assignment.id, { residentId })
               : await createAssignment(token, { kind, targetId, residentId, locked: false });
             close();
             return result;
           }, residentId ? "Assignment saved" : "Assignment cleared");
         }} />
-      {assignment && !disabled && showLock && (
+      {assignment && !disabled && showLock && !compact && (
         <button
           title={assignment.locked ? "Unlock" : "Lock"}
           className="icon-button"

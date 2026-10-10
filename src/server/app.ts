@@ -2038,6 +2038,35 @@ export function createApp(
       if (!existing) throw new Error(`Assignment not found: ${id}`);
       const serviceLine = getAssignmentTargetServiceLine(state, existing.kind, existing.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
+      // A case pencil changes only that case, even when coverage was inherited from a block.
+      // Materialize the other cases atomically so their coverage stays intact.
+      if (req.body.caseId !== undefined) {
+        const surgeryCase = state.cases.find(item => item.id === req.body.caseId);
+        if (existing.kind !== "block" || !surgeryCase || surgeryCase.blockId !== existing.targetId) {
+          throw new HttpError(400, "Case must belong to the assigned block");
+        }
+        if (typeof req.body.residentId !== "string") throw new HttpError(400, "Resident is required");
+        const residentId = req.body.residentId;
+        if (residentId) {
+          requireResident(state, residentId);
+          assertStudentAssignmentKind(state, "case", residentId);
+          assertResidentAvailableForAssignment(state, "case", surgeryCase.id, residentId);
+        }
+        const assignments = state.assignments.filter(item => item.id !== existing.id &&
+          !(item.kind === "case" && item.targetId === surgeryCase.id && item.residentId === existing.residentId));
+        for (const item of state.cases.filter(item => item.blockId === existing.targetId)) {
+          const nextResident = item.id === surgeryCase.id ? residentId : existing.residentId;
+          if (!nextResident || assignments.some(candidate => candidate.kind === "case" && candidate.targetId === item.id && candidate.residentId === nextResident)) continue;
+          assignments.push(makeAssignment("case", item.id, nextResident, existing.source, existing.locked));
+        }
+        const nextState = addActivity({ ...state, assignments }, {
+          ...requestActivityActor(req), activityType: "assignment", action: "updated case coverage",
+          details: "Changed coverage for one case and preserved coverage for the other cases",
+          entityType: "case", entityId: surgeryCase.id
+        });
+        res.json(await commitState(req, nextState));
+        return;
+      }
       if (req.body.kind !== undefined && req.body.kind !== existing.kind) {
         throw new HttpError(400, "Assignment kind cannot be changed");
       }

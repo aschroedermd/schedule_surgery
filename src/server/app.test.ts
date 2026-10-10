@@ -3096,6 +3096,34 @@ describe("planner API", () => {
     expect(lingeringCaseAssignments).toEqual([]);
   });
 
+  it("changes one inherited case without changing sibling coverage", async () => {
+    const { app, token } = await loginAs("admin");
+    const initial = await request(app).post("/api/assignments").set("authorization", `Bearer ${token}`)
+      .send({ kind: "block", targetId: "block_chen_mon", residentId: "res_chief" }).expect(201);
+    const assignment = initial.body.assignments.find((item: { kind: string }) => item.kind === "block");
+    const result = await request(app).patch(`/api/assignments/${assignment.id}`).set("authorization", `Bearer ${token}`)
+      .send({ caseId: "case_chen_whipple", residentId: "res_fellow" }).expect(200);
+    expect(result.body.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "case", targetId: "case_chen_whipple", residentId: "res_fellow" }),
+      expect.objectContaining({ kind: "case", targetId: "case_chen_chole", residentId: "res_chief" })
+    ]));
+    expect(result.body.assignments.some((item: { id: string }) => item.id === assignment.id)).toBe(false);
+  });
+  it("clears one inherited case and rejects cases from another block", async () => {
+    const { app, token } = await loginAs("admin");
+    const initial = await request(app).post("/api/assignments").set("authorization", `Bearer ${token}`)
+      .send({ kind: "block", targetId: "block_chen_mon", residentId: "res_chief" }).expect(201);
+    const assignment = initial.body.assignments.find((item: { kind: string }) => item.kind === "block");
+    await request(app).patch(`/api/assignments/${assignment.id}`).set("authorization", `Bearer ${token}`)
+      .send({ caseId: "case_patel_bypass", residentId: "res_fellow" }).expect(400);
+    const result = await request(app).patch(`/api/assignments/${assignment.id}`).set("authorization", `Bearer ${token}`)
+      .send({ caseId: "case_chen_whipple", residentId: "" }).expect(200);
+    expect(result.body.assignments.some((item: { targetId: string }) => item.targetId === "case_chen_whipple")).toBe(false);
+    expect(result.body.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "case", targetId: "case_chen_chole", residentId: "res_chief" })
+    ]));
+  });
+
   it("allows multiple different residents to be assigned to the same case", async () => {
     const { app, token } = await loginAs("admin");
 

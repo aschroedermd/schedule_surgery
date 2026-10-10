@@ -565,3 +565,7 @@ MCP safety defaults:
 - Use the admin key only for tools that intentionally mutate schedule data.
 - Fetch `/api/state` before mutating so the tool can resolve actual ids.
 - Never send patient names, MRNs, DOBs, or PHI.
+
+### Change inherited coverage for one case
+
+A service editor can PATCH `/api/assignments/{blockAssignmentId}` with `caseId` and `residentId` to change only one case in that block. Use an empty `residentId` to clear that case’s inherited coverage. The server atomically replaces the block assignment with individual case assignments, preserving the original resident on sibling cases and retaining other directly assigned residents. The case must belong to that block; normal service permissions, availability checks, and state-version concurrency checks apply. Omit `caseId` to change the entire block as before.
