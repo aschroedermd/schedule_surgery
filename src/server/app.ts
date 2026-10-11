@@ -1,3 +1,4 @@
+import { SupportConversations, SupportError, supportRouter } from "./supportConversations";
 import { calendarEventOccursOn } from "../shared/calendarEvents";
 import { assertCalendarDate, buildCalendarEvent, CalendarEventValidationError } from "./calendarEvents";
 import { boardsTesterRouter } from './boardsTester';
@@ -199,13 +200,14 @@ const scheduleEditableCollections = new Set<CollectionName>(["attendingBlocks", 
 
 export function createApp(
   store: StateStore,
-  options: { userStore?: UserStore; chatSettingsStore?: ChatSettingsStore; wikiFileStore?: WikiFileStore } = {}
+  options: { userStore?: UserStore; chatSettingsStore?: ChatSettingsStore; wikiFileStore?: WikiFileStore; supportConversations?: SupportConversations } = {}
 ) {
   const app = express();
   const userStore = options.userStore ?? createDefaultUserStore();
   const chatSettingsStore = options.chatSettingsStore ?? createDefaultChatSettingsStore();
   const wikiFileStore = options.wikiFileStore ?? createDefaultWikiFileStore();
   const requireAuth = authenticate(userStore);
+  const conversations = options.supportConversations ?? new SupportConversations();
   const loginLimiter = createRateLimiter(8, 15 * 60 * 1000);
   const transcriptionLimiter = createRateLimiter(25, 24 * 60 * 60 * 1000);
   const chatFeedbackLimiter = createRateLimiter(50, 24 * 60 * 60 * 1000);
@@ -220,6 +222,7 @@ export function createApp(
   app.use("/api/wiki/sources/:sourceId/file", express.raw({ type: "*/*", limit: "25mb" }));
   app.use("/api/boards-tester", boardsTesterRouter(userStore));
   app.use(express.json({ limit: "12mb" }));
+  app.use("/api/chat/support", supportRouter(conversations, userStore, requireAuth));
 
   function assistantActionPreparer(state: PlannerState, user: SessionUser, serviceLine: string) {
     return {
@@ -504,6 +507,12 @@ export function createApp(
   });
 
   app.post("/api/chat/stream", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    const abortController = new AbortController();
+    let keepAlive: ReturnType<typeof setInterval> | undefined;
+    res.on("close", () => {
+      if (keepAlive) clearInterval(keepAlive);
+      if (!res.writableEnded) abortController.abort();
+    });
     let modelSettings: ChatModelSettings;
     try {
       modelSettings = await chatSettingsStore.get();
@@ -511,17 +520,18 @@ export function createApp(
       next(error);
       return;
     }
-    if (!isChatProviderConfigured(modelSettings)) {
+    if (!req.body.supportTurn && !isChatProviderConfigured(modelSettings)) {
       res.status(503).json({ error: "The schedule assistant is not configured yet" });
       return;
     }
-    const messages = Array.isArray(req.body.messages) ? (req.body.messages as ChatMessage[]) : [];
+    let messages = Array.isArray(req.body.messages) ? (req.body.messages as ChatMessage[]) : [];
     const serviceLine = readOptionalString(req.body.serviceLine);
     if (!serviceLine) {
       res.status(400).json({ error: "Current service is required" });
       return;
     }
 
+    let turn: { accountId: string; requestId: string; human: boolean } | undefined;
     try {
       const voicePreset = readVoicePreset(req.body.voicePreset);
       const unlimited = req.user!.role === "admin";
@@ -537,18 +547,31 @@ export function createApp(
         });
         return;
       }
+      if (req.body.supportTurn) {
+        const input = req.body.supportTurn;
+        if (!Number.isInteger(input.revision) || typeof input.messageId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(input.messageId) ||
+          typeof input.content !== "string" || !input.content.trim() || input.content.length > 16000) {
+          throw new SupportError(400, "Invalid conversation message");
+        }
+        const accountId = await userStore.getAccountId(req.user!.username);
+        if (!accountId) throw new SupportError(403, "A user account is required");
+        const started = await conversations.begin(accountId, input.revision, input.messageId, input.content.trim());
+        turn = { accountId, requestId: started.requestId, human: started.human };
+        messages = started.messages;
+      }
       const state = filterStateForUser(await store.load(), req.user, { includeWikiSources: true });
-      const abortController = new AbortController();
-      res.on("close", () => {
-        if (!res.writableEnded) abortController.abort();
-      });
+      abortController.signal.throwIfAborted();
       res.status(200);
       res.setHeader("content-type", "application/x-ndjson; charset=utf-8");
       res.setHeader("cache-control", "no-cache, no-transform");
       res.setHeader("x-accel-buffering", "no");
       res.flushHeaders();
+      keepAlive = setInterval(() => {
+        if (!res.destroyed && !res.writableEnded) writeChatStreamEvent(res, { type: "heartbeat" });
+      }, 10000);
       writeChatStreamEvent(res, {
         type: "meta",
+        responder: turn?.human ? "human" : "ai",
         used: quota.used,
         remaining: quota.remaining,
         limit: DAILY_CHAT_LIMIT,
@@ -558,7 +581,15 @@ export function createApp(
         dataUpdatedAt: state.updatedAt,
         stateVersion: state.version
       });
-      const answer = await streamScheduleQuestion(
+      let humanReply: string | undefined;
+      if (turn?.human) humanReply = await conversations.waitForReply(turn.accountId, turn.requestId, abortController.signal);
+      const responder = humanReply === undefined ? "ai" : "human";
+      if (turn?.human && responder === "ai") writeChatStreamEvent(res, { type: "responder", responder: "ai" });
+      if (responder === "ai" && !isChatProviderConfigured(modelSettings)) throw new ChatRequestError(503, "The schedule assistant is not configured yet");
+      const answer = humanReply !== undefined ? {
+        message: humanReply, model: "human-support", checkedAt: new Date().toISOString(),
+        dataUpdatedAt: state.updatedAt, stateVersion: state.version, lookups: []
+      } : await streamScheduleQuestion(
         messages,
         {
           state,
@@ -574,9 +605,25 @@ export function createApp(
         () => writeChatStreamEvent(res, { type: "reset" }),
         modelSettings
       );
+      if (humanReply !== undefined) {
+        // Smooth text delivery uses the existing renderer; attribution remains visible.
+        for (const chunk of humanReply.match(/.{1,32}/gs) ?? []) {
+          abortController.signal.throwIfAborted();
+          writeChatStreamEvent(res, { type: "delta", delta: chunk });
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      }
+      abortController.signal.throwIfAborted();
+      const saved = turn ? await conversations.complete(turn.accountId, turn.requestId, {
+        content: answer.message, responder, checkedAt: answer.checkedAt, dataUpdatedAt: answer.dataUpdatedAt,
+        stateVersion: answer.stateVersion, lookups: answer.lookups, interaction: answer.interaction
+      }) : undefined;
       writeChatStreamEvent(res, {
         type: "complete",
         ...answer,
+        responder,
+        messageId: saved?.id,
+        revision: saved?.revision,
         used: quota.used,
         remaining: quota.remaining,
         limit: DAILY_CHAT_LIMIT,
@@ -585,10 +632,11 @@ export function createApp(
       });
       res.end();
     } catch (error) {
+      if (turn) await conversations.cancel(turn.accountId, turn.requestId);
       if (res.headersSent) {
         if (!res.writableEnded && !res.destroyed) {
           const message =
-            error instanceof ChatRequestError
+            error instanceof ChatRequestError || error instanceof SupportError
               ? error.message
               : error instanceof DOMException && error.name === "AbortError"
                 ? "Request stopped"
@@ -598,11 +646,13 @@ export function createApp(
         }
         return;
       }
-      if (error instanceof ChatRequestError) {
+      if (error instanceof ChatRequestError || error instanceof SupportError) {
         res.status(error.status).json({ error: error.message });
         return;
       }
       next(error);
+    } finally {
+      if (keepAlive) clearInterval(keepAlive);
     }
   });
 
@@ -635,13 +685,36 @@ export function createApp(
     }
   });
 
+  app.post("/api/chat/support/cancel-action", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const actionToken = readRequiredString(req.body.actionToken, "actionToken");
+      const pending = pendingAssistantActions.get(actionToken);
+      if (!pending || pending.username !== req.user!.username) throw new HttpError(404, "This confirmation expired");
+      const accountId = await userStore.getAccountId(req.user!.username);
+      if (!accountId) throw new HttpError(403, "A user account is required");
+      const snapshot = await conversations.recordAction(accountId, actionToken, "cancel", { message: "Canceled. No schedule change was made." });
+      pendingAssistantActions.delete(actionToken);
+      res.json(snapshot);
+    } catch (error) { next(error); }
+  });
+
   app.post("/api/chat/actions/:token/commit", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
+      async function persistAction(result: { message: string; stateVersion: number; dataUpdatedAt: string }) {
+        if (!req.body.supportConversation) return;
+        const accountId = await userStore.getAccountId(req.user!.username);
+        if (!accountId) throw new SupportError(403, "A user account is required");
+        const snapshot = await conversations.snapshot(accountId);
+        const source = snapshot.messages.find(message => message.interaction?.actionToken === getParam(req.params.token));
+        const choice = source?.interaction?.options.find(option => option.id !== "cancel");
+        if (choice) await conversations.recordAction(accountId, getParam(req.params.token), choice.id, result);
+      }
       pruneAssistantActionMaps(pendingAssistantActions, completedAssistantActions);
       const token = getParam(req.params.token);
       const completed = completedAssistantActions.get(token);
       if (completed) {
         if (completed.username !== req.user!.username) throw new HttpError(403, "This action belongs to another account");
+        await persistAction(completed);
         res.json({ message: completed.message, stateVersion: completed.stateVersion, dataUpdatedAt: completed.dataUpdatedAt });
         return;
       }
@@ -669,6 +742,7 @@ export function createApp(
       };
       pendingAssistantActions.delete(token);
       completedAssistantActions.set(token, result);
+      await persistAction(result);
       res.json({ message: result.message, stateVersion: result.stateVersion, dataUpdatedAt: result.dataUpdatedAt });
     } catch (error) {
       next(error);
@@ -2619,7 +2693,7 @@ export function createApp(
       });
       return;
     }
-    if (error instanceof HttpError) {
+    if (error instanceof HttpError || error instanceof SupportError) {
       res.status(error.status).json({ error: error.message });
       return;
     }

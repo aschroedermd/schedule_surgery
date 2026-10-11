@@ -18,6 +18,26 @@ describe("client API requests", () => {
     await expect(fetchState("token")).rejects.toThrow("Request failed: 500");
   });
 
+  it("handles human-to-AI fallback and keepalives on the existing stream", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response([
+      JSON.stringify({ type: "meta", responder: "human" }),
+      JSON.stringify({ type: "heartbeat" }),
+      JSON.stringify({ type: "responder", responder: "ai" }),
+      JSON.stringify({ type: "delta", delta: "Answer" }),
+      JSON.stringify({ type: "complete", responder: "ai", message: "Answer", messageId: "reply-one", revision: 2 })
+    ].join("\n"))));
+    const onMeta = vi.fn(); const onResponder = vi.fn(); const onDelta = vi.fn();
+    const result = await streamChatMessage("token", [], "Davies", { onMeta, onResponder, onDelta }, undefined, false, 1,
+      { revision: 0, messageId: "message-one", content: "Question" });
+    expect(onMeta).toHaveBeenCalledWith(expect.objectContaining({ responder: "human" }));
+    expect(onResponder).toHaveBeenCalledWith("ai");
+    expect(onDelta).toHaveBeenCalledWith("Answer");
+    expect(result).toMatchObject({ responder: "ai", messageId: "reply-one", revision: 2 });
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
+    expect(body.messages).toBeUndefined();
+    expect(body.supportTurn).toMatchObject({ revision: 0, content: "Question" });
+  });
+
   it("delivers streamed assistant deltas and completion metadata", async () => {
     vi.stubGlobal(
       "fetch",

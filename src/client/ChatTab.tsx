@@ -33,7 +33,10 @@ import {
   VoicePreset,
   VoiceQuota,
   commitChatAction,
+  cancelSupportAction,
   fetchChatQuota,
+  fetchSupportConversation,
+  updateSupportPresence,
   fetchChatModelSettings,
   fetchVoiceQuota,
   refreshChatLookups,
@@ -112,6 +115,7 @@ interface ChatUiMessage extends ChatConversationMessage {
   streaming?: boolean;
   interaction?: ChatInteraction;
   interactionAnswered?: boolean;
+  responder?: "ai" | "human";
 }
 
 interface ScheduleCard {
@@ -126,6 +130,7 @@ interface ScheduleCard {
 
 export function ChatTab({
   token,
+  active = true,
   displayName,
   preferredVoicePreset,
   isAdmin,
@@ -135,6 +140,7 @@ export function ChatTab({
   onOpenPlanner
 }: {
   token: string;
+  active?: boolean;
   displayName: string;
   preferredVoicePreset?: VoicePreset;
   isAdmin: boolean;
@@ -153,6 +159,13 @@ export function ChatTab({
       kind: "welcome"
     }
   ]);
+  const [conversationReady, setConversationReady] = useState(false);
+  const [humanJoined, setHumanJoined] = useState(false);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const conversationRevisionRef = useRef(0);
+  const conversationReadyRef = useRef(false);
+  const presenceTabRef = useRef(createChatMessageId());
+  const replyResponderRef = useRef<"ai" | "human">("ai");
   const [draft, setDraft] = useState("");
   const [quota, setQuota] = useState<ChatQuota>();
   const [voiceQuota, setVoiceQuota] = useState<VoiceQuota>();
@@ -197,9 +210,48 @@ export function ChatTab({
 
   const isAnswering = status === "thinking" || status === "streaming";
   const isVoiceBusy = status === "requesting-mic" || status === "recording" || status === "transcribing";
-  const isBusy = status !== "idle";
+  const isBusy = status !== "idle" || !conversationReady || remoteBusy;
   const quotaExhausted = quota?.remaining === 0 && !quota.unlimited;
   const voiceQuotaExhausted = voiceQuota?.remaining === 0 && !voiceQuota.unlimited;
+
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    async function sync() {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const snapshot = await updateSupportPresence(token, presenceTabRef.current, active && document.visibilityState === "visible", serviceLine);
+        if (cancelled) return;
+        setHumanJoined(snapshot.humanJoined);
+        if (!responseAbortRef.current) {
+          const historyChanged = !conversationReadyRef.current || conversationRevisionRef.current !== snapshot.revision;
+          conversationRevisionRef.current = snapshot.revision;
+          setRemoteBusy(snapshot.busy);
+          if (historyChanged) setMessages(current => {
+            const welcome = current.filter(message => message.kind === "welcome");
+            const existing = new Map(current.map(message => [message.id, message]));
+            return [...welcome, ...snapshot.messages.map(message => ({ ...existing.get(message.id), ...message }))];
+          });
+          if (!conversationReadyRef.current) setError(undefined);
+          conversationReadyRef.current = true;
+          setConversationReady(true);
+        }
+      } catch (syncError) {
+        if (!cancelled && !conversationReadyRef.current) setError(presentActionError(syncError, "Conversation history couldn't load. Retrying…", showDiagnosticErrors));
+      } finally { inFlight = false; }
+    }
+    void sync();
+    const interval = window.setInterval(() => void sync(), 3000);
+    const onVisibility = () => void sync();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      void updateSupportPresence(token, presenceTabRef.current, false).catch(() => undefined);
+    };
+  }, [active, token, showDiagnosticErrors, serviceLine]);
 
   useEffect(() => {
     let cancelled = false;
@@ -387,7 +439,18 @@ export function ChatTab({
         toConversationMessages(nextMessages),
         serviceLine,
         {
+          onResponder: (responder) => {
+            replyResponderRef.current = responder;
+            setHumanJoined(responder === "human");
+            setResponseStatusMessage(responder === "human" ? "Human support is preparing a reply…" : "Checking your question…");
+          },
           onMeta: (meta) => {
+            replyResponderRef.current = meta.responder ?? "ai";
+            if (meta.responder === "human") {
+              setHumanJoined(true);
+              window.clearTimeout(responseDelayTimeoutRef.current);
+              setResponseStatusMessage("Human support is preparing a reply…");
+            }
             setQuota({
               used: meta.used,
               remaining: meta.remaining,
@@ -429,7 +492,8 @@ export function ChatTab({
                   role: "assistant",
                   content: delta,
                   createdAt: new Date().toISOString(),
-                  streaming: true
+                  streaming: true,
+                  responder: replyResponderRef.current
                 }
               ]);
               return;
@@ -444,12 +508,15 @@ export function ChatTab({
         },
         controller.signal,
         shouldSpeak,
-        selectedVoicePreset
+        selectedVoicePreset,
+        { revision: conversationRevisionRef.current, messageId: userMessage.id, content }
       );
+      if (response.revision !== undefined) conversationRevisionRef.current = response.revision;
       const completedId = assistantMessageId ?? createChatMessageId();
       setMessages((current) => {
         const completedMessage: ChatUiMessage = {
-          id: completedId,
+          id: response.messageId ?? completedId,
+          responder: response.responder ?? "ai",
           role: "assistant",
           content: response.message,
           createdAt: new Date().toISOString(),
@@ -503,6 +570,14 @@ export function ChatTab({
       void fetchChatQuota(token).then(setQuota).catch(() => undefined);
     } finally {
       responseAbortRef.current = undefined;
+      // Recover authoritative history after cancellation, a lost completion, or a conflict.
+      void fetchSupportConversation(token).then(snapshot => {
+        if (responseAbortRef.current) return;
+        conversationRevisionRef.current = snapshot.revision;
+        setRemoteBusy(snapshot.busy);
+        setHumanJoined(snapshot.humanJoined);
+        setMessages(current => [...current.filter(message => message.kind === "welcome"), ...snapshot.messages.map(message => ({ ...current.find(existing => existing.id === message.id), ...message }))]);
+      }).catch(() => undefined);
       window.clearTimeout(responseDelayTimeoutRef.current);
       setResponseStatusMessage(undefined);
       setStatus("idle");
@@ -527,38 +602,25 @@ export function ChatTab({
         content: option.label,
         createdAt: new Date().toISOString()
       };
-      if (option.id === "cancel") {
-        setMessages([
-          ...baseMessages,
-          choiceMessage,
-          {
-            id: createChatMessageId(),
-            role: "assistant",
-            content: "Canceled. No schedule change was made.",
-            createdAt: new Date().toISOString()
-          }
-        ]);
-        return;
-      }
       setMessages([...baseMessages, choiceMessage]);
       setError(undefined);
       setStatus("thinking");
-      void commitChatAction(token, actionToken)
-        .then((result) => {
-          setMessages((current) => [...current, {
-            id: createChatMessageId(),
-            role: "assistant",
-            content: result.message,
-            createdAt: new Date().toISOString(),
-            checkedAt: new Date().toISOString(),
-            dataUpdatedAt: result.dataUpdatedAt,
-            stateVersion: result.stateVersion
-          }]);
+      // Keep polling from replacing an action while its confirmation is being saved.
+      const controller = new AbortController();
+      responseAbortRef.current = controller;
+      const operation = option.id === "cancel"
+        ? cancelSupportAction(token, actionToken)
+        : commitChatAction(token, actionToken, true).then(() => fetchSupportConversation(token));
+      void operation
+        .then(snapshot => {
+          conversationRevisionRef.current = snapshot.revision;
+          setMessages(current => [...current.filter(candidate => candidate.kind === "welcome"), ...snapshot.messages]);
         })
-        .catch((actionError) => {
+        .catch(actionError => {
           setError(presentActionError(actionError, "That schedule action couldn't be completed. Please try again.", showDiagnosticErrors));
         })
         .finally(() => {
+          if (responseAbortRef.current === controller) responseAbortRef.current = undefined;
           setStatus("idle");
           window.requestAnimationFrame(() => composerRef.current?.focus());
         });
@@ -789,8 +851,7 @@ export function ChatTab({
   function regenerateResponse(messageIndex: number) {
     const precedingUserIndex = findLastUserMessageIndex(messages, messageIndex);
     if (precedingUserIndex < 0 || isBusy) return;
-    const baseMessages = messages.slice(0, precedingUserIndex + 1);
-    void sendMessage(messages[precedingUserIndex].content, { appendUser: false, baseMessages });
+    void sendMessage(messages[precedingUserIndex].content);
   }
 
   function editQuestion(message: ChatUiMessage) {
@@ -1001,6 +1062,7 @@ export function ChatTab({
                 {message.role === "assistant" ? <Bot size={18} /> : <UserRound size={18} />}
               </div>
               <div className="chat-message-body">
+                {message.responder === "human" && <span className="chat-support-attribution">Human support</span>}
                 <div className="chat-bubble">
                   <MessageText message={message} token={token} />
                   {isLongMessage(message.content) && !message.streaming && (
@@ -1051,8 +1113,8 @@ export function ChatTab({
                 {message.role === "assistant" && message.kind !== "welcome" && !message.streaming && (
                   <div className="chat-response-footer">
                     <span>
-                      Checked {formatCheckedTime(message.checkedAt ?? new Date().toISOString())}
-                      {message.dataUpdatedAt && (
+                      {message.responder === "human" ? "Sent" : "Checked"} {formatCheckedTime(message.responder === "human" ? message.createdAt : message.checkedAt ?? new Date().toISOString())}
+                      {message.responder !== "human" && message.dataUpdatedAt && (
                         <span title={`Schedule last updated ${new Date(message.dataUpdatedAt).toLocaleString()}`}>
                           {" · "}data {formatRelativeTimestamp(message.dataUpdatedAt)}
                         </span>
@@ -1116,7 +1178,7 @@ export function ChatTab({
               </div>
               <div className="chat-response-progress">
                 <div className="chat-bubble">{responseStatusMessage}</div>
-                <div className="chat-bubble chat-thinking" aria-label="Assistant is checking the schedule">
+                <div className="chat-bubble chat-thinking" aria-label={humanJoined ? "Human support is preparing a reply" : "Assistant is checking the schedule"}>
                   <span />
                   <span />
                   <span />
@@ -1134,6 +1196,7 @@ export function ChatTab({
         </div>
 
         <div className="chat-composer-wrap">
+          <div className="chat-support-presence" aria-live="polite">{!humanJoined && remoteBusy ? "Response in progress in another tab" : ""}</div>
           {error && (
             <div className="chat-error" role="alert">
               <span>{error}</span>
@@ -1233,7 +1296,7 @@ export function ChatTab({
                 title={status === "recording" ? "Transcribe and send recording" : "Send message"}
                 disabled={status === "recording"
                   ? quotaExhausted
-                  : !draft.trim() || isVoiceBusy || quotaExhausted}
+                  : !draft.trim() || isBusy || quotaExhausted}
                 onClick={status === "recording" ? (event) => {
                   // The state update changes this control back into a submit
                   // button, so explicitly suppress this click's form default.

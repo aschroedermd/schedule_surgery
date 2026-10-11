@@ -1,3 +1,4 @@
+import { SupportDashboard } from "./SupportDashboard";
 import { ResidentPicker } from "./ResidentPicker";
 import { getAssignmentService, isOperativeResident } from "../shared/services";
 import BoardsTesterAccount, { BoardsTesterPage } from './BoardsTesterAccount';
@@ -607,7 +608,7 @@ export function App() {
 
   useEffect(() => {
     if (!session) return;
-    if ((activeTab === "users" || activeTab === "roster" || activeTab === "defaults" || activeTab === "activity") && !isAdmin) {
+    if ((activeTab === "users" || activeTab === "roster" || activeTab === "defaults" || activeTab === "activity" || activeTab === "interactions") && !isAdmin) {
       setActiveTab("board");
       return;
     }
@@ -754,6 +755,7 @@ export function App() {
 
       <div className="chat-tab-host" hidden={activeTab !== "chat"}>
         <ChatTab
+          active={activeTab === "chat"}
           token={session.token}
           displayName={session.displayName || session.username}
           preferredVoicePreset={session.preferredVoicePreset}
@@ -850,6 +852,7 @@ export function App() {
       {activeTab === "defaults" && (
         <DefaultsTab state={state} token={session.token} selectedService={selectedService} disabled={!isAdmin} onMutate={runMutation} />
       )}
+      {activeTab === "interactions" && isAdmin && <SupportDashboard token={session.token} username={session.username} />}
       {activeTab === "activity" && isAdmin && <ActivityTab state={state} />}
       {activeTab === "users" && isAdmin && (
         <UsersTab token={session.token} serviceLines={serviceLines} attendings={state.attendings} onToast={(message) => setToast(message)} />
@@ -4858,6 +4861,8 @@ function getTabTitle(tab: Tab): string {
       return "Setup";
     case "activity":
       return "Activity 🛒";
+    case "interactions":
+      return "User interactions";
     case "users":
       return "Users";
     case "account":

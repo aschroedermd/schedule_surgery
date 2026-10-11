@@ -1,3 +1,4 @@
+import type { SupportConversation } from "../shared/support";
 import {
   ClaimRequest,
   CollectionName,
@@ -108,6 +109,9 @@ export interface ChatActionResponse {
 }
 
 export interface ChatResponse extends ChatQuota {
+  responder?: "ai" | "human";
+  messageId?: string;
+  revision?: number;
   message: string;
   model: string;
   checkedAt: string;
@@ -118,6 +122,7 @@ export interface ChatResponse extends ChatQuota {
 }
 
 export interface ChatStreamMeta extends ChatQuota {
+  responder?: "ai" | "human";
   checkedAt: string;
   dataUpdatedAt: string;
   stateVersion: number;
@@ -335,10 +340,12 @@ export async function streamChatMessage(
     onDelta: (delta: string) => void;
     onMeta?: (meta: ChatStreamMeta) => void;
     onReset?: () => void;
+    onResponder?: (responder: "ai" | "human") => void;
   },
   signal?: AbortSignal,
   voiceMode = false,
-  voicePreset: VoicePreset = 1
+  voicePreset: VoicePreset = 1,
+  supportTurn?: { revision: number; messageId: string; content: string }
 ): Promise<ChatResponse> {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
@@ -346,7 +353,7 @@ export async function streamChatMessage(
       authorization: `Bearer ${token}`,
       "content-type": "application/json"
     },
-    body: JSON.stringify({ messages, serviceLine, voiceMode, voicePreset }),
+    body: JSON.stringify({ messages: supportTurn ? undefined : messages, serviceLine, voiceMode, voicePreset, supportTurn }),
     signal
   });
   if (!response.ok) {
@@ -367,12 +374,15 @@ export async function streamChatMessage(
     const event = JSON.parse(trimmed) as
       | ({ type: "meta" } & ChatStreamMeta)
       | { type: "delta"; delta: string }
+      | { type: "responder"; responder: "ai" | "human" }
+      | { type: "heartbeat" }
       | { type: "reset" }
       | ({ type: "complete" } & ChatResponse)
       | { type: "error"; error: string };
     if (event.type === "meta") handlers.onMeta?.(event);
     if (event.type === "delta") handlers.onDelta(event.delta);
     if (event.type === "reset") handlers.onReset?.();
+    if (event.type === "responder") handlers.onResponder?.(event.responder);
     if (event.type === "complete") completed = event;
     if (event.type === "error") throw new Error(event.error);
   }
@@ -406,9 +416,10 @@ export async function refreshChatLookups(
   });
 }
 
-export async function commitChatAction(token: string, actionToken: string): Promise<ChatActionResponse> {
+export async function commitChatAction(token: string, actionToken: string, supportConversation = false): Promise<ChatActionResponse> {
   return request<ChatActionResponse>(`/api/chat/actions/${encodeURIComponent(actionToken)}/commit`, {
     method: "POST",
+    body: JSON.stringify({ supportConversation }),
     token
   });
 }
@@ -871,4 +882,23 @@ async function readJson<T>(response: Response, url: string): Promise<T> {
   } catch {
     throw new Error(`Invalid JSON response from ${url}`);
   }
+}
+
+export function fetchSupportConversation(token: string) {
+  return request<SupportConversation>("/api/chat/support/conversation", { token });
+}
+export function updateSupportPresence(token: string, tabId: string, active: boolean, serviceLine?: string) {
+  return request<SupportConversation>("/api/chat/support/presence", { token, method: "POST", body: JSON.stringify({ tabId, active, serviceLine }) });
+}
+export function fetchSupportSessions(token: string) {
+  return request<SupportConversation[]>("/api/chat/support/admin", { token });
+}
+export function supportAdminAction(token: string, id: string, action: "claim" | "heartbeat" | "release" | "reply", leaseToken: string, extra: { text?: string; requestId?: string } = {}) {
+  return request<SupportConversation | { ok: true }>(`/api/chat/support/admin/${encodeURIComponent(id)}/${action}`, {
+    token, method: "POST", body: JSON.stringify({ leaseToken, ...extra })
+  });
+}
+
+export function cancelSupportAction(token: string, actionToken: string) {
+  return request<SupportConversation>("/api/chat/support/cancel-action", { token, method: "POST", body: JSON.stringify({ actionToken }) });
 }

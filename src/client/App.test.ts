@@ -26,6 +26,14 @@ function tabIds(tabs: ReadonlyArray<readonly [Tab, string]>): string[] {
 }
 
 describe("planner navigation", () => {
+  it("keeps user interactions inside admin navigation", () => {
+    const adminTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true });
+    const userTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: false });
+    expect(adminTabs).toContainEqual(["interactions", "User interactions"]);
+    expect(tabIds(userTabs)).not.toContain("interactions");
+    expect(isAdminNavigationTab("interactions")).toBe(true);
+  });
+
   it("shows the ✨⭐️ tab to all users", () => {
     const adminTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true });
     const userTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: false });
