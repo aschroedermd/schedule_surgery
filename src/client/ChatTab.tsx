@@ -160,7 +160,6 @@ export function ChatTab({
     }
   ]);
   const [conversationReady, setConversationReady] = useState(false);
-  const [humanJoined, setHumanJoined] = useState(false);
   const [remoteBusy, setRemoteBusy] = useState(false);
   const conversationRevisionRef = useRef(0);
   const conversationReadyRef = useRef(false);
@@ -223,7 +222,6 @@ export function ChatTab({
       try {
         const snapshot = await updateSupportPresence(token, presenceTabRef.current, active && document.visibilityState === "visible", serviceLine);
         if (cancelled) return;
-        setHumanJoined(snapshot.humanJoined);
         if (!responseAbortRef.current) {
           const historyChanged = !conversationReadyRef.current || conversationRevisionRef.current !== snapshot.revision;
           conversationRevisionRef.current = snapshot.revision;
@@ -441,16 +439,9 @@ export function ChatTab({
         {
           onResponder: (responder) => {
             replyResponderRef.current = responder;
-            setHumanJoined(responder === "human");
-            setResponseStatusMessage(responder === "human" ? "Human support is preparing a reply…" : "Checking your question…");
           },
           onMeta: (meta) => {
             replyResponderRef.current = meta.responder ?? "ai";
-            if (meta.responder === "human") {
-              setHumanJoined(true);
-              window.clearTimeout(responseDelayTimeoutRef.current);
-              setResponseStatusMessage("Human support is preparing a reply…");
-            }
             setQuota({
               used: meta.used,
               remaining: meta.remaining,
@@ -575,7 +566,6 @@ export function ChatTab({
         if (responseAbortRef.current) return;
         conversationRevisionRef.current = snapshot.revision;
         setRemoteBusy(snapshot.busy);
-        setHumanJoined(snapshot.humanJoined);
         setMessages(current => [...current.filter(message => message.kind === "welcome"), ...snapshot.messages.map(message => ({ ...current.find(existing => existing.id === message.id), ...message }))]);
       }).catch(() => undefined);
       window.clearTimeout(responseDelayTimeoutRef.current);
@@ -1062,7 +1052,6 @@ export function ChatTab({
                 {message.role === "assistant" ? <Bot size={18} /> : <UserRound size={18} />}
               </div>
               <div className="chat-message-body">
-                {message.responder === "human" && <span className="chat-support-attribution">Human support</span>}
                 <div className="chat-bubble">
                   <MessageText message={message} token={token} />
                   {isLongMessage(message.content) && !message.streaming && (
@@ -1113,8 +1102,8 @@ export function ChatTab({
                 {message.role === "assistant" && message.kind !== "welcome" && !message.streaming && (
                   <div className="chat-response-footer">
                     <span>
-                      {message.responder === "human" ? "Sent" : "Checked"} {formatCheckedTime(message.responder === "human" ? message.createdAt : message.checkedAt ?? new Date().toISOString())}
-                      {message.responder !== "human" && message.dataUpdatedAt && (
+                      Checked {formatCheckedTime(message.checkedAt ?? message.createdAt)}
+                      {message.dataUpdatedAt && (
                         <span title={`Schedule last updated ${new Date(message.dataUpdatedAt).toLocaleString()}`}>
                           {" · "}data {formatRelativeTimestamp(message.dataUpdatedAt)}
                         </span>
@@ -1178,7 +1167,7 @@ export function ChatTab({
               </div>
               <div className="chat-response-progress">
                 <div className="chat-bubble">{responseStatusMessage}</div>
-                <div className="chat-bubble chat-thinking" aria-label={humanJoined ? "Human support is preparing a reply" : "Assistant is checking the schedule"}>
+                <div className="chat-bubble chat-thinking" aria-label="Assistant is checking the schedule">
                   <span />
                   <span />
                   <span />
@@ -1196,7 +1185,7 @@ export function ChatTab({
         </div>
 
         <div className="chat-composer-wrap">
-          <div className="chat-support-presence" aria-live="polite">{!humanJoined && remoteBusy ? "Response in progress in another tab" : ""}</div>
+          <div className="chat-support-presence" aria-live="polite">{remoteBusy ? "Response in progress in another tab" : ""}</div>
           {error && (
             <div className="chat-error" role="alert">
               <span>{error}</span>

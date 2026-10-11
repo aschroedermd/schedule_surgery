@@ -86,7 +86,7 @@ export function SupportDashboard({ token, username }: { token: string; username:
   }
 
   return <section className="support-dashboard" aria-label="Private user interactions">
-    <p className="support-help">Join an active conversation to answer its next question. Users see a quiet human support indicator. Leaving returns the conversation to AI.</p>
+    <p className="support-help">Join an active conversation as the assistant to answer its next question. Leaving returns the conversation to the API assistant.</p>
     {error && <p role="alert" className="chat-error">{error}</p>}
     <div className="support-layout">
       <aside className="support-session-list" aria-label="Active assistant users">
@@ -99,14 +99,14 @@ export function SupportDashboard({ token, username }: { token: string; username:
       <div className="support-conversation">
         {!current ? <p>Select an active user to view their conversation.</p> : <>
           <div className="support-heading"><h2>{current.displayName || current.username}</h2>
-            {owned === current.id ? <button disabled={working} onClick={() => void action("release")}>Return to AI</button> :
-              <button disabled={working || current.busy || !!current.owner} onClick={() => void action("claim")}>Join as human support</button>}
+            {owned === current.id ? <button disabled={working} onClick={() => void action("release")}>Return to API assistant</button> :
+              <button disabled={working || current.busy || !!current.owner} onClick={() => void action("claim")}>Join as assistant</button>}
           </div>
           {current.owner && owned !== current.id && <p className="support-help">{current.owner === username ? "Another one of your sessions" : current.owner} is handling this conversation.</p>}
           <div className="support-transcript" aria-label="Conversation history">
             {!current.messages.length && <p>No messages yet.</p>}
             {current.messages.map(message => <article key={message.id} className={`support-message ${message.role}`}>
-              <small>{message.role === "user" ? current.displayName || current.username : message.responder === "human" ? "Human support" : "AI assistant"}</small>
+              <small>{message.role === "user" ? current.displayName || current.username : "AI assistant"}</small>
               <p>{message.content}</p>
             </article>)}
           </div>
