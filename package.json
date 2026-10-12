@@ -19,7 +19,7 @@
     "db:down": "docker compose down"
   },
   "dependencies": {
-    "@surgical-board-simulator/tester-ui": "github:aschroedermd/surgical-board-simulator-v2#cc1ebb4a9edd93996defab959daa221b8bee599e",
+    "@surgical-board-simulator/tester-ui": "github:aschroedermd/surgical-board-simulator-v2#1d38c7ac268bef5c74d25e2587a2ca6ba296ef31",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "lucide-react": "^0.468.0",
