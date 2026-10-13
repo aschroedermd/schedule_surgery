@@ -1,3 +1,4 @@
+import type { CasePreferencesAccess } from "../shared/casePreferences";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Copy, Eye, KeyRound, LogOut, Pencil, Plus, Save, Send, Trash2, Users } from "lucide-react";
@@ -44,6 +45,8 @@ export function UsersTab({
     servicePrivileges: ServicePrivileges;
     canAddContacts: boolean;
     canBuildCall: boolean;
+    canUseSalzTrack: boolean;
+    casePreferencesAccess: CasePreferencesAccess;
   }>({
     entries: "",
     temporaryPassword: "",
@@ -53,7 +56,9 @@ export function UsersTab({
     cloneFrom: "",
     servicePrivileges: buildPrivileges(serviceLines, "view"),
     canAddContacts: false,
-    canBuildCall: false
+    canBuildCall: false,
+    canUseSalzTrack: false,
+    casePreferencesAccess: "none"
   });
   const [error, setError] = useState<string | undefined>();
   const sortedUsers = [...users].sort((left, right) => comparePersonNames(left.displayName, right.displayName));
@@ -101,6 +106,8 @@ export function UsersTab({
         attendingId: addDraft.role === "attending" ? addDraft.attendingId : undefined,
         temporaryPassword: addDraft.temporaryPassword.trim() || undefined,
         servicePrivileges,
+        casePreferencesAccess: addDraft.casePreferencesAccess,
+        canUseSalzTrack: addDraft.role === "admin" || addDraft.canUseSalzTrack,
         canAddContacts: addDraft.role === "admin" || addDraft.canAddContacts,
         canBuildCall: addDraft.role === "admin" || ((addDraft.role === "resident" || addDraft.role === "attending") && addDraft.canBuildCall)
       }));
@@ -134,7 +141,9 @@ export function UsersTab({
           attendingId: draft.attendingId,
           servicePrivileges: draft.servicePrivileges,
           canAddContacts: draft.canAddContacts,
-          canBuildCall: draft.canBuildCall
+          canBuildCall: draft.canBuildCall,
+          canUseSalzTrack: draft.canUseSalzTrack,
+          casePreferencesAccess: draft.casePreferencesAccess
         })
       );
       onToast("User saved");
@@ -317,6 +326,8 @@ export function UsersTab({
           />
           Advanced editor (Call Builder + Blocks)
         </label>
+        <label className="contact-permission-field"><input type="checkbox" checked={addDraft.role === "admin" || addDraft.canUseSalzTrack} disabled={addDraft.role === "admin"} onChange={(event) => setAddDraft({ ...addDraft, canUseSalzTrack: event.target.checked })} />SalzTrack access</label>
+        <label>Case preferences access<select value={addDraft.role === "admin" ? "edit" : addDraft.casePreferencesAccess} disabled={addDraft.role === "admin"} onChange={(event) => setAddDraft({ ...addDraft, casePreferencesAccess: event.target.value as CasePreferencesAccess })}><option value="none">No access</option><option value="view">View case cards</option><option value="edit">View and edit case cards</option></select></label>
         {addDraft.preset === "custom" && addDraft.role !== "admin" && (
           <div className="privilege-grid add-privilege-grid">
             {serviceLines.map((serviceLine) => (
@@ -411,6 +422,8 @@ export function UsersTab({
                   />
                   Advanced editor (Call Builder + Blocks)
                 </label>
+                <label className="contact-permission-field"><input type="checkbox" aria-label={`${user.username} SalzTrack access`} checked={draft.role === "admin" || draft.canUseSalzTrack === true} disabled={draft.role === "admin"} onChange={(event) => updateDraft(user.username, { canUseSalzTrack: event.target.checked })} />SalzTrack access</label>
+                <label>Case preferences access<select aria-label={`${user.username} case preferences access`} value={draft.role === "admin" ? "edit" : draft.casePreferencesAccess ?? "none"} disabled={draft.role === "admin"} onChange={(event) => updateDraft(user.username, { casePreferencesAccess: event.target.value as CasePreferencesAccess })}><option value="none">No access</option><option value="view">View case cards</option><option value="edit">View and edit case cards</option></select></label>
                 <div className="privilege-presets" aria-label={`${user.username} bulk privileges`}>
                   <button type="button" className="secondary-button" onClick={() => setAllPrivileges(user.username, "edit")}>
                     <Pencil size={14} />
@@ -597,6 +610,7 @@ export function AccountTab({
   onToast,
   onPasswordChanged,
   onOpenTamagotchi,
+  onOpenSalzTrack,
   eggLink,
   children
 }: {
@@ -605,6 +619,7 @@ export function AccountTab({
   onToast: (message: string) => void;
   onPasswordChanged?: (user: PasswordChangeResponse) => void;
   onOpenTamagotchi?: () => void;
+  onOpenSalzTrack?: () => void;
   eggLink?: string;
   children?: ReactNode;
 }) {
@@ -678,6 +693,7 @@ export function AccountTab({
           )}
         </div>
       )}
+      {onOpenSalzTrack && <button type="button" className="salztrack-launch" onClick={onOpenSalzTrack}><img src="/salztrack/face.png" alt="" /><span><strong>SalzTrack</strong><small>The Salzberg Signal. You would locate him.</small></span><span aria-hidden="true">↗</span></button>}
       {children}
       <div className="editor-panel">
         <p className="eyebrow">API access</p>

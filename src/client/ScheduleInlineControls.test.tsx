@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardTab } from "./App";
 import { createInitialState } from "../server/sampleData";
 import { buildWeekSchedule, makeAssignment } from "../shared/scheduler";
-import { createEntity, deleteEntity, moveCase, updateEntity, updateAssignment } from "./api";
+import { createAssignment, createEntity, deleteEntity, moveCase, updateEntity, updateAssignment } from "./api";
 import type { PlannerState } from "../shared/types";
 
 vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(),
-  createEntity: vi.fn(), deleteEntity: vi.fn(), moveCase: vi.fn(), updateEntity: vi.fn(), updateAssignment: vi.fn()
+  createAssignment: vi.fn(), createEntity: vi.fn(), deleteEntity: vi.fn(), moveCase: vi.fn(), updateEntity: vi.fn(), updateAssignment: vi.fn()
 }));
 let root: Root;
 let container: HTMLDivElement;
@@ -19,6 +19,7 @@ beforeEach(() => {
   state = createInitialState();
   state.assignments = [makeAssignment("case", "case_chen_whipple", "res_chief", "admin", false)];
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  vi.mocked(createAssignment).mockResolvedValue(state);
   vi.mocked(createEntity).mockResolvedValue(state);
   vi.mocked(deleteEntity).mockResolvedValue(state);
   vi.mocked(updateEntity).mockResolvedValue(state);
@@ -51,6 +52,8 @@ describe("inline schedule editing", () => {
     render(false);
     expect(container.querySelector(".day-column")?.textContent).not.toContain("Dr. Patel");
     await click("Daily grand view");
+    // This assertion is about Monday’s fixture, independent of today’s weekday.
+    fill(container.querySelector<HTMLInputElement>('input[type="date"]')!, state.weeks[0].startDate);
     const grand = container.querySelector('.daily-grand')!;
     expect(grand.textContent).toContain("Dr. Patel");
     expect(grand.textContent).toContain("Vascular");
@@ -160,7 +163,7 @@ it("keeps assignment pencils in View while the switch gates schedule editing", a
   expect(container.querySelector(".schedule-edit-actions, .schedule-day-add, .assignment-select")).toBeNull();
   await act(async () => container.querySelector<HTMLButtonElement>(".resident-quick-trigger")!.click());
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-  await click("Close resident picker", document);
+  await click("Back to schedule", document);
   await click("Edit schedule");
   expect(container.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
   expect(container.querySelector(".schedule-day-add")).not.toBeNull();
@@ -175,4 +178,14 @@ it("uses case-only coverage when the case pencil edits inherited block coverage"
   expect(document.querySelector(".resident-picker-target")?.textContent).toContain("Whipple");
   await act(async () => document.querySelector<HTMLButtonElement>(".resident-picker-option")!.click());
   expect(updateAssignment).toHaveBeenCalledWith("test", state.assignments[0].id, expect.objectContaining({caseId:"case_chen_whipple",residentId:expect.any(String)}));
+});
+
+it("adds a second person from the view-mode case pencil without replacing block coverage", async () => {
+  state.assignments = [makeAssignment("block", "block_chen_mon", state.residents[0].id, "admin", false)];
+  act(() => root.render(<QuickAssignmentBoard />));
+  await act(async () => container.querySelector<HTMLButtonElement>(".case-row .resident-quick-trigger")!.click());
+  await click("Add person", document);
+  await act(async () => document.querySelector<HTMLButtonElement>(".resident-picker-option")!.click());
+  expect(createAssignment).toHaveBeenCalledWith("test", expect.objectContaining({ kind: "case", targetId: "case_chen_whipple", residentId: expect.any(String) }));
+  expect(updateAssignment).not.toHaveBeenCalled();
 });

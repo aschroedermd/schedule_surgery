@@ -1,4 +1,6 @@
-import { Check, ChevronDown, Search, X, CalendarDays, AlertTriangle, Pencil } from "lucide-react";
+import { NewStudentForm } from "./NewStudentForm";
+import type { NewStudentInput } from "../shared/students";
+import { Check, ChevronDown, Search, CalendarDays, AlertTriangle, Pencil, Plus, UserRoundMinus, ArrowLeft, CircleX } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isResidentOnService } from "../shared/services";
@@ -6,13 +8,23 @@ import { displayDate } from "../shared/date";
 import { buildResidentPickerContext, getResidentPickerWorkload, type PickerActivity } from "./residentPickerContext";
 import type { PlannerState, Resident } from "../shared/types";
 
-export function ResidentPicker({ residents, service, date, value, label, className, emptyLabel = "Clear assignment", state, kind, targetId, compact = false, onSelect }: {
+export function ResidentPicker({ residents, service, date, value, label, className, emptyLabel = "Clear assignment", state, kind, targetId, compact = false, initialOpen = false, initialAdding = false, onDismiss, assignedPeople, onRemove, onClearAll, onAdd, onCreateStudent, onSelect }: {
+  assignedPeople?: Resident[];
+  onRemove?: (id: string, saved: () => void) => Promise<void>;
+  onClearAll?: (saved: () => void) => Promise<void>;
+  onAdd?: (id: string, close: () => void) => Promise<void>;
+  onCreateStudent?: (input: NewStudentInput, adding: boolean, close: () => void) => Promise<void>;
+  initialOpen?: boolean; initialAdding?: boolean; onDismiss?: () => void;
   compact?: boolean;
   state?: PlannerState; kind?: "case" | "block" | "clinic"; targetId?: string;
   residents: Resident[]; service: string; date?: string; value?: string; label: string;
   className?: string; emptyLabel?: string; onSelect: (id: string, close: () => void) => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
+  const assigned = assignedPeople ?? (value ? [{ id: value, name: residents.find(person => person.id === value)?.name ?? label }] : []);
+  const [audience, setAudience] = useState<"residents" | "students">("residents");
+  const [adding, setAdding] = useState(initialAdding);
+  const [creating, setCreating] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [inspectedId, setInspectedId] = useState<string>();
   const [showDay, setShowDay] = useState(false);
   const [error, setError] = useState("");
@@ -25,7 +37,7 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
   const panel = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const titleId = useId();
-  const close = () => { setOpen(false); trigger.current?.focus(); };
+  const close = () => { setOpen(false); trigger.current?.focus(); onDismiss?.(); };
   useEffect(() => {
     if (!open) return;
     const place = () => {
@@ -48,7 +60,7 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
     return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("resize", place); window.visualViewport?.removeEventListener("resize", place); window.visualViewport?.removeEventListener("scroll", place); };
   }, [open, state]);
   const words = query.trim().toLocaleLowerCase().split(/\s+/);
-  const filtered = residents.filter(resident => words.every(word =>
+  const filtered = residents.filter(resident => (resident.trainingLevel === "Student") === (audience === "students") && (!adding || !assigned.some(person => person.id === resident.id)) && words.every(word =>
     `${resident.name} ${(resident.aliases ?? []).join(" ")} ${resident.sourceProgram ?? ""}`.toLocaleLowerCase().includes(word)))
     .sort((left, right) => context ? Number(getResidentPickerWorkload(context, left.id).overlaps.length > 0) - Number(getResidentPickerWorkload(context, right.id).overlaps.length > 0) : 0);
   const recommended = filtered.filter(resident => isResidentOnService(resident, service, date));
@@ -59,9 +71,20 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
     setError("");
     try {
       let saved = false;
-      await onSelect(id, () => { saved = true; close(); });
+      await (adding && id && onAdd ? onAdd : onSelect)(id, () => { saved = true; if (adding) { setAdding(false); setQuery(""); } else close(); });
       if (!saved) setError("Assignment was not saved. Please try again.");
-    } catch { setError("Could not save. Please try again."); } finally { setBusy(false); }
+    } catch (error) { setError(error instanceof Error ? `Could not save: ${error.message}` : "Could not save. Please try again."); } finally { setBusy(false); }
+  }
+  async function removePerson(id?: string) {
+    if (busy) return;
+    const action = id ? (onRemove ? (saved: () => void) => onRemove(id, saved) : undefined) : onClearAll;
+    if (!action) { await choose(""); return; }
+    setBusy(true); setError("");
+    try {
+      let saved = false;
+      await action(() => { saved = true; setAdding(false); setCreating(false); });
+      if (!saved) setError("Assignment was not cleared. Please try again.");
+    } catch { setError("Could not clear assignment. Please try again."); } finally { setBusy(false); }
   }
   function renderActivities(activities: PickerActivity[], residentName?: string) {
     return <div className="resident-activity-list">
@@ -76,7 +99,7 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
   return <>
     <button ref={trigger} type="button" className={`${compact ? "resident-quick-trigger" : "assignment-select resident-picker-trigger"} ${className ?? ""}`}
       aria-label={`${compact ? "Change coverage" : "Choose resident"}: ${label}`} title={compact ? kind === "block" ? "Change coverage for entire block" : kind === "case" ? "Change coverage for this case" : "Change clinic coverage" : undefined} aria-haspopup="dialog" aria-expanded={open}
-      onClick={() => { setQuery(""); setInspectedId(undefined); setShowDay(false); setError(""); setOpen(true); }}><span>{label}</span>{compact ? <Pencil size={14} /> : <ChevronDown size={14} />}</button>
+      onClick={() => { setAdding(false); setCreating(false); setAudience(residents.find(person => person.id === value)?.trainingLevel === "Student" ? "students" : "residents"); setQuery(""); setInspectedId(undefined); setShowDay(false); setError(""); setOpen(true); }}><span>{label}</span>{compact ? <Pencil size={14} /> : <ChevronDown size={14} />}</button>
     {open && createPortal(<div className="resident-picker-backdrop" onClick={event => {
       if (event.target === event.currentTarget && !busy) close();
     }}>
@@ -84,34 +107,46 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
         className={`resident-picker-panel${context ? " has-context" : ""}${viewport.height < 500 ? " compact-height" : ""}`} style={{ ...position, ...(window.innerWidth <= 640 ? { bottom: viewport.bottom, maxHeight: viewport.height < 500 ? viewport.height - 8 : viewport.height * .92 } : {}) }} onKeyDown={event => {
           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!busy) close(); }
           if (event.key === "Tab") {
-            const controls = [...panel.current!.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')].filter(control => control.getClientRects().length > 0);
+            const controls = [...panel.current!.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)')].filter(control => control.getClientRects().length > 0);
             const first = controls[0], last = controls[controls.length - 1];
             if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { event.preventDefault(); last?.focus(); }
             else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.current)) { event.preventDefault(); first?.focus(); }
           }
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          if (!creating && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
             const options = [...panel.current!.querySelectorAll<HTMLButtonElement>('.resident-picker-option:not(:disabled)')];
             const index = options.indexOf(document.activeElement as HTMLButtonElement);
             const next = event.key === "ArrowDown" ? Math.min(index + 1, options.length - 1) : Math.max(0, index - 1);
             event.preventDefault(); options[next]?.focus();
           }
         }}>
-        <header><div><p className="resident-picker-eyebrow">{service} · {date ? displayDate(date) : "Coverage"}</p><h3 id={titleId}>Choose resident</h3></div>
-          <button type="button" className="icon-button" aria-label="Close resident picker" disabled={busy} onClick={close}><X size={20} /></button></header>
+        <header><div><p className="resident-picker-eyebrow">{service} · {date ? displayDate(date) : "Coverage"}</p><div className="picker-assigned-list">
+          {assigned.length ? assigned.map((person, index) => <div className="picker-assigned-person" key={person.id}>
+            <h3 id={index === 0 ? titleId : undefined}>{person.name}</h3><span className="picker-assigned-badge">Assigned</span>
+            {onRemove && <button type="button" className="picker-remove-person" disabled={busy} aria-label={`Unassign ${person.name}`} title={`Unassign ${person.name}`} onClick={() => void removePerson(person.id)}><CircleX size={18} /></button>}
+          </div>) : <h3 id={titleId}>Unassigned</h3>}
+        </div></div>
+          {kind !== "block" && <div className="picker-audience" role="group" aria-label="People type">{(["residents", "students"] as const).map(type => <button type="button" key={type} aria-pressed={audience === type} disabled={busy} onClick={() => { setAudience(type); setQuery(""); setCreating(false); }}>{type === "residents" ? "Residents" : "Students"}</button>)}</div>}
+          <button type="button" className="icon-button" aria-label="Back to schedule" disabled={busy} onClick={close}><ArrowLeft size={20} /></button></header>
         {context && <div className="resident-picker-target"><strong>{context.title}</strong><span>{context.subtitle}</span>
           <button type="button" className="resident-day-toggle" aria-expanded={showDay} onClick={() => { setShowDay(!showDay); setInspectedId(undefined); }}><CalendarDays size={16} />{showDay ? "Hide day schedule" : "View day schedule"}</button></div>}
         <div className="resident-picker-body"><div className="resident-picker-choices">
-        <label className="resident-picker-search"><Search size={18} /><input ref={search} type="search" placeholder="Search by name…"
-          aria-label="Search residents" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
+        {adding && <div className="picker-add-notice"><strong>Add another person</strong><span>Current coverage stays assigned.</span><button type="button" disabled={busy} onClick={() => { setAdding(false); setCreating(false); }}>Cancel</button></div>}
+        {!creating && <label className="resident-picker-search"><Search size={18} /><input ref={search} type="search" placeholder="Search by name…"
+          aria-label={`Search ${audience}`} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="search" value={query} onChange={event => setQuery(event.target.value)} /></label>}
         <div className="resident-picker-results">
-          {[{ heading: `${service} team · Suggested`, list: recommended }, { heading: "Other residents", list: others }].map(({ heading, list }) => {
-            return list.length > 0 && <section key={heading}><h4>{heading}</h4>{list.map(resident => {
+          {creating && onCreateStudent ? <NewStudentForm residents={state?.residents ?? residents} initialName={query} service={service} date={date ?? new Date().toISOString().slice(0, 10)} busy={busy} onCancel={() => setCreating(false)} onExisting={id => void choose(id)} onSave={async input => {
+            setBusy(true); setError(""); let saved = false;
+            try { await onCreateStudent(input, adding, () => { saved = true; if (adding) { setAdding(false); setCreating(false); setQuery(""); } else close(); }); if (!saved) setError("Student was not saved. Please try again."); } catch (error) { setError(error instanceof Error ? error.message : "Could not save student."); } finally { setBusy(false); }
+          }} /> : <>
+          {[{ heading: `${service} team · Suggested`, list: recommended }, { heading: `Other ${audience}`, list: others }].map(({ heading, list }) => {
+            return list.length > 0 && <section key={heading}><h4 className={heading.includes("Suggested") ? "resident-picker-suggested-heading" : undefined}>{heading}</h4>{list.map(resident => {
               const workload = context ? getResidentPickerWorkload(context, resident.id) : undefined;
               const inspected = inspectedId === resident.id;
               return <div key={resident.id} className={`resident-picker-row${isResidentOnService(resident, service, date) ? " recommended" : ""}${inspected ? " inspected" : ""}`}>
                 <button type="button" disabled={busy} className="resident-picker-option"
                   aria-pressed={value === resident.id} onClick={() => void choose(resident.id)}>
-                  <span><strong>{resident.name}</strong><small>{resident.trainingLevel}{resident.sourceProgram ? ` · ${resident.sourceProgram}` : ""}</small>
+                  <span><strong>{resident.name}</strong><small>{resident.trainingLevel}{resident.trainingLevel !== "Student" && resident.sourceProgram ? ` · ${resident.sourceProgram}` : ""}</small>
+                    {resident.trainingLevel === "Student" && <small>{resident.studentPlacements?.map(placement => `${placement.service} · ${placement.startDate} – ${placement.endDate}`).join("; ") || (resident.username ? `Account: ${resident.username}` : "No dated team placement")}</small>}
                     {workload && <small className={workload.overlaps.length ? "resident-workload warning" : "resident-workload"}>
                       {workload.overlaps.length > 0 && <AlertTriangle size={12} />}{workload.overlaps.length ? `${workload.overlaps.length} overlapping assignment${workload.overlaps.length === 1 ? "" : "s"}` : workload.activities.length ? `${workload.activities.length} assignment${workload.activities.length === 1 ? "" : "s"} today` : "No cases or clinics assigned today"}
                     </small>}
@@ -124,7 +159,9 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
               </div>;
             })}</section>;
           })}
-          {filtered.length === 0 && <p className="resident-picker-empty" role="status">No residents found. Try another name.</p>}
+          {filtered.length === 0 && <p className="resident-picker-empty" role="status">No {audience} found. Try another name.</p>}
+          {audience === "students" && onCreateStudent && <button type="button" className="picker-new-student" disabled={busy} onClick={() => setCreating(true)}><Plus size={17} />Add a new student</button>}
+          </>}
         </div>
         </div>
         {context && <aside className={`resident-picker-context${showDay ? " show-day" : ""}`} aria-label="Day schedule">
@@ -134,7 +171,11 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
         </aside>}
         </div>
         {error && <p className="resident-picker-error" role="alert">{error}</p>}
-        <footer><button type="button" disabled={busy} onClick={() => void choose("")}>{emptyLabel}</button><span aria-live="polite">{busy ? "Saving…" : `${filtered.length} resident${filtered.length === 1 ? "" : "s"}`}</span></footer>
+        <footer className="picker-actions">
+          {onAdd && assigned.length > 0 && !adding && !creating && <button type="button" className="picker-add-person" disabled={busy} onClick={() => { setAdding(true); setCreating(false); setQuery(""); setError(""); }}><Plus size={19} />Add person</button>}
+          {!adding && !creating && <button type="button" className="picker-unassign" disabled={busy || !assigned.length} title={onClearAll ? "Unassign everyone from this selection" : emptyLabel} onClick={() => void removePerson()}><UserRoundMinus size={18} />{onClearAll ? "Unassign all" : "Unassign"}</button>}
+          {(busy || adding || creating) && <span aria-live="polite">{busy ? "Saving…" : adding ? "Choose an additional person" : value ? "Replacing the current assignment" : "Assigning a student"}</span>}
+        </footer>
       </div>
     </div>, document.body)}
   </>;

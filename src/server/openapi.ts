@@ -1,3 +1,4 @@
+import { COVERAGE_ALIASES, COVERAGE_RULES } from "../shared/attendingCoverage";
 import {
   ATTENDING_COVERAGE_LINES,
   CALL_POSITIONS,
@@ -70,6 +71,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean", description: "Allows adding directory contacts without admin approval." },
+            canUseSalzTrack: { type: "boolean", description: "SalzTrack spoof tracker access. Defaults to false; admins always have access." },
             canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and Blocks. Available to residents and attendings." },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             passwordUpdatedAt: { type: "string", format: "date-time" },
@@ -88,6 +90,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean" },
+            canUseSalzTrack: { type: "boolean", description: "SalzTrack spoof tracker access. Defaults to false; admins always have access." },
             canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and Blocks. Available to residents and attendings." },
             voiceDailyLimit: { type: "integer", minimum: 0, maximum: 10000, default: 12 },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
@@ -124,6 +127,7 @@ export function getOpenApiDocument() {
               additionalProperties: { type: "string", enum: ["view", "request", "edit"] }
             },
             canAddContacts: { type: "boolean", description: "Grant direct contact publishing; otherwise submissions require approval." },
+            canUseSalzTrack: { type: "boolean", description: "SalzTrack spoof tracker access. Defaults to false; admins always have access." },
             canBuildCall: { type: "boolean", description: "Grant Advanced editor access (Call Builder and Blocks) to a resident or attending." }
           }
         },
@@ -521,7 +525,7 @@ export function getOpenApiDocument() {
             date: { type: "string", format: "date" },
             line: {
               type: "string",
-              enum: [...ATTENDING_COVERAGE_LINES, "Elective"],
+              enum: [...ATTENDING_COVERAGE_LINES, ...Object.keys(COVERAGE_ALIASES)],
               description: "Use ACS for the shared EGS/Trauma/SCC primary night assignment. Elective is accepted as an alias for Practice."
             },
             shift: {
@@ -535,6 +539,10 @@ export function getOpenApiDocument() {
               type: "string",
               description: "A resident profile designated minimally-invasive-fellow; valid only for primary Practice weekend call."
             },
+            id: { type: "string", description: "Optional stable import id; conflicts cannot overwrite existing rows." },
+            startTime: { type: ["string", "null"], pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$", description: COVERAGE_RULES.explicitTimes },
+            endTime: { type: ["string", "null"], description: "Explicit local end time in America/New_York. Clear all three timing fields with null together." },
+            endDate: { type: ["string", "null"], format: "date", description: "Local end date, including the next day for overnight shifts; at most three days after date." },
             note: { type: "string", description: "Optional no-PHI scheduling note." }
           }
         },
@@ -1427,7 +1435,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create an entity",
           description:
-            "Admin access is required for roster and setup collections. Service editors may create attendingBlocks, cases, and clinicSessions for their service; linked attending accounts may create their own blocks and cases. The collection must be one of hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cases, clinicSessions.",
+            "Admin access is required for roster and setup collections. Service editors may create attendingBlocks, cases, and clinicSessions for their service; linked attending accounts may create their own blocks and cases. Attending roster creation requires id/name, with optional aliases/coverageLines and priority. Omit service for a call-only record with no OR affiliation; it does not create a login. Resolve names and aliases before creating; duplicate roster names or ids return 409. The collection must be one of hospitals, attendings, residents, procedureDefaults, weeks, attendingBlocks, cases, clinicSessions.",
           parameters: [{ name: "collection", in: "path", required: true, schema: { type: "string" } }],
           requestBody: {
             required: true,
@@ -1660,14 +1668,18 @@ export function getOpenApiDocument() {
           }
         }
       },
+      "/api/attending-coverage/categories": {
+        get: { summary: "Discover attending-call categories, aliases, display priorities and shift rules",
+          responses: { "200": { description: "Category catalog and America/New_York timing/inheritance rules" } } }
+      },
       "/api/attending-coverage": {
         get: {
           summary: "List attending coverage assignments",
-          description: "Returns the canonical stored assignments. Optional startDate, endDate, and line query parameters filter the result. When both dates are supplied, effectiveCoverage also expands independent weekend call across Friday-Sunday plus Monday before 6 AM and resolves weekday night fallback.",
+          description: "Returns canonical stored assignments with explicit UTC boundaries when times are supplied. Effective coverage includes every line, unassigned status, source, inheritance and overnight carryIn. Optional startDate, endDate, and line query parameters filter the result. When both dates are supplied, effectiveCoverage also expands independent weekend call across Friday-Sunday plus Monday before 6 AM and resolves weekday night fallback.",
           parameters: [
             { name: "startDate", in: "query", schema: { type: "string", format: "date" } },
             { name: "endDate", in: "query", schema: { type: "string", format: "date" } },
-            { name: "line", in: "query", schema: { type: "string", enum: [...ATTENDING_COVERAGE_LINES, "Elective"] } }
+            { name: "line", in: "query", schema: { type: "string", enum: [...ATTENDING_COVERAGE_LINES, ...Object.keys(COVERAGE_ALIASES)] } }
           ],
           responses: {
             "200": { description: "Filtered stored assignments, resolved effective coverage for ranged reads, and current state version" },
@@ -1677,7 +1689,7 @@ export function getOpenApiDocument() {
         post: {
           summary: "Create an attending coverage assignment",
           description:
-            "Admin only. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice (alias Elective), Vascular, Pediatrics, and NRV accept separate day and night assignments on every date including weekends. Missing nights inherit effective day coverage and missing Friday-Sunday dates inherit within that weekend. A Friday-anchored weekend assignment remains supported as shorthand through Monday 6 AM; NRV begins Friday morning and the other independent lines begin Friday at 5 PM. A minimally invasive fellow may be assigned through fellowResidentId only to the Practice weekend slot.",
+            "Admin only. Identical canonical slot/provider/timing/note retries return 200 without a second row; conflicting slots or reused ids return 409. QGenda-owned slots are always read-only: change in QGenda, then sync. Explicit startTime/endTime/endDate are validated in America/New_York; timed days never create fallback nights. SecondCall requires role backup. API-key writes are marked source=api; browser writes are marked source=manual. EGS, Trauma, and SCC primary night coverage must be submitted once as line=ACS and shift=night. Practice (alias Elective), Vascular, Pediatrics, and NRV accept separate day and night assignments on every date including weekends. Missing nights inherit effective day coverage and missing Friday-Sunday dates inherit within that weekend. A Friday-anchored weekend assignment remains supported as shorthand through Monday 6 AM; NRV begins Friday morning and the other independent lines begin Friday at 5 PM. A minimally invasive fellow may be assigned through fellowResidentId only to the Practice weekend slot.",
           requestBody: {
             required: true,
             content: {
@@ -1688,6 +1700,8 @@ export function getOpenApiDocument() {
           },
           responses: {
             "201": { description: "Updated PlannerState" },
+            "200": { description: "Matching idempotent retry; unchanged PlannerState" },
+            "403": { description: "Admin access required" },
             "400": { description: "Invalid assignment" },
             "409": { description: "Coverage slot is already assigned" }
           }

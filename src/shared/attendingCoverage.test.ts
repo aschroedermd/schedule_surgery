@@ -101,3 +101,28 @@ function coverage(
     updatedAt: "2026-08-01T00:00:00.000Z"
   };
 }
+
+import { coverageBoundaries, coverageLocalInstant, normalizeCoverageLine } from "./attendingCoverage";
+describe("coverage source normalization and explicit boundaries", () => {
+  it.each([
+    [" Practice / Bariatric ", "Practice"], ["Elective", "Practice"], ["CCVS & AC", "Vascular"],
+    ["Ped Surg", "Pediatrics"], ["Critical Care", "SCC"], ["CFMH", "FMH"], ["CRBH", "RBH"],
+    ["Unassigned – Night", "ACS"], ["Trauma Night", "ACS"], ["2nd Call Backup", "SecondCall"]
+  ])("normalizes %s to %s", (source, canonical) => expect(normalizeCoverageLine(source)).toBe(canonical));
+  it("uses the correct DST offset on both sides of an overnight transition", () => {
+    const fall = coverageBoundaries({ date: "2026-10-31", startTime: "17:00", endDate: "2026-11-01", endTime: "07:00" })!;
+    expect((Date.parse(fall.endsAt) - Date.parse(fall.startsAt)) / 3600000).toBe(15);
+    const spring = coverageBoundaries({ date: "2026-03-07", startTime: "17:00", endDate: "2026-03-08", endTime: "07:00" })!;
+    expect((Date.parse(spring.endsAt) - Date.parse(spring.startsAt)) / 3600000).toBe(13);
+    expect(() => coverageLocalInstant("2026-03-08", "02:30")).toThrow(/DST/);
+    expect(() => coverageLocalInstant("2026-11-01", "01:30")).toThrow(/DST/);
+    expect(() => coverageLocalInstant("2026-02-30", "07:00")).toThrow(/Invalid/);
+  });
+  it("keeps explicitly timed Friday day coverage from propagating into missing nights or weekend dates", () => {
+    const row = { ...coverage("timed", "2026-10-09", "Pediatrics", "day", "wattsman"), startTime: "07:00", endTime: "17:00", endDate: "2026-10-09" };
+    expect(resolveIndependentCallCoverage([row], "Pediatrics", row.date, "day")?.assignment.id).toBe("timed");
+    expect(resolveIndependentCallCoverage([row], "Pediatrics", row.date, "night")).toBeUndefined();
+    expect(resolveIndependentCallCoverage([row], "Pediatrics", "2026-10-10", "day")).toBeUndefined();
+    expect(resolveIndependentMondayEarlyMorningCoverage([row], "Pediatrics", "2026-10-12")).toBeUndefined();
+  });
+});

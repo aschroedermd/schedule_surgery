@@ -1,3 +1,4 @@
+import { normalizeCoverageLine } from "../shared/attendingCoverage";
 import { createDefaultCalendarEvents } from "../shared/calendarEvents";
 import { Pool } from "pg";
 import { buildResidentUsername, isPlaceholderResidentUsername } from "../shared/id";
@@ -758,8 +759,8 @@ function mergeSeedMigrationBlocks(rotationSchedule: Resident["rotationSchedule"]
 
 function normalizeAttendings(attendings: Attending[]): Attending[] {
   return attendings.map((attending) => {
-    const service = normalizeLegacyService(attending.service);
-    const coverageLines = [...new Set((attending.coverageLines ?? []).filter((line) => ATTENDING_COVERAGE_LINES.includes(line)))];
+    const service = attending.service === "" ? "" : normalizeLegacyService(attending.service);
+    const coverageLines = [...new Set((attending.coverageLines ?? []).map(normalizeCoverageLine).filter((line): line is NonNullable<typeof line> => Boolean(line)))];
     return {
       ...attending,
       aliases: normalizeResidentAliases(attending.aliases),
@@ -773,6 +774,7 @@ function normalizeAttendings(attendings: Attending[]): Attending[] {
 
 function normalizeAttendingCoverageAssignments(assignments: AttendingCoverageAssignment[]): AttendingCoverageAssignment[] {
   return assignments
+    .map(row => ({ ...row, line: normalizeCoverageLine(row.line) ?? row.line }))
     .filter(
       (assignment) =>
         assignment &&

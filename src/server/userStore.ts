@@ -1,3 +1,4 @@
+import { normalizeCasePreferencesAccess, type CasePreferencesAccess } from "../shared/casePreferences";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -37,6 +38,8 @@ export interface UpsertUserInput {
   servicePrivileges?: ServicePrivileges;
   canAddContacts?: boolean;
   canBuildCall?: boolean;
+  canUseSalzTrack?: boolean;
+  casePreferencesAccess?: CasePreferencesAccess;
 }
 
 export interface PasswordResetResult {
@@ -56,7 +59,7 @@ export interface UserStore {
   listUsers(): Promise<UserSummary[]>;
   createUser(input: UpsertUserInput): Promise<UserCreationResult>;
   createUsers(inputs: UpsertUserInput[]): Promise<UserCreationResult[]>;
-  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts" | "canBuildCall">>): Promise<UserSummary>;
+  updateUser(username: string, patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts" | "canBuildCall" | "canUseSalzTrack" | "casePreferencesAccess">>): Promise<UserSummary>;
   updateVoiceDailyLimit(username: string, limit: number): Promise<UserSummary>;
   updatePreferredVoicePreset(username: string, preset: 1 | 2 | 3 | 4 | 5): Promise<UserSummary>;
   deleteUser(username: string): Promise<void>;
@@ -165,7 +168,7 @@ export class FileUserStore implements UserStore {
 
   async updateUser(
     username: string,
-    patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts" | "canBuildCall">>
+    patch: Partial<Pick<UserSummary, "displayName" | "role" | "attendingId" | "servicePrivileges" | "canAddContacts" | "canBuildCall" | "canUseSalzTrack" | "casePreferencesAccess">>
   ): Promise<UserSummary> {
     return this.mutate(async (data) => {
       const user = requireStoredUser(data, username);
@@ -175,11 +178,13 @@ export class FileUserStore implements UserStore {
       if (user.role === "attending" && !user.attendingId) throw new Error("Attending accounts must be linked to an attending");
       if (patch.servicePrivileges) user.servicePrivileges = normalizePrivileges(patch.servicePrivileges);
       if (typeof patch.canAddContacts === "boolean") user.canAddContacts = user.role === "admin" || patch.canAddContacts;
+      if (typeof patch.canUseSalzTrack === "boolean") user.canUseSalzTrack = user.role === "admin" || patch.canUseSalzTrack;
       if (typeof patch.canBuildCall === "boolean") {
         user.canBuildCall = user.role === "admin" || (canBeAdvancedEditor(user.role) && patch.canBuildCall);
       } else if (!canBeAdvancedEditor(user.role) && user.role !== "admin") {
         user.canBuildCall = false;
       }
+      if (patch.casePreferencesAccess !== undefined) user.casePreferencesAccess = normalizeCasePreferencesAccess(patch.casePreferencesAccess);
       user.updatedAt = new Date().toISOString();
       return toSummary(user);
     });
@@ -333,8 +338,10 @@ function normalizeUserStoreData(input: UserStoreData | undefined): UserStoreData
       role: username === "admin" ? "admin" : normalizeRole(user.role),
       attendingId: normalizeRole(user.role) === "attending" ? readOptionalString(user.attendingId) : undefined,
       servicePrivileges: normalizePrivileges(user.servicePrivileges),
+      canUseSalzTrack: username === "admin" || user.canUseSalzTrack === true,
       canAddContacts: username === "admin" || user.canAddContacts === true,
       canBuildCall: username === "admin" || (canBeAdvancedEditor(normalizeRole(user.role)) && user.canBuildCall === true),
+      casePreferencesAccess: normalizeCasePreferencesAccess(user.casePreferencesAccess),
       voiceDailyLimit: normalizeVoiceDailyLimit(user.voiceDailyLimit),
       preferredVoicePreset: normalizeVoicePreset(user.preferredVoicePreset),
       createdAt: user.createdAt ?? now,
@@ -388,6 +395,7 @@ function makeSeedUser(
     displayName,
     role,
     servicePrivileges: normalizePrivileges(role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : {}),
+    canUseSalzTrack: role === "admin",
     canAddContacts: role === "admin",
     canBuildCall: role === "admin",
     voiceDailyLimit: DEFAULT_VOICE_DAILY_LIMIT,
@@ -425,6 +433,8 @@ function makeCreatedUser(input: UpsertUserInput, now: string): { stored: StoredU
       servicePrivileges: normalizePrivileges(
         role === "admin" ? Object.fromEntries(SERVICE_LINES.map((service) => [service, "edit"])) : input.servicePrivileges
       ),
+      casePreferencesAccess: normalizeCasePreferencesAccess(input.casePreferencesAccess),
+      canUseSalzTrack: role === "admin" || input.canUseSalzTrack === true,
       canAddContacts: role === "admin" || input.canAddContacts === true,
       canBuildCall: role === "admin" || (canBeAdvancedEditor(role) && input.canBuildCall === true),
       voiceDailyLimit: DEFAULT_VOICE_DAILY_LIMIT,
@@ -481,8 +491,10 @@ function toSummary(user: StoredUser): UserSummary {
     role: user.role,
     attendingId: user.attendingId,
     servicePrivileges: { ...user.servicePrivileges },
+    canUseSalzTrack: user.role === "admin" || user.canUseSalzTrack === true,
     canAddContacts: user.role === "admin" || user.canAddContacts,
     canBuildCall: user.role === "admin" || user.canBuildCall,
+    casePreferencesAccess: user.role === "admin" ? "edit" : normalizeCasePreferencesAccess(user.casePreferencesAccess),
     voiceDailyLimit: normalizeVoiceDailyLimit(user.voiceDailyLimit),
     preferredVoicePreset: normalizeVoicePreset(user.preferredVoicePreset),
     createdAt: user.createdAt,

@@ -40,6 +40,8 @@ export async function validateLogin(userStore: UserStore, username: string, pass
         servicePrivileges: user.servicePrivileges,
         canAddContacts: user.canAddContacts,
         canBuildCall: user.canBuildCall,
+        canUseSalzTrack: user.canUseSalzTrack,
+    casePreferencesAccess: user.casePreferencesAccess,
         preferredVoicePreset: user.preferredVoicePreset,
         passwordUpdatedAt: user.passwordUpdatedAt,
         mustChangePassword: user.mustChangePassword
@@ -93,6 +95,8 @@ export async function verifyToken(userStore: UserStore, token: string): Promise<
     servicePrivileges: user.servicePrivileges,
     canAddContacts: user.canAddContacts,
     canBuildCall: user.canBuildCall,
+    canUseSalzTrack: user.canUseSalzTrack,
+    casePreferencesAccess: user.casePreferencesAccess,
     preferredVoicePreset: user.preferredVoicePreset,
     passwordUpdatedAt: user.passwordUpdatedAt,
     mustChangePassword: user.mustChangePassword && !passwordChangeDeferred
@@ -199,6 +203,7 @@ function makeApiKeyUser(username: string, displayName: string, role: Role, privi
     servicePrivileges: Object.fromEntries(SERVICE_LINES.map((service) => [service, privilege])),
     canAddContacts: role === "admin",
     canBuildCall: role === "admin",
+    canUseSalzTrack: role === "admin",
     preferredVoicePreset: 1,
     passwordUpdatedAt: new Date(0).toISOString(),
     mustChangePassword: false

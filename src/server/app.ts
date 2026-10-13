@@ -1,6 +1,11 @@
+import { casePreferencesRouter } from "./casePreferencesApi";
+import { FileCasePreferencesStore, type CasePreferencesStore } from "./casePreferencesStore";
+import { SERVICE_LINES } from "../shared/types";
+import { matchingStudents, type NewStudentInput } from "../shared/students";
 import { SupportConversations, SupportError, supportRouter } from "./supportConversations";
 import { calendarEventOccursOn } from "../shared/calendarEvents";
 import { assertCalendarDate, buildCalendarEvent, CalendarEventValidationError } from "./calendarEvents";
+import { salzTrackRouter } from "./salzTrack";
 import { boardsTesterRouter } from './boardsTester';
 import cors from "cors";
 import express from "express";
@@ -30,6 +35,7 @@ import {
   solveCallSchedule
 } from "./callBuilderSolver";
 import {
+  coverageCatalog, coverageBoundaries, normalizeCoverageLine, resolveCoverageRows,
   INDEPENDENT_CALL_LINES,
   isIndependentCallLine,
   resolveIndependentCallCoverage,
@@ -200,7 +206,7 @@ const scheduleEditableCollections = new Set<CollectionName>(["attendingBlocks", 
 
 export function createApp(
   store: StateStore,
-  options: { userStore?: UserStore; chatSettingsStore?: ChatSettingsStore; wikiFileStore?: WikiFileStore; supportConversations?: SupportConversations } = {}
+  options: { casePreferencesStore?: CasePreferencesStore; userStore?: UserStore; chatSettingsStore?: ChatSettingsStore; wikiFileStore?: WikiFileStore; supportConversations?: SupportConversations } = {}
 ) {
   const app = express();
   const userStore = options.userStore ?? createDefaultUserStore();
@@ -222,6 +228,8 @@ export function createApp(
   app.use("/api/wiki/sources/:sourceId/file", express.raw({ type: "*/*", limit: "25mb" }));
   app.use("/api/boards-tester", boardsTesterRouter(userStore));
   app.use(express.json({ limit: "12mb" }));
+  app.use("/api/salztrack", salzTrackRouter(userStore));
+  app.use("/api/case-preferences", casePreferencesRouter(options.casePreferencesStore ?? new FileCasePreferencesStore(), userStore));
   app.use("/api/chat/support", supportRouter(conversations, userStore, requireAuth));
 
   function assistantActionPreparer(state: PlannerState, user: SessionUser, serviceLine: string) {
@@ -939,7 +947,9 @@ export function createApp(
         attendingId: readOptionalString(req.body.attendingId),
         servicePrivileges: req.body.servicePrivileges,
         canAddContacts: typeof req.body.canAddContacts === "boolean" ? req.body.canAddContacts : undefined,
-        canBuildCall: typeof req.body.canBuildCall === "boolean" ? req.body.canBuildCall : undefined
+        canUseSalzTrack: typeof req.body.canUseSalzTrack === "boolean" ? req.body.canUseSalzTrack : undefined,
+        canBuildCall: typeof req.body.canBuildCall === "boolean" ? req.body.canBuildCall : undefined,
+        casePreferencesAccess: req.body.casePreferencesAccess === "none" || req.body.casePreferencesAccess === "view" || req.body.casePreferencesAccess === "edit" ? req.body.casePreferencesAccess : undefined
       });
       const nextState = addActivity(addStudentRosterEntries(state, [user]), {
         ...requestActivityActor(req),
@@ -1936,8 +1946,17 @@ export function createApp(
     try {
       const collection = assertCollection(getParam(req.params.collection));
       const state = await store.load();
-      const entity = req.body;
+      const entity = collection === "attendings" ? { ...req.body, service: req.body.service ?? "", priority: req.body.priority ?? 3 } : req.body;
       if (!requireEntityWriteAccess(req, res, state, collection, entity)) return;
+      if (collection === "attendings") {
+        if (!readOptionalString(entity.id) || !readOptionalString(entity.name)) throw new HttpError(400, "Attending id and name are required");
+        if (entity.aliases !== undefined && (!Array.isArray(entity.aliases) || entity.aliases.some((name: unknown) => typeof name !== "string"))) throw new HttpError(400, "aliases must be an array of strings");
+        if (entity.coverageLines !== undefined && (!Array.isArray(entity.coverageLines) || entity.coverageLines.some((line: unknown) => !normalizeCoverageLine(line)))) throw new HttpError(400, "Invalid attending coverageLines");
+        if (typeof entity.service !== "string") throw new HttpError(400, "service must be a string; omit it for call-only records");
+        if (![1, 2, 3, 4, 5].includes(entity.priority)) throw new HttpError(400, "priority must be 1–5");
+        const names = [entity.name, ...(entity.aliases ?? [])].map((name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+        if (state.attendings.some(row => row.id === entity.id || [row.name, ...(row.aliases ?? [])].some(name => names.includes(name.toLowerCase().replace(/[^a-z0-9]/g, ""))))) throw new HttpError(409, "Attending already exists; resolve name and aliases from GET /api/state");
+      }
       assertNoPhiInEntity(collection, entity);
       if (collection === "cases") assertCaseStartTimeInput(entity);
       if (collection === "residents") assertResidentScheduleInput(entity);
@@ -2044,6 +2063,12 @@ export function createApp(
       } else if (!requireServiceEdit(req, res, serviceLine)) {
         return;
       }
+      if (req.body.newStudent) {
+        if (isStudentSelfAssignment) throw new HttpError(403, "Students can only assign their own profile");
+        const prepared = prepareNewStudent(state, req.body.newStudent, req.body.kind, req.body.residentId);
+        if (!requireServiceEdit(req, res, prepared.service)) return;
+        state = prepared.state; req.body.residentId = prepared.residentId;
+      }
       const manualStudentName = readOptionalString(req.body.manualStudentName) ?? readOptionalString(req.body.manualMedicalStudentName);
       if (manualStudentName && req.body.residentId) {
         throw new HttpError(400, "Choose an existing person or enter a student name, not both");
@@ -2061,6 +2086,13 @@ export function createApp(
       requireResident(state, residentId);
       assertStudentAssignmentKind(state, req.body.kind, residentId);
       assertResidentAvailableForAssignment(state, req.body.kind, req.body.targetId, residentId);
+      if (req.body.kind === "case" || req.body.kind === "clinic") {
+        const blockId = req.body.kind === "case" ? state.cases.find(item => item.id === req.body.targetId)?.blockId : undefined;
+        const assigned = state.assignments.filter(item => (item.kind === req.body.kind && item.targetId === req.body.targetId) || (blockId && item.kind === "block" && item.targetId === blockId));
+        if (assigned.some(item => item.residentId === residentId)) throw new HttpError(400, "This person is already assigned");
+        const capacity = req.body.kind === "case" ? 3 : Math.max(1, state.clinicSessions.find(item => item.id === req.body.targetId)?.capacity ?? 1);
+        if (new Set(assigned.map(item => item.residentId)).size >= capacity) throw new HttpError(400, "This assignment is already at capacity");
+      }
       const assignment = makeAssignment(req.body.kind, req.body.targetId, residentId, "admin", Boolean(req.body.locked));
       if (
         assignment.kind === "case" &&
@@ -2107,11 +2139,17 @@ export function createApp(
   app.patch("/api/assignments/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const id = getParam(req.params.id);
-      const state = await store.load();
+      let state = await store.load();
       const existing = state.assignments.find((assignment) => assignment.id === id);
       if (!existing) throw new Error(`Assignment not found: ${id}`);
       const serviceLine = getAssignmentTargetServiceLine(state, existing.kind, existing.targetId);
       if (!requireServiceEdit(req, res, serviceLine)) return;
+      if (req.body.newStudent) {
+        const prepared = prepareNewStudent(state, req.body.newStudent, req.body.caseId ? "case" : existing.kind, req.body.residentId);
+        if (!requireServiceEdit(req, res, prepared.service)) return;
+        state = prepared.state; req.body.residentId = prepared.residentId;
+        delete req.body.newStudent;
+      }
       // A case pencil changes only that case, even when coverage was inherited from a block.
       // Materialize the other cases atomically so their coverage stays intact.
       if (req.body.caseId !== undefined) {
@@ -2183,6 +2221,34 @@ export function createApp(
     } catch (error) {
       next(error);
     }
+  });
+
+  app.delete("/api/assignment-targets/:kind/:targetId", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const state = await store.load();
+      const kind = getParam(req.params.kind), targetId = getParam(req.params.targetId);
+      if (kind !== "case" && kind !== "clinic" && kind !== "block") throw new HttpError(400, "Invalid assignment target");
+      if (!requireServiceEdit(req, res, getAssignmentTargetServiceLine(state, kind, targetId))) return;
+      const residentId = req.body.residentId;
+      if (residentId !== undefined && (typeof residentId !== "string" || !residentId)) throw new HttpError(400, "Invalid person");
+      const matchesPerson = (id: string) => residentId === undefined || id === residentId;
+      const surgeryCase = kind === "case" ? state.cases.find(item => item.id === targetId) : undefined;
+      const inherited = surgeryCase ? state.assignments.filter(item => item.kind === "block" && item.targetId === surgeryCase.blockId && matchesPerson(item.residentId)) : [];
+      const assignments = state.assignments.filter(item => !inherited.some(block => block.id === item.id) &&
+        !(item.kind === kind && item.targetId === targetId && matchesPerson(item.residentId)));
+      // Removing inherited coverage from one case must preserve every other case.
+      for (const block of inherited) {
+        for (const other of state.cases.filter(item => item.blockId === block.targetId && item.id !== targetId)) {
+          if (!assignments.some(item => item.kind === "case" && item.targetId === other.id && item.residentId === block.residentId)) {
+            assignments.push(makeAssignment("case", other.id, block.residentId, block.source, block.locked));
+          }
+        }
+      }
+      res.json(await commitState(req, addActivity({ ...state, assignments }, {
+        ...requestActivityActor(req), activityType: "assignment", action: "removed assignment",
+        details: residentId ? "Removed one assigned person" : "Cleared all people from assignment target", entityType: kind, entityId: targetId
+      })));
+    } catch (error) { next(error); }
   });
 
   app.delete("/api/assignments/:id", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
@@ -2341,6 +2407,8 @@ export function createApp(
     }
   });
 
+  app.get("/api/attending-coverage/categories", requireAuth, requirePasswordReady, (_req, res) => res.json(coverageCatalog()));
+
   app.get("/api/attending-coverage", requireAuth, requirePasswordReady, async (req: AuthenticatedRequest, res, next) => {
     try {
       const state = await store.load();
@@ -2361,7 +2429,7 @@ export function createApp(
       const effectiveCoverage = startDate && endDate
         ? getEffectiveAttendingCoverage(state, startDate, endDate, coverageLine)
         : undefined;
-      res.json({ assignments, effectiveCoverage, stateVersion: state.version });
+      res.json({ assignments: assignments.map(row => ({ ...row, ...coverageBoundaries(row) })), effectiveCoverage, stateVersion: state.version });
     } catch (error) {
       next(error);
     }
@@ -2371,6 +2439,12 @@ export function createApp(
     try {
       const state = await store.load();
       const assignment = buildAttendingCoverageAssignment(state, req.body, undefined, req.user?.authType === "apiKey" ? "api" : "manual");
+      if (readExpectedVersion(req, state.version) !== state.version) throw new StateConflictError("State changed; refetch before retrying", state.version);
+      const matching = state.attendingCoverageAssignments.find(row => coverageSlot(row) === coverageSlot(assignment));
+      if (matching?.source === "qgenda") throw new HttpError(409, "Change in QGenda, then sync; this coverage slot is QGenda-owned");
+      if (matching && coveragePayload(matching) === coveragePayload(assignment)) { res.status(200).json(state); return; }
+      if (state.attendingCoverageAssignments.some(row => row.id === assignment.id)) throw new HttpError(409, "Assignment id already exists; read it before retrying");
+      assertNoCompetingQgendaCoverage(state, assignment);
       assertUniqueAttendingCoverageSlot(state, assignment);
       const nextState = addActivity(
         { ...state, attendingCoverageAssignments: [...state.attendingCoverageAssignments, assignment].sort(compareAttendingCoverageAssignments) },
@@ -2394,8 +2468,9 @@ export function createApp(
       const state = await store.load();
       const id = getParam(req.params.id);
       const existing = requireAttendingCoverageAssignment(state, id);
-      if (existing.source === "qgenda") throw new HttpError(409, "QGenda assignments are managed by the daily sync");
+      if (existing.source === "qgenda") throw new HttpError(409, "Change in QGenda, then sync; QGenda assignments are read-only locally");
       const assignment = buildAttendingCoverageAssignment(state, { ...existing, ...req.body, id }, existing, existing.source);
+      assertNoCompetingQgendaCoverage(state, assignment);
       assertUniqueAttendingCoverageSlot(state, assignment);
       const nextState = addActivity(
         {
@@ -2424,7 +2499,7 @@ export function createApp(
       const state = await store.load();
       const id = getParam(req.params.id);
       const existing = requireAttendingCoverageAssignment(state, id);
-      if (existing.source === "qgenda") throw new HttpError(409, "QGenda assignments are managed by the daily sync");
+      if (existing.source === "qgenda") throw new HttpError(409, "Change in QGenda, then sync; QGenda assignments are read-only locally");
       const nextState = addActivity(
         { ...state, attendingCoverageAssignments: state.attendingCoverageAssignments.filter((candidate) => candidate.id !== id) },
         {
@@ -4407,6 +4482,8 @@ function applyResidentTradeRequest(state: PlannerState, coverageRequest: Coverag
 }
 
 function validateCoverageEntry(state: PlannerState, entry: CoverageEntry): void {
+  if (state.residents.some(person => person.id === entry.residentId && person.trainingLevel === "Student")) throw new HttpError(400, "Students do not participate in the coverage calendar");
+
   if (!isCoverageKindAllowedOnDate(entry.kind, entry.date)) {
     throw new HttpError(400, `${entry.kind} is not allowed on ${entry.date}`);
   }
@@ -4653,8 +4730,11 @@ function buildAttendingCoverageAssignment(
   const line = assertAttendingCoverageLine(input.line ?? existing?.line);
   const shift = assertAttendingCoverageShift(input.shift ?? existing?.shift);
   const role = assertAttendingCoverageRole(input.role ?? existing?.role);
-  const attendingId = readOptionalString(input.attendingId ?? existing?.attendingId);
-  const fellowResidentId = readOptionalString(input.fellowResidentId ?? existing?.fellowResidentId);
+  if (line === "SecondCall" && role !== "backup") throw new HttpError(400, "SecondCall requires role backup");
+  const timing = { date, startTime: input.startTime, endTime: input.endTime, endDate: input.endDate };
+  try { coverageBoundaries(timing); } catch (error) { throw new HttpError(400, (error as Error).message); }
+  const attendingId = readOptionalString(input.attendingId);
+  const fellowResidentId = readOptionalString(input.fellowResidentId);
   if (Boolean(attendingId) === Boolean(fellowResidentId)) {
     throw new HttpError(400, "Attending coverage requires exactly one attendingId or fellowResidentId");
   }
@@ -4685,7 +4765,7 @@ function buildAttendingCoverageAssignment(
   const note = typeof input.note === "string" ? input.note.trim() : existing?.note ?? "";
   assertNoPhiText(note, "attending coverage note");
   return {
-    id: input.id || existing?.id || createId("attcov"),
+    id: readOptionalString(input.id) || existing?.id || createId("attcov"),
     date,
     line,
     shift,
@@ -4693,10 +4773,34 @@ function buildAttendingCoverageAssignment(
     attendingId,
     fellowResidentId,
     source,
+    startTime: input.startTime ?? undefined,
+    endTime: input.endTime ?? undefined,
+    endDate: input.endDate ?? undefined,
     note,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now
   };
+}
+
+function coverageSlot(row: AttendingCoverageAssignment): string { return `${row.date}:${row.line}:${row.shift}:${row.role}`; }
+function coveragePayload(row: AttendingCoverageAssignment): string {
+  return JSON.stringify([coverageSlot(row), row.attendingId, row.fellowResidentId, row.startTime, row.endTime, row.endDate, row.note]);
+}
+
+function assertNoCompetingQgendaCoverage(state: PlannerState, assignment: AttendingCoverageAssignment): void {
+  const boundaries = coverageBoundaries(assignment);
+  const conflicting = state.attendingCoverageAssignments.some(row => {
+    const sameBackupCategory = row.role === "backup" && assignment.role === "backup" &&
+      ((assignment.line === "SecondCall" && row.line === "ACS") || (assignment.line === "ACS" && row.line === "SecondCall"));
+    if (row.id === assignment.id || row.source !== "qgenda" || (row.line !== assignment.line && !sameBackupCategory) || row.role !== assignment.role) return false;
+    const owned = coverageBoundaries(row);
+    if (boundaries && owned) return boundaries.startsAt < owned.endsAt && owned.startsAt < boundaries.endsAt;
+    const lastDate = assignment.endDate ?? (assignment.shift === "weekend" ? addDays(assignment.date, 3) : assignment.date);
+    const ownedLastDate = row.endDate ?? (row.shift === "weekend" ? addDays(row.date, 3) : row.date);
+    if (assignment.date > ownedLastDate || row.date > lastDate) return false;
+    return row.shift === assignment.shift || row.shift === "24h" || assignment.shift === "24h" || row.shift === "weekend" || assignment.shift === "weekend";
+  });
+  if (conflicting) throw new HttpError(409, "Change in QGenda, then sync; overlapping coverage is QGenda-owned");
 }
 
 function assertUniqueAttendingCoverageSlot(state: PlannerState, assignment: AttendingCoverageAssignment): void {
@@ -4708,7 +4812,7 @@ function assertUniqueAttendingCoverageSlot(state: PlannerState, assignment: Atte
       candidate.shift === assignment.shift &&
       candidate.role === assignment.role
   );
-  if (conflict) throw new HttpError(409, "That attending coverage slot is already assigned");
+  if (conflict) throw new HttpError(409, conflict.source === "qgenda" ? "Change in QGenda, then sync; this coverage slot is QGenda-owned" : "That attending coverage slot is already assigned; read it before retrying");
 }
 
 function getEffectiveAttendingCoverage(
@@ -4717,20 +4821,19 @@ function getEffectiveAttendingCoverage(
   endDate: string,
   line?: AttendingCoverageLine
 ) {
-  const lines = line && isIndependentCallLine(line)
-    ? [line]
-    : line ? [] : [...INDEPENDENT_CALL_LINES];
+  const lines = line ? [line] : [...ATTENDING_COVERAGE_LINES];
   const effective: Array<Record<string, unknown>> = [];
   let date = startDate;
   for (let dayCount = 0; date <= endDate && dayCount < 366; dayCount += 1, date = addDays(date, 1)) {
     for (const coverageLine of lines) {
-      const day = resolveIndependentCallCoverage(state.attendingCoverageAssignments, coverageLine, date, "day");
-      const night = resolveIndependentCallCoverage(state.attendingCoverageAssignments, coverageLine, date, "night");
-      const earlyMorning = resolveIndependentMondayEarlyMorningCoverage(state.attendingCoverageAssignments, coverageLine, date);
-      if (!day && !night && !earlyMorning) continue;
-      effective.push({
-        date,
-        line: coverageLine,
+      const day = isIndependentCallLine(coverageLine) ? resolveIndependentCallCoverage(state.attendingCoverageAssignments, coverageLine, date, "day") : undefined;
+      const night = isIndependentCallLine(coverageLine) ? resolveIndependentCallCoverage(state.attendingCoverageAssignments, coverageLine, date, "night") : undefined;
+      const earlyMorning = isIndependentCallLine(coverageLine) ? resolveIndependentMondayEarlyMorningCoverage(state.attendingCoverageAssignments, coverageLine, date) : undefined;
+      const rows = resolveCoverageRows(state.attendingCoverageAssignments, coverageLine, date);
+      const carryIn = state.attendingCoverageAssignments.filter(row => row.line === coverageLine && row.date < date && row.endDate && (row.endDate > date || (row.endDate === date && row.endTime !== "00:00")));
+      effective.push({ date, line: coverageLine, status: rows.length || earlyMorning || carryIn.length ? "assigned" : "unassigned",
+        assignments: rows.map(describeEffectiveAttendingCoverage),
+        carryIn: carryIn.map(row => ({ ...describeEffectiveAttendingCoverage({ assignment: row, inheritedFromDay: false, inheritedFromWeekend: false, weekend: false }), fromPreviousDate: true })),
         day: day ? describeEffectiveAttendingCoverage(day) : undefined,
         night: night ? describeEffectiveAttendingCoverage(night) : undefined,
         earlyMorningUntil6am: earlyMorning ? describeEffectiveAttendingCoverage(earlyMorning) : undefined
@@ -4748,6 +4851,15 @@ function describeEffectiveAttendingCoverage(
     attendingId: resolved.assignment.attendingId,
     fellowResidentId: resolved.assignment.fellowResidentId,
     sourceShift: resolved.assignment.shift,
+    effectiveShift: resolved.effectiveShift ?? resolved.assignment.shift,
+    source: resolved.assignment.source,
+    date: resolved.assignment.date,
+    role: resolved.assignment.role,
+    startTime: resolved.assignment.startTime,
+    endTime: resolved.assignment.endTime,
+    endDate: resolved.assignment.endDate,
+    ...coverageBoundaries(resolved.assignment),
+    inherited: resolved.inheritedFromDay || resolved.inheritedFromWeekend,
     inheritedFromDay: resolved.inheritedFromDay,
     inheritedFromWeekend: resolved.inheritedFromWeekend,
     weekend: resolved.weekend
@@ -4755,10 +4867,8 @@ function describeEffectiveAttendingCoverage(
 }
 
 function assertAttendingCoverageLine(value: unknown): AttendingCoverageLine {
-  if (value === "Elective") return "Practice";
-  if (typeof value === "string" && ATTENDING_COVERAGE_LINES.includes(value as AttendingCoverageLine)) {
-    return value as AttendingCoverageLine;
-  }
+  const line = normalizeCoverageLine(value);
+  if (line) return line;
   throw new HttpError(400, "Invalid attending coverage line");
 }
 
@@ -5949,8 +6059,8 @@ function assertStudentSelfAssignment(state: PlannerState, user: SessionUser | un
     const hasBlockAssignment = Boolean(
       surgeryCase && state.assignments.some((assignment) => assignment.kind === "block" && assignment.targetId === surgeryCase.blockId)
     );
-    if (directAssignmentCount + Number(hasBlockAssignment) >= 2) {
-      throw new HttpError(400, "This case already has its maximum of two assigned people");
+    if (directAssignmentCount + Number(hasBlockAssignment) >= 3) {
+      throw new HttpError(400, "This case already has its maximum of three assigned people");
     }
     return;
   }
@@ -5972,9 +6082,26 @@ function assertStudentAssignmentKind(state: PlannerState, kind: unknown, residen
   }
 }
 
+function prepareNewStudent(state: PlannerState, input: NewStudentInput, kind: string, residentId: unknown) {
+  if (kind !== "case" && kind !== "clinic") throw new HttpError(400, "Students can be assigned to cases or clinics only");
+  if (residentId || typeof input.name !== "string") throw new HttpError(400, "Enter a student name or choose an existing person");
+  const placement = input.placement;
+  if (!placement || !SERVICE_LINES.includes(placement.service)) throw new HttpError(400, "Choose a student team");
+  for (const date of [placement.startDate, placement.endDate]) {
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date) throw new HttpError(400, "Enter valid placement dates");
+  }
+  const startDate = assertDate(placement.startDate), endDate = assertDate(placement.endDate);
+  if (endDate < startDate) throw new HttpError(400, "Placement end must be on or after its start");
+  if (matchingStudents(state.residents, input.name).length && input.distinctPerson !== true) throw new HttpError(409, "A student with this name already exists. Confirm whether this is a different person.");
+  const student = findOrCreateManualStudent(state, input.name, true).resident;
+  student.studentPlacements = [{ service: placement.service, startDate, endDate }];
+  return { state: { ...state, residents: [...state.residents, student] }, residentId: student.id, service: placement.service };
+}
+
 function findOrCreateManualStudent(
   state: PlannerState,
-  inputName: string
+  inputName: string,
+  distinctPerson = false
 ): { resident: Resident; created: boolean } {
   const name = inputName.trim().replace(/\s+/g, " ");
   if (name.length < 2 || name.length > 100) {
@@ -5984,7 +6111,7 @@ function findOrCreateManualStudent(
   const existing = state.residents.find(
     (resident) => resident.trainingLevel === "Student" && normalizePersonLookupName(resident.name) === normalizedName
   );
-  if (existing) return { resident: existing, created: false };
+  if (existing && !distinctPerson) return { resident: existing, created: false };
 
   return {
     created: true,

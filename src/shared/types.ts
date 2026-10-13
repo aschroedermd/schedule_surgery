@@ -206,7 +206,7 @@ export interface Attending {
   defaultHospitalId?: string;
 }
 
-export const ATTENDING_COVERAGE_LINES = ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics", "NRV"] as const;
+export const ATTENDING_COVERAGE_LINES = ["EGS", "Trauma", "SCC", "ACS", "Practice", "Vascular", "Pediatrics", "NRV", "SecondCall", "Breast", "Foregut", "FMH", "RBH"] as const;
 
 export type AttendingCoverageLine = (typeof ATTENDING_COVERAGE_LINES)[number];
 
@@ -225,6 +225,10 @@ export interface AttendingCoverageAssignment {
   attendingId?: string;
   fellowResidentId?: string;
   source: AttendingCoverageSource;
+  /** Explicit local boundaries in America/New_York; date owns the shift start. */
+  startTime?: string;
+  endTime?: string;
+  endDate?: string;
   externalId?: string;
   externalModifiedAt?: string;
   note: string;
@@ -268,6 +272,7 @@ export interface VacationBlock {
 }
 
 export interface Resident {
+  studentPlacements?: import("./students").StudentPlacement[];
   id: string;
   username?: string;
   name: string;
@@ -767,6 +772,8 @@ export interface UserSummary {
   servicePrivileges: ServicePrivileges;
   canAddContacts: boolean;
   canBuildCall: boolean;
+  canUseSalzTrack?: boolean;
+  casePreferencesAccess?: import("./casePreferences").CasePreferencesAccess;
   voiceDailyLimit: number;
   preferredVoicePreset?: 1 | 2 | 3 | 4 | 5;
   createdAt: string;
@@ -783,6 +790,8 @@ export interface SessionUser {
   servicePrivileges: ServicePrivileges;
   canAddContacts: boolean;
   canBuildCall: boolean;
+  canUseSalzTrack?: boolean;
+  casePreferencesAccess?: import("./casePreferences").CasePreferencesAccess;
   preferredVoicePreset?: 1 | 2 | 3 | 4 | 5;
   passwordUpdatedAt: string;
   mustChangePassword: boolean;

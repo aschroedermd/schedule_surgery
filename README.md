@@ -63,6 +63,7 @@ DATABASE_URL=memory npm run dev
 - Personal "Mine" view, per-resident one-character markers, per-resident ICS export, and browser print support.
 - Copyable uncovered day/week messages.
 - Postgres-backed shared state using `DATABASE_URL`.
+- Case preferences: admin-controlled view/edit access to a searchable surgeon/procedure library, ordered instrument alternatives, and case-specific contingency changes with a live editing preview. See [docs/CASE_PREFERENCES.md](docs/CASE_PREFERENCES.md).
 - Browser user credentials are stored separately from planner state using `USER_STORE_PATH` (local default `.local/users.json`, production default `/data/users.json` through a Docker volume).
 
 ## Verification
@@ -101,3 +102,7 @@ The separate private Git workspace opens directly as an Obsidian vault and is th
 - OpenAPI is served at `/api/openapi.json` when the app is running.
 - AI agents can read the public landing page at `/agent` or fetch its JSON quick guide at `/api` or `/api/agent-guide` before authenticating.
 - Configure the QGenda poller with `QGENDA_SYNC_ENABLED`, `QGENDA_PUBLIC_LINK_URL`, and the optional sync-window/time-zone variables documented in [docs/API.md](docs/API.md#attending-coverage-and-qgenda).
+
+### SalzTrack
+
+SalzTrack is a spoof tracker available from Account. Admins always have access; other users need the **SalzTrack access** checkbox enabled and saved in Users. Sign in again or reload after a permission change. A numeric keypad accepts `3320` (Roanoke Memorial main hospital), `3321` (east side of the hospital campus), and `3323` (Riverside 3). The face beacon marks the supplied reference positions on bundled screenshots; these are preset joke sightings, with no live location collection or map API key. The server checks current access on every lookup, including after permission revocation.

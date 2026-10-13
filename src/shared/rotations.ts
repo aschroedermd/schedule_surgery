@@ -41,9 +41,10 @@ export function getRotationForBlock(
 }
 
 export function getResidentServiceTagsForDate(
-  resident: Pick<Resident, "serviceTags" | "rotationSchedule">,
+  resident: Pick<Resident, "serviceTags" | "rotationSchedule" | "studentPlacements">,
   date = getTodayDate()
 ): string[] {
+  if (resident.studentPlacements) return resident.studentPlacements.filter(placement => placement.startDate <= date && date <= placement.endDate).map(placement => placement.service);
   const rotation = getRotationForDate(resident, date);
   if (rotation) {
     const serviceLine = normalizeRotationServiceToServiceLine(rotation.service);

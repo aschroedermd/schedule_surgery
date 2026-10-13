@@ -105,6 +105,7 @@ export function CalendarTab({
   const serviceLineKey = serviceLines.join("\u0000");
   const visibleResidents = useMemo(
     () => state.residents
+      .filter(resident => resident.trainingLevel !== "Student")
       .filter((resident) => calendarView === "main"
         ? isGeneralSurgeryResident(resident)
         : dates.some((date) => residentMatchesServices(resident, visibleServices, date)))
@@ -122,7 +123,8 @@ export function CalendarTab({
         .filter((entry) => calendarView === "main" || coverageEntryMatchesServices(state, entry, visibleServices)),
       ...(calendarView === "service" ? getUnavailableCalendarEntries(state, dates)
         .filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices)) : [])
-    ].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
+    ].filter(entry => !entry.residentId || !state.residents.some(person => person.id === entry.residentId && person.trainingLevel === "Student"))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
     [calendarView, dates, state, visibleResidents, visibleServices]
   );
   const callEntries = useMemo(
@@ -512,7 +514,7 @@ function AddRounderControl({
   const availableResidents = useMemo(
     () =>
       state.residents
-        .filter((resident) => isResidentOnService(resident, rounderServiceLine, date)
+        .filter((resident) => resident.trainingLevel !== "Student" && isResidentOnService(resident, rounderServiceLine, date)
           && !assignedResidentIds.has(resident.id) && isResidentAvailableForWork(state, resident, date))
         .sort((a, b) => comparePersonNames(a.name, b.name)),
     [assignedResidentIds, date, rounderServiceLine, state]
@@ -1267,7 +1269,7 @@ function isGeneralSurgeryResident(resident: Resident): boolean {
 }
 
 function getUnavailableCalendarEntries(state: PlannerState, dates: string[]): CoverageEntry[] {
-  return state.residents.flatMap((resident) => (resident.unavailable ?? []).flatMap((block) => dates
+  return state.residents.filter(resident => resident.trainingLevel !== "Student").flatMap((resident) => (resident.unavailable ?? []).flatMap((block) => dates
     .filter((date) => block.date <= date && date <= (block.endDate ?? block.date)
       && !state.coverageEntries.some((entry) => entry.kind === "off" && entry.residentId === resident.id && entry.date === date))
     .map((date) => ({
@@ -1283,7 +1285,7 @@ function getUnavailableCalendarEntries(state: PlannerState, dates: string[]): Co
 
 function getVacationCalendarEntries(residents: Resident[], dates: string[]): CoverageEntry[] {
   const visibleDates = new Set(dates);
-  return residents.flatMap((resident) =>
+  return residents.filter(resident => resident.trainingLevel !== "Student").flatMap((resident) =>
     (resident.vacation ?? []).flatMap((vacation) => {
       const entries: CoverageEntry[] = [];
       for (const date of dates) {

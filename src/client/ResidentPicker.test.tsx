@@ -79,3 +79,51 @@ it("inspects a resident’s schedule without saving and flags overlapping covera
   expect(document.querySelector(".resident-mobile-detail")?.textContent).toContain("Gastric bypass");
   expect(onSelect).not.toHaveBeenCalled();
 });
+it("shows the current name, separates students, and adds without replacing coverage", async () => {
+  const residents = createInitialState().residents.slice(0, 3).map((resident, index) => ({ ...resident, id: String(index), name: ["Current Person", "Other Resident", "Greg Smith"][index], trainingLevel: index === 2 ? "Student" as const : "PGY2" as const }));
+  const onAdd = vi.fn(async (_id, close) => close());
+  act(() => root.render(<ResidentPicker residents={residents} service="Berry" value="0" label="Current Person" kind="case" onSelect={onSelect} onAdd={onAdd} />));
+  open();
+  expect(document.querySelector('h3')?.textContent).toBe("Current Person");
+  expect([...document.querySelectorAll('.resident-picker-option')].map(item => item.textContent).join()).not.toContain("Greg Smith");
+  act(() => document.querySelector<HTMLButtonElement>('.picker-add-person')!.click());
+  act(() => [...document.querySelectorAll<HTMLButtonElement>('.picker-audience button')].find(item => item.textContent === "Students")!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>('.resident-picker-option')!.click());
+  expect(onAdd).toHaveBeenCalledWith("2", expect.any(Function));
+  expect(onSelect).not.toHaveBeenCalled();
+});
+it("requires a same-name confirmation before creating a separate student", async () => {
+  const residents = [{ ...createInitialState().residents[0], id: "student", name: "Greg Smith", trainingLevel: "Student" as const }];
+  const onCreate = vi.fn();
+  act(() => root.render(<ResidentPicker residents={residents} service="Berry" date="2026-10-13" label="Unassigned" kind="case" onSelect={onSelect} onCreateStudent={onCreate} />));
+  open();
+  expect(document.querySelector('h3')?.textContent).toBe("Unassigned");
+  act(() => [...document.querySelectorAll<HTMLButtonElement>('.picker-audience button')].find(item => item.textContent === "Students")!.click());
+  const input = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Greg Smith"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  act(() => document.querySelector<HTMLButtonElement>('.picker-new-student')!.click());
+  await act(async () => document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(onCreate).not.toHaveBeenCalled();
+  expect(document.querySelector('.student-match')?.textContent).toContain("Is this the same student?");
+  act(() => [...document.querySelectorAll<HTMLButtonElement>('.student-match button')].find(item => item.textContent?.startsWith("No,"))!.click());
+  await act(async () => document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(onCreate).toHaveBeenCalledWith({ name: "Greg Smith", distinctPerson: true, placement: { service: "Berry", startDate: "2026-10-13", endDate: "2026-11-02" } }, false, expect.any(Function));
+});
+
+it("shows all assigned people with compact badges and distinguishes individual removal from clearing all", async () => {
+  const residents = createInitialState().residents.slice(0, 3);
+  const onRemove = vi.fn(async (_id, saved) => saved());
+  const onClearAll = vi.fn(async saved => saved());
+  act(() => root.render(<ResidentPicker residents={residents} assignedPeople={residents} service="Berry" value={residents[0].id} label={residents[0].name} kind="case" onSelect={onSelect} onRemove={onRemove} onClearAll={onClearAll} />));
+  open();
+  expect(document.querySelectorAll('.picker-assigned-badge')).toHaveLength(3);
+  expect(document.querySelector('.picker-assigned-list')?.textContent).toContain(residents[2].name);
+  await act(async () => document.querySelector<HTMLButtonElement>(`button[aria-label="Unassign ${residents[1].name}"]`)!.click());
+  expect(onRemove).toHaveBeenCalledWith(residents[1].id, expect.any(Function));
+  expect(onClearAll).not.toHaveBeenCalled();
+  await act(async () => document.querySelector<HTMLButtonElement>('.picker-unassign')!.click());
+  expect(onClearAll).toHaveBeenCalledWith(expect.any(Function));
+  expect(onSelect).not.toHaveBeenCalled();
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Back to schedule"]')!.click());
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});

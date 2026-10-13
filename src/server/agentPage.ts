@@ -1,3 +1,4 @@
+import { coverageCatalog, COVERAGE_RULES } from "../shared/attendingCoverage";
 import { AGENT_IMPORT_GUIDE } from "./agentImportGuide";
 
 function escapeHtml(value: string): string {
@@ -110,6 +111,12 @@ export function getAgentPageHtml(): string {
         <h2 id="call-title">How call is organized</h2>
         <div class="rules">
           <div class="panel"><h3>Resident surgery call</h3><p>Each Friday, Saturday, and Sunday has three resident positions: <strong>senior/chief</strong>, <strong>mid-level</strong>, and <strong>intern</strong>. In the API these are <code>coverageEntries</code> with <code>kind: "call"</code> and <code>callPosition</code> values <code>senior</code>, <code>mid-level</code>, or <code>intern</code>.</p><p>When someone asks “who is on call?”, they usually mean this three-person resident team. An SCC/ICU call resident may appear separately, without a <code>callPosition</code>.</p></div>
+          <div class="panel"><h3>Full attending coverage API</h3><p>Discover <code>GET /api/attending-coverage/categories</code> for canonical identifiers, labels, aliases, compact priorities and shift rules.</p>
+          <p>Use viewer <code>X-API-Key</code> for reads and an admin key for authorized writes. Read names/aliases from <code>GET /api/state</code> before creating a roster record through <code>POST /api/entities/attendings</code> with id/name. Omit service for a call-only surgeon; no browser account is needed.</p>
+          <p>${escapeHtml(COVERAGE_RULES.explicitTimes)} ${escapeHtml(COVERAGE_RULES.dateOwnership)}. ${escapeHtml(COVERAGE_RULES.daylightSaving)} ${escapeHtml(COVERAGE_RULES.backup)}</p>
+          <p>Inspect stored and effective coverage for the exact date range. Send <code>X-State-Version</code> on writes and verify every write using a fresh ranged GET. Identical slot/provider/times/note POST retries return 200 unchanged; conflicts return 409. On timeout or version conflict, refetch before retrying. QGenda rows remain read-only: change in QGenda, then sync.</p>
+          <p>October 12 is one date, not a weekly assignment. “Unassigned – Night” and “Trauma Night” both normalize to ACS Night; retain the named surgeon once. Recheck Kelly and Ambroz in the roster before creating either.</p>
+          ${jsonExample(coverageCatalog())}</div>
           <div class="panel"><h3>Attending call</h3><p>A generic “who is the attending on call?” usually means the <strong>ACS attending</strong>. The <code>ACS</code> line consolidates EGS, Trauma, and SCC night call; those services have separate daytime coverage.</p><p>“Practice attending” or “attending for Berry, Davies, or Fogel” means the independent <code>Practice</code> line. Berry may be spoken as “Barry.” Practice coverage is being populated; if no entry is returned, say it is not scheduled yet rather than substituting ACS. Vascular, Pediatrics, and NRV have their own lines.</p></div>
         </div>
       </section>

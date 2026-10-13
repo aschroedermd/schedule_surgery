@@ -172,6 +172,10 @@ curl --fail-with-body "$BASE_URL/api/healthz"
 
 The expected body is `{ "ok": true }`. A successful workflow plus a failed health check is a failed verification, not a successful deployment. Report the correlated GitHub run URL and health-check result to the user. The one-time SSH key, pinned host key, GitHub environment, and restricted sudo setup are documented in [DEPLOY_DIGITALOCEAN.md](DEPLOY_DIGITALOCEAN.md#remote-deploys-with-github-actions).
 
+## Full attending-call coverage
+
+Use [the attending-call contract](ATTENDING_COVERAGE.md) for all canonical categories, source aliases, the dedicated SecondCall backup, explicit New York shift boundaries, safe import retries and the October 12 verification fixture. Discover `GET /api/attending-coverage/categories`, resolve roster names/aliases from viewer-key `GET /api/state`, and use the admin key only for authorized writes. Explicitly timed day rows never inherit into night or other weekend dates. Read the exact production date before importing and verify every write with a fresh ranged GET. QGenda ownership remains read-only: change in QGenda, then sync.
+
 ## Authentication
 
 External tools can pass an API key when one is configured:

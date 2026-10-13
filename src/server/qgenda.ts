@@ -1,3 +1,4 @@
+import { coverageBoundaries, normalizeCoverageLine } from "../shared/attendingCoverage";
 import { formatDate, parseLocalDate } from "../shared/date";
 import { createId } from "../shared/id";
 import {
@@ -61,6 +62,9 @@ export interface QgendaPublicScheduleItem {
   taskKey?: string;
   staffMemberKey?: string;
   isStruck?: boolean;
+  startTime?: string;
+  endTime?: string;
+  endDate?: string;
 }
 
 interface QgendaPublicResponse {
@@ -125,8 +129,12 @@ export function mergePublishedSchedule(
   for (const item of items) {
     if (item.isStruck) continue;
     const date = normalizeDate(item.date);
-    const mapping = item.taskKey ? taskMap[item.taskKey] : undefined;
+    const sourceMapping = item.taskKey ? taskMap[item.taskKey] : undefined;
+    const canonicalLine = sourceMapping ? normalizeCoverageLine(sourceMapping.line) : undefined;
+    const mapping = sourceMapping && canonicalLine ? { ...sourceMapping, line: sourceMapping.role === "primary" && sourceMapping.shift === "night" && ["EGS", "Trauma", "SCC"].includes(canonicalLine) ? "ACS" as const : canonicalLine } : undefined;
     if (!date || date < windowStart || date > windowEnd || !mapping || !item.staffMemberKey) continue;
+    const timing = { date, startTime: item.startTime, endTime: item.endTime, endDate: item.endDate };
+    coverageBoundaries(timing);
     let attending = attendingByStaffId.get(item.staffMemberKey);
     if (!attending) {
       const knownName = staffNames[item.staffMemberKey];
@@ -147,8 +155,8 @@ export function mergePublishedSchedule(
     attending.coverageLines = uniqueCoverageLines([...(attending.coverageLines ?? []), mapping.line]);
     candidates.push({
       id: `attcov_qg_${item.scheduleEntryKey || item.displayKey || createId("entry")}`,
-      date,
       ...mapping,
+      ...timing,
       attendingId: attending.id,
       source: "qgenda",
       externalId: item.scheduleEntryKey || item.displayKey,
@@ -310,7 +318,8 @@ function collapseAcsNightAssignments(assignments: AttendingCoverageAssignment[])
   }
   return [...bySlot.entries()].map(([slot, grouped]) => {
     const attendingIds = new Set(grouped.map((assignment) => assignment.attendingId));
-    if (attendingIds.size > 1) {
+    const timingKeys = new Set(grouped.map(row => JSON.stringify([row.startTime, row.endTime, row.endDate])));
+    if (attendingIds.size > 1 || timingKeys.size > 1) {
       throw new Error(`QGenda has conflicting attendings for ${slot}; no schedule changes were applied`);
     }
     return grouped[0];
@@ -333,7 +342,7 @@ function createImportedAttending(name: string, qgendaStaffId: string, line: Atte
   return {
     id: createId("att"),
     name: name.includes(" ") ? name : `Dr. ${name}`,
-    service: "Davies",
+    service: "",
     coverageLines: uniqueCoverageLines([line]),
     qgendaStaffId,
     priority: 3
@@ -375,11 +384,15 @@ function countAssignmentChanges(before: AttendingCoverageAssignment[], after: At
 }
 
 function assignmentSignature(assignment: AttendingCoverageAssignment): string {
-  return `${assignment.date}:${assignmentSlotWithoutDate(assignment)}:${assignment.attendingId}:${assignment.source}`;
+  return `${assignment.date}:${assignmentSlotWithoutDate(assignment)}:${assignment.attendingId}:${assignment.source}:${assignment.startTime ?? ""}:${assignment.endTime ?? ""}:${assignment.endDate ?? ""}`;
 }
 
 function getPublicTaskMap(): Record<string, QgendaTaskMapping> {
-  return { ...DEFAULT_PUBLIC_TASK_MAP, ...readJsonObject<QgendaTaskMapping>(process.env.QGENDA_PUBLIC_TASK_MAP_JSON) };
+  return Object.fromEntries(Object.entries({ ...DEFAULT_PUBLIC_TASK_MAP, ...readJsonObject<QgendaTaskMapping>(process.env.QGENDA_PUBLIC_TASK_MAP_JSON) }).map(([key, mapping]) => {
+    const line = normalizeCoverageLine(mapping.line);
+    if (!line) throw new Error(`Invalid QGenda coverage line for task ${key}`);
+    return [key, { ...mapping, line: mapping.role === "primary" && mapping.shift === "night" && ["EGS", "Trauma", "SCC"].includes(line) ? "ACS" : line }];
+  }));
 }
 
 function getPublicStaffMap(): Record<string, string> {

@@ -1,6 +1,6 @@
 import type { ServicePrivilege } from "../shared/types";
 
-export type Tab = "chat" | "board" | "my" | "contacts" | "residents" | "calendar" | "call" | "call-builder" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "interactions" | "account";
+export type Tab = "chat" | "board" | "my" | "contacts" | "case-preferences" | "residents" | "calendar" | "call" | "call-builder" | "schedule" | "requests" | "roster" | "defaults" | "activity" | "users" | "interactions" | "account";
 export type NavigationTab = readonly [Tab, string];
 
 const ADMIN_NAVIGATION_TABS = new Set<Tab>(["roster", "defaults", "users", "activity", "interactions"]);
@@ -9,11 +9,13 @@ const MOBILE_PRIMARY_TABS = new Set<Tab>(["chat", "board", "my", "calendar"]);
 export function getNavigationTabs({
   canUseRequests,
   canBuildCall = false,
+  canUseCasePreferences = false,
   pendingCoverageRequestCount,
   isAdmin
 }: {
   canUseRequests: boolean;
   canBuildCall?: boolean;
+  canUseCasePreferences?: boolean;
   pendingCoverageRequestCount: number;
   isAdmin: boolean;
 }): NavigationTab[] {
@@ -22,6 +24,7 @@ export function getNavigationTabs({
     ["board", "OR / Clinic 🔪"],
     ["my", "My Schedule ☁️"],
     ["contacts", "Contacts ☎️"],
+    ...(canUseCasePreferences || isAdmin ? [["case-preferences", "Case preferences"]] as const : []),
     ["calendar", "Calendar 🗓️"],
     ["call", "CALL 📟"],
     ...(canBuildCall || isAdmin ? [["call-builder", "Call Builder 🧩"], ["schedule", "Blocks ⏹️"]] as const : []),

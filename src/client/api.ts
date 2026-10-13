@@ -523,6 +523,7 @@ export async function createAssignment(
     targetId: string;
     residentId?: string;
     manualStudentName?: string;
+    newStudent?: import("../shared/students").NewStudentInput;
     locked?: boolean;
   }
 ): Promise<PlannerState> {
@@ -585,7 +586,7 @@ export async function createAttendingCoverage(
 export async function updateAttendingCoverage(
   token: string,
   id: string,
-  patch: Partial<AttendingCoverageAssignment>
+  patch: Partial<Omit<AttendingCoverageAssignment, "startTime" | "endTime" | "endDate" | "attendingId" | "fellowResidentId">> & { startTime?: string | null; endTime?: string | null; endDate?: string | null; attendingId?: string | null; fellowResidentId?: string | null }
 ): Promise<PlannerState> {
   return request<PlannerState>(`/api/attending-coverage/${id}`, {
     method: "PATCH",
@@ -677,6 +678,8 @@ export async function createUser(
     servicePrivileges?: ServicePrivileges;
     canAddContacts?: boolean;
     canBuildCall?: boolean;
+    canUseSalzTrack?: boolean;
+    casePreferencesAccess?: import("../shared/casePreferences").CasePreferencesAccess;
   }
 ): Promise<UserCreateResponse> {
   return request<UserCreateResponse>("/api/users", {
@@ -698,6 +701,8 @@ export async function createUsers(
     servicePrivileges?: ServicePrivileges;
     canAddContacts?: boolean;
     canBuildCall?: boolean;
+    canUseSalzTrack?: boolean;
+    casePreferencesAccess?: import("../shared/casePreferences").CasePreferencesAccess;
   }>
 ): Promise<BulkUserCreateResponse> {
   return request<BulkUserCreateResponse>("/api/users/bulk", {
@@ -710,7 +715,7 @@ export async function createUsers(
 export async function updateUser(
   token: string,
   username: string,
-  patch: { displayName?: string; role?: Role; attendingId?: string; servicePrivileges?: ServicePrivileges; canAddContacts?: boolean; canBuildCall?: boolean }
+  patch: { displayName?: string; role?: Role; attendingId?: string; servicePrivileges?: ServicePrivileges; canAddContacts?: boolean; canBuildCall?: boolean; canUseSalzTrack?: boolean; casePreferencesAccess?: import("../shared/casePreferences").CasePreferencesAccess }
 ): Promise<UserSummary[]> {
   const result = await request<UsersResponse>(`/api/users/${encodeURIComponent(username)}`, {
     method: "PATCH",
@@ -901,4 +906,14 @@ export function supportAdminAction(token: string, id: string, action: "claim" | 
 
 export function cancelSupportAction(token: string, actionToken: string) {
   return request<SupportConversation>("/api/chat/support/cancel-action", { token, method: "POST", body: JSON.stringify({ actionToken }) });
+}
+
+export async function clearTargetAssignments(token: string, kind: "case" | "block" | "clinic", targetId: string, residentId?: string): Promise<PlannerState> {
+  return request<PlannerState>(`/api/assignment-targets/${kind}/${targetId}`, { method: "DELETE", token, body: JSON.stringify({ residentId }) });
+}
+
+export function locateSalz(token: string, code: string) {
+  return request<import("../shared/salzTrack").SalzTrackLocation>("/api/salztrack/locate", {
+    token, method: "POST", body: JSON.stringify({ code })
+  });
 }

@@ -1,3 +1,7 @@
+import { CasePreferencesTab } from "./CasePreferencesTab";
+import { casePreferencesAccess } from "../shared/casePreferences";
+import { clearTargetAssignments } from "./api";
+import { AttendingCoverageDetails } from "./AttendingCoverageDetails";
 import { SupportDashboard } from "./SupportDashboard";
 import { ResidentPicker } from "./ResidentPicker";
 import { getAssignmentService, isOperativeResident } from "../shared/services";
@@ -54,6 +58,7 @@ import {
   subscribeToStateEvents,
   UnauthorizedError,
   updateAssignment,
+  updateAttendingCoverage,
   updateEntity
 } from "./api";
 import { AddScheduleItem, AddCaseControl, CaseEditingControls, DeleteScheduleItem, InlineBlockSettings, InlineClinicSettings } from "./ScheduleInlineControls";
@@ -64,6 +69,7 @@ import { DailyGrandView, GrandDateControls } from "./DailyGrandView";
 import { normalizeOrLocation, OR_LOCATIONS } from "../shared/locations";
 import { CallBuilderTab, CallOffRequestForm } from "./CallBuilderTab";
 import { canSeeDiagnosticErrors, presentActionError, presentBackgroundError } from "./errorPresentation";
+import { SalzTrack } from "./SalzTrack";
 import { NussbaumTamagotchi } from "./NussbaumTamagotchi";
 import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import {
@@ -83,7 +89,6 @@ import {
 } from "../shared/coverage";
 import {
   INDEPENDENT_CALL_LINES,
-  INDEPENDENT_CALL_LABELS,
   isIndependentCallLine,
   resolveIndependentCallCoverage
 } from "../shared/attendingCoverage";
@@ -198,9 +203,11 @@ export function App() {
   const [activeTab, setActiveTab] = useState<Tab>(() => new URLSearchParams(window.location.search).get("section") === "account" ? "account" : "chat");
   const [isScheduleEditorOpen, setIsScheduleEditorOpen] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [casePreferenceDraftOpen, setCasePreferenceDraftOpen] = useState(false);
   const [toast, setToast] = useState<string | undefined>();
   const [pendingAction, setPendingAction] = useState<string | undefined>();
   const [printSnapshot, setPrintSnapshot] = useState<BoardPrintSnapshot | undefined>();
+  const [isSalzTrackOpen, setIsSalzTrackOpen] = useState(false);
   const [isTamagotchiOpen, setIsTamagotchiOpen] = useState(false);
   const [goldStarCelebration, setGoldStarCelebration] = useState<GoldStarCelebrationState | undefined>();
   const stateVersionRef = useRef<number | undefined>();
@@ -212,6 +219,8 @@ export function App() {
   const selectedWeek = state?.weeks.find((week) => week.id === selectedWeekId);
   const serviceLines = state ? getStateServiceLines(state) : [...SERVICE_LINES];
   const isAdmin = session?.role === "admin";
+  const preferenceAccess = casePreferencesAccess(session);
+  const canUseCasePreferences = preferenceAccess !== "none";
   const canBuildCall = Boolean(
     session && (isAdmin || ((session.role === "resident" || session.role === "attending") && session.canBuildCall))
   );
@@ -246,6 +255,7 @@ export function App() {
     void fetch("/api/boards-tester/access", { method: "DELETE" }).catch(() => undefined);
     scheduleLoadIdRef.current += 1;
     clearStoredSession();
+    setIsSalzTrackOpen(false);
     setSession(undefined);
     setState(undefined);
     setSchedule(undefined);
@@ -301,6 +311,8 @@ export function App() {
       servicePrivileges: user.servicePrivileges,
       canAddContacts: user.canAddContacts,
       canBuildCall: user.canBuildCall,
+      canUseSalzTrack: user.canUseSalzTrack,
+      casePreferencesAccess: user.casePreferencesAccess,
       passwordUpdatedAt: user.passwordUpdatedAt,
       mustChangePassword: user.mustChangePassword
     };
@@ -484,6 +496,7 @@ export function App() {
   }
 
   function handleSelectTab(tab: Tab) {
+    if (tab !== activeTab && casePreferenceDraftOpen && !window.confirm("Discard the unsaved case preference draft and leave this tab?")) return;
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: "auto" });
   }
@@ -571,7 +584,7 @@ export function App() {
   }, [session?.token, session?.mustChangePassword, selectedWeekId, selectedService, liveUpdatesReady]);
 
   useEffect(() => {
-    if (!session || activeTab !== "contacts") return;
+    if (!session || (activeTab !== "contacts" && activeTab !== "case-preferences")) return;
     let cancelled = false;
     fetchSession(session.token)
       .then((currentSession) => {
@@ -612,6 +625,10 @@ export function App() {
       setActiveTab("board");
       return;
     }
+    if (activeTab === "case-preferences" && !canUseCasePreferences) {
+      setActiveTab("board");
+      return;
+    }
     if (activeTab === "call-builder" && !canBuildCall) {
       setActiveTab("call");
       return;
@@ -623,13 +640,17 @@ export function App() {
     if (activeTab === "requests" && !canUseRequests) {
       setActiveTab("board");
     }
-  }, [activeTab, canBuildCall, canUseRequests, isAdmin, session?.username]);
+  }, [activeTab, canBuildCall, canUseCasePreferences, canUseRequests, isAdmin, session?.username]);
 
   useEffect(() => {
     if (activeTab !== "board" || (!canEditSelectedService && !isAttending && !canStudentSelfAssign)) {
       setIsScheduleEditorOpen(false);
     }
   }, [activeTab, canEditSelectedService, isAttending, canStudentSelfAssign]);
+
+  if (isSalzTrackOpen && session && !session.mustChangePassword && (session.role === "admin" || session.canUseSalzTrack)) {
+    return <SalzTrack token={session.token} onExit={() => setIsSalzTrackOpen(false)} />;
+  }
 
   if (isTamagotchiOpen) {
     return <NussbaumTamagotchi onExit={() => setIsTamagotchiOpen(false)} />;
@@ -748,7 +769,7 @@ export function App() {
       </header>
 
       <PlannerNavigation
-        tabs={getNavigationTabs({ canUseRequests, canBuildCall, pendingCoverageRequestCount, isAdmin })}
+        tabs={getNavigationTabs({ canUseRequests, canBuildCall, canUseCasePreferences, pendingCoverageRequestCount, isAdmin })}
         activeTab={activeTab}
         onSelect={handleSelectTab}
       />
@@ -788,6 +809,9 @@ export function App() {
           schedule={schedule}
           session={session}
         />
+      )}
+      {activeTab === "case-preferences" && canUseCasePreferences && (
+        <CasePreferencesTab onDirtyChange={setCasePreferenceDraftOpen} token={session.token} canEdit={preferenceAccess === "edit"} attendings={state.attendings} onToast={(message) => setToast(message)} />
       )}
       {activeTab === "contacts" && (
         <ContactsTab
@@ -863,6 +887,7 @@ export function App() {
           username={session.username}
           onToast={(message) => setToast(message)}
           onPasswordChanged={handlePasswordChanged}
+          onOpenSalzTrack={isAdmin || session.canUseSalzTrack ? () => setIsSalzTrackOpen(true) : undefined}
           onOpenTamagotchi={session.role === "student" ? undefined : () => setIsTamagotchiOpen(true)}
           eggLink={session.role === "student" ? "https://surgemon.com/" : undefined}
         >
@@ -1477,7 +1502,7 @@ function getPreferredMobileDayIndex(schedule: WeekSchedule): number {
   return todayIndex >= 0 ? todayIndex : 0;
 }
 
-function BoardPrintout({ snapshot }: { snapshot: BoardPrintSnapshot }) {
+export function BoardPrintout({ snapshot }: { snapshot: BoardPrintSnapshot }) {
   const totalUncovered = snapshot.schedule.days.reduce((count, day) => count + day.uncoveredCases.length, 0);
   const blockCount = snapshot.schedule.days.reduce((count, day) => count + day.blocks.length, 0);
   const clinicCount = snapshot.schedule.days.reduce((count, day) => count + day.clinics.length, 0);
@@ -1496,7 +1521,7 @@ function BoardPrintout({ snapshot }: { snapshot: BoardPrintSnapshot }) {
         </div>
       </header>
 
-      <div className="print-board-days">
+      <div className="print-board-days" style={{ gridTemplateColumns: `repeat(${snapshot.schedule.days.length}, minmax(0, 1fr))` }}>
         {snapshot.schedule.days.map((day) => (
           <article key={day.date} className="print-day">
             <header className="print-day-header">
@@ -2123,7 +2148,6 @@ function CallShiftsTab({
 }) {
   const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
   const [attendingCalendarView, setAttendingCalendarView] = useState<"night" | "weekly" | null>(null);
-  const [expandedCallDate, setExpandedCallDate] = useState<string | null>(null);
   const [requestPanelOpen, setRequestPanelOpen] = useState(false);
   const nightTeamSegments = getNightTeamSegments(state, month);
   const weekendRows = getWeekendCallRows(state, month);
@@ -2240,18 +2264,7 @@ function CallShiftsTab({
                 {row.days.map((day) => (
                   <section
                     key={day.date}
-                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length || day.attendingCallEntry ? "" : " empty"}${day.date === today ? " today" : ""}${expandedCallDate === day.date ? " expanded" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={expandedCallDate === day.date}
-                    aria-label={`${day.weekday} ${formatShortDate(day.date)} call team`}
-                    title={expandedCallDate === day.date ? "Hide full call team" : "Show full call team"}
-                    onClick={() => setExpandedCallDate((current) => current === day.date ? null : day.date)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      setExpandedCallDate((current) => current === day.date ? null : day.date);
-                    }}
+                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length || day.attendingCallEntry ? "" : " empty"}${day.date === today ? " today" : ""}`}
                   >
                     <header className="call-day-header">
                       <span className="call-day-name">{day.weekday}</span>
@@ -2270,8 +2283,7 @@ function CallShiftsTab({
                           <strong>{group.residentNames}</strong>
                         </div>
                       ))}
-                      <AttendingCallSummary state={state} date={day.date} entry={day.attendingCallEntry} />
-                      {expandedCallDate === day.date && <IndependentCallTeamDetails state={state} date={day.date} />}
+                      <AttendingCoverageDetails key={day.date} state={state} date={day.date} />
                     </div>
                   </section>
                 ))}
@@ -2402,14 +2414,19 @@ function AttendingCoveragePanel({
     role: AttendingCoverageRole;
     providerKey: string;
     note: string;
+    startTime: string;
+    endTime: string;
+    endDate: string;
   }>(() => ({
     date: getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`,
     line: "Practice",
     shift: "day",
     role: "primary",
     providerKey: state.attendings[0] ? `attending:${state.attendings[0].id}` : "",
-    note: ""
+    note: "", startTime: "", endTime: "", endDate: ""
   }));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [coverageDate, setCoverageDate] = useState(getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`);
   const practiceFellows = state.residents.filter(isMinimallyInvasiveFellow);
   const visible = state.attendingCoverageAssignments
     .filter((assignment) => assignment.date.startsWith(month))
@@ -2418,6 +2435,7 @@ function AttendingCoveragePanel({
   const sync = state.qgendaSync;
 
   useEffect(() => {
+    setCoverageDate(current => current.startsWith(month) ? current : `${month}-01`);
     setDraft((current) => ({
       ...current,
       date: current.date.startsWith(month)
@@ -2434,7 +2452,7 @@ function AttendingCoveragePanel({
       <header className="attending-coverage-heading">
         <div>
           <p className="eyebrow">Attending coverage</p>
-          <h2>ACS services & call</h2>
+          <h2>Attending call coverage</h2>
         </div>
         <div className="attending-sync-status">
           <span className={sync.lastError ? "sync-state sync-error" : "sync-state"} title={sync.lastError}>
@@ -2457,8 +2475,11 @@ function AttendingCoveragePanel({
       </header>
 
       <p className="attending-coverage-help">
-        EGS Night, Trauma Night, and SCC Night are combined as one ACS call assignment. Practice/elective, vascular, pediatrics, and NRV can be set separately for day and night on every date. Missing nights inherit day coverage, and missing Friday–Sunday entries carry over within that weekend.
+        ACS Night is shared by EGS, Trauma, and SCC. Untimed Practice, Vascular, Pediatrics and NRV entries retain day/night and weekend fallback. Explicitly timed entries cover only their supplied interval.
       </p>
+
+      <label>Coverage date<input type="date" value={coverageDate} onChange={event => { if (event.target.value) setCoverageDate(event.target.value); }} /></label>
+      <AttendingCoverageDetails key={coverageDate} state={state} date={coverageDate} />
 
       {isAdmin && (
         <form
@@ -2466,17 +2487,18 @@ function AttendingCoveragePanel({
           onSubmit={(event) => {
             event.preventDefault();
             const [providerType, providerId] = draft.providerKey.split(":", 2);
+            const input = {
+              date: draft.date, line: draft.line, shift: draft.shift, role: draft.role,
+              attendingId: providerType === "attending" ? providerId : undefined,
+              fellowResidentId: providerType === "fellow" ? providerId : undefined,
+              note: draft.note, startTime: draft.startTime || undefined, endTime: draft.endTime || undefined, endDate: draft.endDate || undefined
+            };
             void onMutate(
-              () => createAttendingCoverage(token, {
-                date: draft.date,
-                line: draft.line,
-                shift: draft.shift,
-                role: draft.role,
-                attendingId: providerType === "attending" ? providerId : undefined,
-                fellowResidentId: providerType === "fellow" ? providerId : undefined,
-                note: draft.note
-              }),
-              "Attending coverage added"
+              () => editingId ? updateAttendingCoverage(token, editingId, { ...input,
+                attendingId: input.attendingId ?? null, fellowResidentId: input.fellowResidentId ?? null,
+                startTime: input.startTime ?? null, endTime: input.endTime ?? null, endDate: input.endDate ?? null
+              }) : createAttendingCoverage(token, input),
+              editingId ? "Attending coverage updated" : "Attending coverage added"
             );
           }}
         >
@@ -2500,10 +2522,12 @@ function AttendingCoveragePanel({
                 setDraft({
                   ...draft,
                   line,
+                  role: line === "SecondCall" ? "backup" : draft.role,
                   providerKey,
                   date: draft.shift === "weekend" && isIndependentCallLine(line) ? getPracticeCallFriday(draft.date) : draft.date,
                   shift: line === "ACS" && draft.role === "primary"
                     ? "night"
+                    : ["EGS", "Trauma", "SCC"].includes(line) && draft.role === "primary" && draft.shift === "night" ? "day"
                     : draft.shift === "weekend" && !isIndependentCallLine(line) ? "day" : draft.shift
                 });
               }}
@@ -2515,10 +2539,10 @@ function AttendingCoveragePanel({
             Role
             <select
               value={draft.role}
-              disabled={draft.providerKey.startsWith("fellow:")}
+              disabled={draft.providerKey.startsWith("fellow:") || draft.line === "SecondCall"}
               onChange={(event) => {
                 const role = event.target.value as AttendingCoverageRole;
-                setDraft({ ...draft, role, shift: draft.line === "ACS" && role === "primary" ? "night" : draft.shift });
+                setDraft({ ...draft, role, shift: draft.line === "ACS" && role === "primary" ? "night" : ["EGS", "Trauma", "SCC"].includes(draft.line) && role === "primary" && draft.shift === "night" ? "day" : draft.shift });
               }}
             >
               <option value="primary">Primary</option>
@@ -2540,7 +2564,7 @@ function AttendingCoveragePanel({
               }}
             >
               <option value="day">Day</option>
-              <option value="night">Night</option>
+              <option value="night" disabled={draft.role === "primary" && ["EGS", "Trauma", "SCC"].includes(draft.line)}>Night</option>
               <option value="24h">24 hours</option>
               {isIndependentCallLine(draft.line) && (
                 <option value="weekend">
@@ -2572,11 +2596,16 @@ function AttendingCoveragePanel({
               )}
             </select>
           </label>
+          <label>Start time (New York)<input type="time" value={draft.startTime} onChange={event => setDraft({ ...draft, startTime: event.target.value })} /></label>
+          <label>End time (New York)<input type="time" value={draft.endTime} onChange={event => setDraft({ ...draft, endTime: event.target.value })} /></label>
+          <label>End date<input type="date" value={draft.endDate} onChange={event => setDraft({ ...draft, endDate: event.target.value })} /></label>
           <label>Note<input value={draft.note} placeholder="Optional" onChange={(event) => setDraft({ ...draft, note: event.target.value })} /></label>
-          <button className="primary-button" type="submit" disabled={!draft.date || !draft.providerKey}><Plus size={15} />Add</button>
+          <button className="primary-button" type="submit" disabled={!draft.date || !draft.providerKey}><Plus size={15} />{editingId ? "Save changes" : "Add"}</button>
+          {editingId && <button type="button" className="secondary-button" onClick={() => setEditingId(null)}>Cancel edit</button>}
         </form>
       )}
 
+      <details className="coverage-stored-records"><summary>Stored monthly assignments</summary>
       {grouped.length === 0 ? (
         <p className="call-week-empty">No attending coverage listed for this month.</p>
       ) : (
@@ -2599,9 +2628,17 @@ function AttendingCoveragePanel({
                       </span>
                       <strong>{clinician ? getResidentLastName(clinician.name) : "Unknown"}</strong>
                       {assignment.fellowResidentId && <span className="qgenda-badge">MI fellow</span>}
-                      <span>{assignment.role === "backup" ? "backup · " : ""}{formatCoverageShift(assignment.shift, assignment.line)}</span>
+                      <span>{assignment.role === "backup" ? "backup · " : ""}{formatCoverageShift(assignment.shift, assignment.line)}{assignment.startTime ? ` · ${assignment.startTime}–${assignment.endTime} (${assignment.endDate}, New York)` : ""}</span>
                       {assignment.source === "qgenda" && <span className="qgenda-badge">QGenda</span>}
                       {assignment.note && <span className="coverage-note">{assignment.note}</span>}
+                      {isAdmin && assignment.source !== "qgenda" && (
+                        <button type="button" className="secondary-button" onClick={() => {
+                          setEditingId(assignment.id);
+                          setDraft({ date: assignment.date, line: assignment.line, shift: assignment.shift, role: assignment.role,
+                            providerKey: assignment.attendingId ? `attending:${assignment.attendingId}` : `fellow:${assignment.fellowResidentId}`,
+                            note: assignment.note, startTime: assignment.startTime ?? "", endTime: assignment.endTime ?? "", endDate: assignment.endDate ?? "" });
+                        }}>Edit</button>
+                      )}
                       {isAdmin && assignment.source !== "qgenda" && (
                         <button
                           type="button"
@@ -2620,6 +2657,7 @@ function AttendingCoveragePanel({
           ))}
         </div>
       )}
+      </details>
     </section>
   );
 }
@@ -2665,44 +2703,6 @@ function isValidAttendingCoverageProviderKey(providerKey: string, line: Attendin
 
 function formatSyncTime(value: string): string {
   return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-function AttendingCallSummary({ state, date, entry }: { state: PlannerState; date: string; entry?: CoverageEntry }) {
-  const nightAttending = getAttendingNightScheduleForDate(state, date);
-  const legacyDayAttending = state.attendings.find((attending) => attending.id === entry?.dayAttendingId);
-  const attendingName = nightAttending?.displayName ?? (legacyDayAttending ? getResidentLastName(legacyDayAttending.name) : "Not listed");
-
-  return (
-    <div className="call-duty-line attending-call-duty">
-      <span className="call-duty-label">Dr.</span>
-      <strong>{attendingName}</strong>
-    </div>
-  );
-}
-
-function IndependentCallTeamDetails({ state, date }: { state: PlannerState; date: string }) {
-  return (
-    <div className="call-independent-team" aria-label="Practice, vascular, and pediatric attending call">
-      <span className="call-independent-team-heading">Full attending team</span>
-      {INDEPENDENT_CALL_LINES.map((line) => {
-        const resolved = resolveIndependentCallCoverage(state.attendingCoverageAssignments, line, date, "night");
-        const clinician = resolved?.assignment.attendingId
-          ? state.attendings.find((candidate) => candidate.id === resolved.assignment.attendingId)
-          : state.residents.find((candidate) => candidate.id === resolved?.assignment.fellowResidentId);
-        const label = INDEPENDENT_CALL_LABELS[line];
-        return (
-          <div key={line} className="call-duty-line call-independent-duty">
-            <span className="call-duty-label">{label}</span>
-            <strong className={clinician ? "" : "call-duty-empty"}>
-              {clinician ? getResidentLastName(clinician.name) : "Not listed"}
-            </strong>
-            {resolved?.inheritedFromDay && <span className="call-coverage-inherited">day coverage</span>}
-            {!resolved?.inheritedFromDay && resolved?.inheritedFromWeekend && <span className="call-coverage-inherited">weekend carryover</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 function ResidentProfileRequestPanel({
@@ -2931,14 +2931,13 @@ function CaseRow({
   ];
   const canAddResident =
     !isAddingResident &&
-    ((canEdit && !compactAssignments && assignedResidentIds.length === 1) ||
+    ((canEdit && !compactAssignments && assignedResidentIds.length > 0 && assignedResidentIds.length < 3) ||
       (canStudentSelfAssign &&
         currentResidentId !== undefined &&
         !assignedResidentIds.includes(currentResidentId) &&
-        assignedResidentIds.length < 2));
+        assignedResidentIds.length < 3));
   const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
     await onMutate(action, message);
-    setIsAddingResident(false);
   };
 
   return (
@@ -3029,7 +3028,6 @@ function ClinicView({
     clinic.assignments.length < Math.max(1, clinic.capacity);
   const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
     await onMutate(action, message);
-    setIsAddingResident(false);
   };
 
   return (
@@ -3139,102 +3137,20 @@ function PersonAssignmentPicker({
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
   onCancel: () => void;
 }) {
-  const [showStudents, setShowStudents] = useState(false);
-  const [manualStudentName, setManualStudentName] = useState("");
   selectedService = getAssignmentService(state, kind, targetId, selectedService);
-  const [searchName, setSearchName] = useState("");
-  const assignmentDate = getAssignmentDate(state, kind, targetId);
-  const residentChoices = orderAssignmentResidents(
-    state.residents.filter((resident) => {
-      if (selfAssignmentOnly) return resident.id === currentResidentId && resident.trainingLevel === "Student";
-      return (
-        resident.trainingLevel !== "Student" &&
-        isOperativeResident(resident) &&
-        !excludedResidentIds.includes(resident.id) &&
-        (kind === "clinic" || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
-      );
-    }),
-    selectedService,
-    assignmentDate,
-    currentResidentId
-  );
-  const students = state.residents
-    .filter((resident) => resident.trainingLevel === "Student" && !excludedResidentIds.includes(resident.id))
-    .sort((left, right) => comparePersonNames(left.name, right.name));
-
-  function assignResident(residentId: string) {
-    void onMutate(
-      () => createAssignment(token, { kind, targetId, residentId, locked: false }),
-      "Assignment saved"
-    );
-  }
-
-  function assignManualStudent(event: FormEvent) {
-    event.preventDefault();
-    const name = manualStudentName.trim();
-    if (!name) return;
-    void onMutate(
-      () => createAssignment(token, { kind, targetId, manualStudentName: name, locked: false }),
-      "Student assigned"
-    );
-  }
-
-  return (
-    <div className="person-assignment-picker" aria-label="Choose person">
-      {!selfAssignmentOnly && <button
-        type="button"
-        className={`person-choice student-choice${showStudents ? " active" : ""}`}
-        aria-expanded={showStudents}
-        onClick={() => setShowStudents((visible) => !visible)}
-      >
-        <strong>Student?</strong>
-        <span>Choose or enter a name</span>
-      </button>}
-      {!selfAssignmentOnly && showStudents && (
-        <div className="student-picker">
-          {students.length > 0 && (
-            <div className="person-choice-list" aria-label="Students">
-              {students.map((student) => (
-                <button key={student.id} type="button" className="person-choice" onClick={() => assignResident(student.id)}>
-                  <strong>{formatResidentName(student)}</strong>
-                  <span>Student</span>
-                </button>
-              ))}
-            </div>
-          )}
-          <form className="manual-student-form" onSubmit={assignManualStudent}>
-            <label>
-              Enter student name
-              <input
-                aria-label="Manual student name"
-                value={manualStudentName}
-                placeholder="First and last name"
-                onChange={(event) => setManualStudentName(event.target.value)}
-              />
-            </label>
-            <button type="submit" className="primary-button" disabled={!manualStudentName.trim()}>
-              <UserPlus size={15} />
-              Add
-            </button>
-          </form>
-        </div>
-      )}
-      <input type="search" aria-label="Search additional residents" placeholder="Search by name…" value={searchName} onChange={event => setSearchName(event.target.value)} />
-      <div className="person-choice-list" aria-label={selfAssignmentOnly ? "Add yourself" : "Residents"}>
-        {residentChoices.filter(resident => resident.name.toLowerCase().includes(searchName.toLowerCase())).map((resident) => {
-          const isCurrentResident = resident.id === currentResidentId;
-          const isCurrentTeam = isResidentOnService(resident, selectedService, assignmentDate);
-          return (
-            <button key={resident.id} type="button" className="person-choice" onClick={() => assignResident(resident.id)}>
-              <strong>{formatResidentName(resident)}</strong>
-              <span>{isCurrentResident ? "You" : isCurrentTeam ? `${selectedService} team` : resident.trainingLevel}</span>
-            </button>
-          );
-        })}
-      </div>
-      <button type="button" className="person-picker-cancel" onClick={onCancel}>Cancel</button>
-    </div>
-  );
+  if (selfAssignmentOnly) return <div className="person-assignment-picker">
+    <button type="button" className="primary-button" onClick={() => onMutate(async () => {
+      const result = await createAssignment(token, { kind, targetId, residentId: currentResidentId, locked: false });
+      onCancel(); return result;
+    }, "Assignment saved")}>Add yourself</button><button type="button" onClick={onCancel}>Cancel</button>
+  </div>;
+  const blockId = kind === "case" ? state.cases.find(item => item.id === targetId)?.blockId : undefined;
+  const assignment = state.assignments.find(item => item.kind === kind && item.targetId === targetId)
+    ?? state.assignments.find(item => item.kind === "block" && item.targetId === blockId);
+  return <AssignmentControl state={state} token={token} kind={kind} targetId={targetId} assignment={assignment}
+    scopeCaseId={assignment?.kind === "block" ? targetId : undefined} selectedService={selectedService}
+    currentResidentId={currentResidentId} excludedResidentIds={excludedResidentIds} disabled={false} claimable={false}
+    initialOpen initialAdding onDismiss={onCancel} onMutate={onMutate} />;
 }
 
 export function orderAssignmentResidents(
@@ -3273,6 +3189,7 @@ function AssignmentControl({
   quietEmpty = false,
   compact = false,
   scopeCaseId,
+  initialOpen = false, initialAdding = false, onDismiss,
   onMutate
 }: {
   state: PlannerState;
@@ -3293,6 +3210,7 @@ function AssignmentControl({
   quietEmpty?: boolean;
   compact?: boolean;
   scopeCaseId?: string;
+  initialOpen?: boolean; initialAdding?: boolean; onDismiss?: () => void;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
   selectedService = getAssignmentService(state, kind, targetId, selectedService);
@@ -3302,7 +3220,7 @@ function AssignmentControl({
   const residents = orderAssignmentResidents(
     sortResidentsForService(state.residents, selectedService, assignmentDate).filter(
       (resident) =>
-        isOperativeResident(resident) &&
+        (resident.trainingLevel === "Student" || isOperativeResident(resident)) &&
         (kind !== "block" || resident.trainingLevel !== "Student") &&
         (!excludedResidentIds.includes(resident.id) || resident.id === assignment?.residentId) &&
         (kind === "clinic" || resident.id === assignment?.residentId || !assignmentDate || isResidentAvailableForWork(state, resident, assignmentDate))
@@ -3311,6 +3229,10 @@ function AssignmentControl({
     assignmentDate,
     currentResidentId
   );
+  const targetBlockId = kind === "case" ? state.cases.find(item => item.id === targetId)?.blockId : undefined;
+  const assignedIds = new Set(state.assignments.filter(item => (item.kind === kind && item.targetId === targetId) || (kind === "case" && item.kind === "block" && item.targetId === targetBlockId)).map(item => item.residentId));
+  const capacity = kind === "clinic" ? Math.max(1, state.clinicSessions.find(item => item.id === targetId)?.capacity ?? 1) : 3;
+  const canAdd = kind !== "block" && assignedIds.size > 0 && assignedIds.size < capacity;
   const [claimResidentId, setClaimResidentId] = useState(residents[0]?.id ?? "");
 
   useEffect(() => {
@@ -3328,8 +3250,8 @@ function AssignmentControl({
   if (claimable && kind !== "clinic") {
     return (
       <div className="assign-control">
-        <ResidentPicker compact={compact} state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
-          value={claimResidentId} label={residentLabel(state, claimResidentId)}
+        <ResidentPicker initialOpen={initialOpen} initialAdding={initialAdding} onDismiss={onDismiss} compact={compact} state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
+          assignedPeople={[]} value={claimResidentId} label={residentLabel(state, claimResidentId)}
           onSelect={async (id, close) => { setClaimResidentId(id); close(); }} />
         <button
           title="Claim coverage"
@@ -3350,11 +3272,30 @@ function AssignmentControl({
 
   return (
     <div className="assign-control">
-      <ResidentPicker compact={compact} state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
+      <ResidentPicker initialOpen={initialOpen} initialAdding={initialAdding} onDismiss={onDismiss} compact={compact} state={state} kind={kind} targetId={targetId} residents={residents} service={selectedService} date={assignmentDate}
         value={assignment?.residentId} label={displayedAssignment ? residentLabel(state, displayedAssignment.residentId) : emptyLabel ?? "Unassigned"}
+        assignedPeople={[...assignedIds].map(id => state.residents.find(person => person.id === id)).filter((person): person is Resident => Boolean(person))}
+        onRemove={async (residentId, saved) => {
+          await onMutate(async () => { const result = await clearTargetAssignments(token, kind, targetId, residentId); saved(); return result; }, "Person unassigned");
+        }}
+        onClearAll={async saved => {
+          await onMutate(async () => { const result = await clearTargetAssignments(token, kind, targetId); saved(); return result; }, "All assignments cleared");
+        }}
+        onAdd={canAdd ? async (residentId, close) => {
+          if (assignedIds.has(residentId)) throw new Error("This person is already assigned.");
+          await onMutate(async () => { const result = await createAssignment(token, { kind, targetId, residentId, locked: false }); close(); return result; }, "Person added");
+        } : undefined}
+        onCreateStudent={kind !== "block" ? async (newStudent, adding, close) => {
+          await onMutate(async () => {
+            const result = adding || !assignment ? await createAssignment(token, { kind, targetId, newStudent, locked: false })
+              : await updateAssignment(token, assignment.id, { newStudent, ...(scopeCaseId ? { caseId: scopeCaseId } : {}) });
+            close(); return result;
+          }, "Student assigned");
+        } : undefined}
         className={isCovered ? "assigned" : quietEmpty ? "" : "unassigned"}
         emptyLabel={inheritedAssignment ? `Use block assignment · ${residentLabel(state, inheritedAssignment.residentId)}` : assignment ? "Clear assignment" : "Leave unassigned"}
         onSelect={async (residentId, close) => {
+          if (residentId && assignedIds.has(residentId) && residentId !== assignment?.residentId) throw new Error("This person is already assigned.");
           if (!residentId && !assignment) { close(); return; }
           await onMutate(async () => {
             const result = scopeCaseId && assignment ? await updateAssignment(token, assignment.id, { residentId, caseId: scopeCaseId })
@@ -4841,6 +4782,8 @@ function getTabTitle(tab: Tab): string {
       return "OR / Clinic 🔪";
     case "my":
       return "My Schedule ☁️";
+    case "case-preferences":
+      return "Case preferences";
     case "contacts":
       return "Contacts ☎️";
     case "residents":
@@ -5040,8 +4983,11 @@ function getStoredSession(): PlannerSession | undefined {
   const attendingId = localStorage.getItem("plannerAttendingId") ?? undefined;
   const canAddContacts = localStorage.getItem("plannerCanAddContacts") === "true";
   const canBuildCall = localStorage.getItem("plannerCanBuildCall") === "true";
+  const canUseSalzTrack = localStorage.getItem("plannerCanUseSalzTrack") === "true";
+  const storedPreferenceAccess = localStorage.getItem("plannerCasePreferencesAccess");
+  const casePreferencesAccess = storedPreferenceAccess === "view" || storedPreferenceAccess === "edit" ? storedPreferenceAccess : "none";
   return token && username && displayName && passwordUpdatedAt && isRole(role)
-    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, canAddContacts, canBuildCall, mustChangePassword }
+    ? { token, role, username, displayName, attendingId, passwordUpdatedAt, servicePrivileges, canAddContacts, canBuildCall, canUseSalzTrack, casePreferencesAccess, mustChangePassword }
     : undefined;
 }
 
@@ -5056,6 +5002,8 @@ function storeSession(session: PlannerSession) {
   localStorage.setItem("plannerServicePrivileges", JSON.stringify(session.servicePrivileges));
   localStorage.setItem("plannerCanAddContacts", String(session.canAddContacts));
   localStorage.setItem("plannerCanBuildCall", String(session.canBuildCall));
+  localStorage.setItem("plannerCanUseSalzTrack", String(session.canUseSalzTrack === true));
+  localStorage.setItem("plannerCasePreferencesAccess", session.casePreferencesAccess ?? "none");
   localStorage.setItem("plannerMustChangePassword", String(session.mustChangePassword));
   localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
 }
@@ -5161,5 +5109,7 @@ function clearStoredSession() {
   localStorage.removeItem("plannerMustChangePassword");
   localStorage.removeItem("plannerCanAddContacts");
   localStorage.removeItem("plannerCanBuildCall");
+  localStorage.removeItem("plannerCanUseSalzTrack");
+  localStorage.removeItem("plannerCasePreferencesAccess");
   localStorage.removeItem("plannerTemporaryPasswordExpiresAt");
 }

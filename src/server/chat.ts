@@ -1,3 +1,4 @@
+import { COVERAGE_ALIASES, COVERAGE_RULES, normalizeCoverageLine, coverageBoundaries } from "../shared/attendingCoverage";
 import { calendarEventOccursOn } from "../shared/calendarEvents";
 import { buildWeekSchedule } from "../shared/scheduler";
 import {
@@ -1063,7 +1064,7 @@ Residency operating model:
 - Weekend resident call always has a chief/senior, mid-level, and intern once published. Friday is 5 p.m.–6 a.m. Saturday; Saturday is 6 a.m.–6 a.m. Sunday; Sunday is 6 a.m.–5 p.m. Night float covers 5 p.m. Sunday through Friday morning, with membership from NFloat and SCC Night rotations.
 - Friday and Saturday call create protected time after the shift: Friday callers are post-call Saturday and Saturday callers are post-call Sunday. Do not apply this planner post-call rule to Sunday day call or ordinary night-float shifts.
 - A missing future weekend resident role means the call schedule is not yet published, not that the role is an ordinary open coverage opportunity.
-- Resident call is shared across General Surgery services. Attending coverage separately tracks EGS, Trauma, SCC, consolidated ACS night, backup, Practice (also called Elective), Vascular, Pediatrics, and NRV. Practice, Vascular, and Pediatrics belong on the Call tab, not the rounding calendar; NRV belongs there too as the separate New River Valley/Christiansburg surgeon call line. They are independent call lines and every date, including Friday-Sunday, may have separate day and night surgeons. A missing night inherits that date's effective day surgeon. A missing Friday, Saturday, or Sunday inherits the nearest configured day within that same weekend. Friday-anchored weekend rows are backward-compatible shorthand through Monday 6 AM; NRV begins Friday morning, while the other independent lines begin Friday at 5 PM. These surgeons also appear in muted form on the calendar and in the expanded Call-day team.
+- Resident call is shared across General Surgery services. Attending coverage separately tracks EGS, Trauma, SCC, consolidated ACS night, dedicated SecondCall (2nd Call Backup), Breast, Foregut, FMH (CFMH/Franklin Memorial), RBH (CRBH/Rockbridge), Practice (also called Elective/Bariatric), Vascular (CCVS & AC), Pediatrics, and NRV. Practice, Vascular, and Pediatrics belong on the Call tab, not the rounding calendar; NRV belongs there too as the separate New River Valley/Christiansburg surgeon call line. They are independent call lines and every date, including Friday-Sunday, may have separate day and night surgeons. An untimed missing night inherits that date's effective day surgeon; explicitly timed day rows never create night coverage. A missing Friday, Saturday, or Sunday inherits the nearest configured day within that same weekend. Friday-anchored weekend rows are backward-compatible shorthand through Monday 6 AM; NRV begins Friday morning, while the other independent lines begin Friday at 5 PM. These surgeons also appear in muted form on the calendar and in the expanded Call-day team.
 - A profile designated minimally-invasive-fellow is on Davies all year and covers OR cases like a resident, but is not in the resident call pool. The fellow may instead cover primary Practice weekend call as attending coverage; that single shift runs Friday 5 p.m. through Monday 6 a.m.
 - "Endo" can mean two different things: Endoscopy is a resident rotation on the block schedule, while attendings have dated endoscopy blocks on their own schedules. If asked who is "on Endo" for a block, answer only from resident Endoscopy rotation assignments for that block. Do not answer with attendings who have endoscopy blocks, the night team, or a weekend call team.
 - The resident assigned to Endoscopy for a rotation block will often cover attending endoscopy blocks during that block. This is not a guarantee for every session: simultaneous endoscopy blocks can exceed one resident's capacity, and some blocks may have no Endoscopy resident. For a specific session, check dated assignments and conflicts; never invent or substitute a call/night resident.
@@ -2280,7 +2281,7 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
       entry.date <= range.end
   );
   const requestedCoverageLineInput = readOptionalString(args.coverage_line)?.toLowerCase();
-  const requestedCoverageLine = requestedCoverageLineInput === "elective" ? "practice" : requestedCoverageLineInput;
+  const requestedCoverageLine = normalizeCoverageLine(requestedCoverageLineInput)?.toLowerCase() ?? requestedCoverageLineInput;
   const attendingCoverage = context.state.attendingCoverageAssignments.filter(
     (assignment) =>
       assignment.date >= range.start &&
@@ -2340,6 +2341,8 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
           role: assignment.role,
           attending: attendingCoverageProviderName(context.state, assignment),
           source: assignment.source,
+          start_time: assignment.startTime, end_time: assignment.endTime, end_date: assignment.endDate,
+          ...coverageBoundaries(assignment),
           note: assignment.note || undefined
         }));
       const independentCall = getEffectiveIndependentCallCoverage(context.state, date, requestedCoverageLine).map((coverage) => ({
@@ -2410,7 +2413,8 @@ function getCallSchedule(context: AssistantContext, args: Record<string, unknown
     },
     attending_coverage_model: "Separate schedule with one surgery attending each night; not a resident-style team",
     independent_attending_coverage_model: "Practice (Elective), Vascular, Pediatrics, and NRV may each be set separately for day and night on every date, including Friday-Sunday. A missing night inherits that date's effective day surgeon; a missing weekend date inherits the nearest configured day in that weekend. Friday-anchored weekend rows remain shorthand through Monday 6 AM; NRV starts Friday morning and the other independent lines start Friday at 5 PM.",
-    attending_coverage_lines: ["EGS", "Trauma", "SCC", "ACS", "Practice (Elective)", "Vascular", "Pediatrics", "NRV"],
+    attending_coverage_lines: ["EGS", "Trauma", "SCC", "ACS", "Practice (Elective)", "Vascular", "Pediatrics", "NRV", "SecondCall", "Breast", "Foregut", "FMH", "RBH"],
+    attending_coverage_shift_rules: COVERAGE_RULES,
     range,
     attending_filter: requestedAttending,
     resident_filter: requestedResident,
@@ -2785,7 +2789,7 @@ const SCHEDULE_TOOLS = [
         properties: {
           ...dateProperties,
           attending_name: { type: ["string", "null"], description: "Attending name filter, or null." },
-          coverage_line: { type: ["string", "null"], enum: ["EGS", "Trauma", "SCC", "ACS", "Practice", "Elective", "Vascular", "Pediatrics", "NRV", null], description: "Attending coverage line filter; Elective is an alias for Practice." },
+          coverage_line: { type: ["string", "null"], enum: ["EGS", "Trauma", "SCC", "ACS", "Practice", "Elective", "Vascular", "Pediatrics", "NRV", "SecondCall", "Breast", "Foregut", "FMH", "RBH", ...Object.keys(COVERAGE_ALIASES), null], description: "Attending coverage line filter; source labels normalize to canonical call lines." },
           resident_name: { type: ["string", "null"], description: "Resident name filter, or null." }
         },
         required: ["start_date", "end_date", "attending_name", "coverage_line", "resident_name"],

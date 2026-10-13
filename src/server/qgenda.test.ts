@@ -140,3 +140,24 @@ describe("QGenda published schedule merge", () => {
     expect(result.state.attendings.find((attending) => attending.id === "att_nussbaum")).not.toBe(originalAttending);
   });
 });
+
+it("normalizes configured source aliases and preserves supplied overnight boundaries without inventing OR affiliations", () => {
+  const previousTasks = process.env.QGENDA_PUBLIC_TASK_MAP_JSON;
+  const previousStaff = process.env.QGENDA_PUBLIC_STAFF_MAP_JSON;
+  try {
+    process.env.QGENDA_PUBLIC_TASK_MAP_JSON = JSON.stringify({ source_night: { line: "Trauma Night", shift: "night", role: "primary" }, source_peds: { line: "Ped Surg", shift: "night", role: "primary" } });
+    process.env.QGENDA_PUBLIC_STAFF_MAP_JSON = JSON.stringify({ source_provider: "Bass" });
+    const result = mergePublishedSchedule(createInitialState(), [
+      { scheduleEntryKey: "source_n", date: "2026-10-12", taskKey: "source_night", staffMemberKey: "source_provider" },
+      { scheduleEntryKey: "source_p", date: "2026-10-12", taskKey: "source_peds", staffMemberKey: "source_provider", startTime: "17:00", endTime: "07:00", endDate: "2026-10-13" }
+    ], "2026-10-12", "2026-10-12");
+    expect(result.state.attendingCoverageAssignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ line: "ACS", shift: "night" }),
+      expect.objectContaining({ line: "Pediatrics", startTime: "17:00", endDate: "2026-10-13", endTime: "07:00" })
+    ]));
+    expect(result.state.attendings.find(row => row.qgendaStaffId === "source_provider")?.service).toBe("");
+  } finally {
+    if (previousTasks === undefined) delete process.env.QGENDA_PUBLIC_TASK_MAP_JSON; else process.env.QGENDA_PUBLIC_TASK_MAP_JSON = previousTasks;
+    if (previousStaff === undefined) delete process.env.QGENDA_PUBLIC_STAFF_MAP_JSON; else process.env.QGENDA_PUBLIC_STAFF_MAP_JSON = previousStaff;
+  }
+});

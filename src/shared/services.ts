@@ -25,7 +25,7 @@ export function servicesMatch(candidate: string | undefined, selectedService: st
 }
 
 export function isResidentOnService(
-  resident: Pick<Resident, "serviceTags" | "rotationSchedule">,
+  resident: Pick<Resident, "serviceTags" | "rotationSchedule" | "studentPlacements">,
   service: string,
   date?: string
 ): boolean {

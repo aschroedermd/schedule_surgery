@@ -1,3 +1,4 @@
+import { coverageCatalog } from "../shared/attendingCoverage";
 import { AGENT_IMPORT_GUIDE } from "./agentImportGuide";
 
 export function getAgentGuideDocument() {
@@ -32,6 +33,15 @@ export function getAgentGuideDocument() {
       { method: "POST", path: "/api/entities/cases", purpose: "Add a case to a block when the account can edit that service." },
       { method: "POST", path: "/api/assignments", purpose: "Assign a resident to a case or block when the account can edit that service." }
     ],
+    attendingCoverage: {
+      ...coverageCatalog(),
+      discovery: "GET /api/attending-coverage/categories",
+      roster: "Read GET /api/state attendings (name, aliases and id). Resolve all supplied names against live records; do not invent full names or OR services. Admin POST /api/entities/attendings creates a missing roster record with id/name and optional coverageLines/priority; omit service for call-only records. No login account is required.",
+      credentials: "Viewer X-API-Key for ordinary reads; admin X-API-Key only for authorized POST/PATCH/DELETE. Send X-State-Version from latest state on each write.",
+      reads: "Ranged GET /api/attending-coverage returns stored assignments plus all-line effectiveCoverage, source, inherited flags, explicit local and UTC boundaries, unassigned status and overnight carryIn.",
+      retries: "Inspect existing date/line/shift/role before writing. Same slot/provider/timing/note POST retries return 200 unchanged; conflicts return 409. Stable id is optional. After every write or timeout, use a fresh ranged GET before retrying. On version conflicts refetch and compare first. QGenda-owned slots cannot be manually changed or duplicated, including conflicts between SecondCall and legacy ACS backup: change in QGenda, then sync.",
+      example: { date: "2026-10-12", line: "Pediatrics", shift: "night", role: "primary", attendingId: "<resolved Bass id>", startTime: "17:00", endTime: "07:00", endDate: "2026-10-13" }
+    },
     scheduleModel: {
       residentCall: "Generic 'who is on call?' usually means the Friday-Sunday resident surgery team: senior/chief, mid-level, and intern. These are call coverageEntries with callPosition; SCC/ICU call may be separate.",
       attendingCall: "Generic 'attending on call' usually means ACS. ACS is the consolidated EGS/Trauma/SCC night line; separate day lines also exist. Practice attending or Berry (sometimes said Barry), Davies, or Fogel attending means the Practice line. If Practice coverage is absent, report it as unscheduled rather than using ACS.",
