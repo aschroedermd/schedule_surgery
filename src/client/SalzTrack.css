@@ -14,3 +14,24 @@
 @keyframes salztrack-ping { 0% { transform:scale(.8); opacity:.8; } 100% { transform:scale(2); opacity:0; } }
 @media(max-width:600px) { .salztrack-header { padding:16px; gap:10px; }.salztrack-brand { font-size:21px; }.salztrack-brand img { width:29px; height:37px; }.salztrack-signal { font-size:11px; gap:6px; }.salztrack-signal-bar { width:35px; }.salztrack-body { padding:25px 14px; }.salztrack-result-bar { padding:13px; }.salztrack-result-bar > span { font-size:9px; letter-spacing:.8px; }.salztrack-location { padding:16px 12px; gap:9px; }.salztrack-location h2 { font-size:15px; }.salztrack-location > span { display:none; }.salztrack-keypad-card { padding:22px 24px 5px; }.salztrack-map-caption { bottom:8px; left:8px; font-size:7px; } }
 @media(prefers-reduced-motion:reduce) { .salztrack-pulse { animation:none; opacity:.4; }.salztrack-pulse-delayed { display:none; } }
+
+.salztrack-code-label { color:#b3cac0; font-size:12px; margin-bottom:10px; }
+.salztrack-code-display { height:52px; display:flex; align-items:center; justify-content:center; gap:22px; border:1px solid #598571; border-radius:12px; background:#091f18; }
+.salztrack-code-display span { width:12px; height:12px; border:1px solid #598571; border-radius:50%; }
+.salztrack-code-display span.filled { background:#87ffc4; border-color:#87ffc4; }
+.salztrack-live-map { height:clamp(320px,62dvh,650px); width:100%; color:#15372a; background:#dfe9df; }
+.salztrack-live-map-wrap { isolation:isolate; }
+.salztrack-live-map .leaflet-control-attribution { font-size:10px; }
+.salztrack-live-marker { position:absolute; transition:transform 400ms linear; }
+.salztrack-live-marker.salztrack-dragging { transition:none; }
+.salztrack-recenter { position:absolute; right:12px; top:12px; z-index:500; display:flex; align-items:center; gap:7px; border:1px solid #b4dbc5; border-radius:10px; padding:10px 12px; color:#123c2b; background:#f2fff8; box-shadow:0 2px 10px #0002; font-size:12px!important; }
+.salztrack-live-map-wrap .salztrack-map-caption { z-index:500; bottom:25px; pointer-events:none; }
+.salztrack-editor { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:18px 20px; border-bottom:1px solid #ffffff18; }
+.salztrack-editor h2 { margin:0 0 8px; font-size:19px; }.salztrack-editor p { color:#b3cac0; font-size:13px; max-width:420px; margin:0 0 12px; }
+.salztrack-drop { display:flex; align-items:center; gap:7px; color:#153e2c; background:#87ffc4; border:0; border-radius:10px; padding:10px 12px; font-size:12px!important; }.salztrack-drop[aria-pressed=true] { background:#fae289; }
+.salztrack-dpad { display:grid; grid-template-columns:42px 42px 42px; grid-template-rows:42px 42px 42px; gap:5px; flex-shrink:0; }.salztrack-dpad button { touch-action:none; user-select:none; display:flex; align-items:center; justify-content:center; background:#315744; color:#eafff3; border:1px solid #ffffff30; border-radius:9px; }.salztrack-dpad button:active { background:#568b69; }.salztrack-steer-north { grid-area:1/2; }.salztrack-steer-west { grid-area:2/1; }.salztrack-steer-east { grid-area:2/3; }.salztrack-steer-south { grid-area:3/2; }.salztrack-dpad > span { grid-area:2/2; display:flex; align-items:center; justify-content:center; color:#87ffc4; font-weight:800; }
+.salztrack-map-message { margin:0; padding:0 20px 15px; color:#dcebb4; font-size:12px; }
+@media(max-width:600px) { .salztrack-editor { padding:14px 12px; gap:12px; }.salztrack-editor p { font-size:12px; }.salztrack-recenter { padding:9px; font-size:11px!important; }.salztrack-dpad { grid-template-columns:38px 38px 38px; grid-template-rows:38px 38px 38px; gap:3px; } }
+@media(prefers-reduced-motion:reduce) { .salztrack-live-marker { transition:none; } }
+
+.salztrack-map-loading { min-height:320px; display:flex; align-items:center; justify-content:center; color:#b3cac0; }

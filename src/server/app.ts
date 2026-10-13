@@ -2849,7 +2849,7 @@ function securityHeaders(_req: express.Request, res: express.Response, next: exp
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    "img-src 'self' data: https://tile.openstreetmap.org",
     "font-src 'self' data:",
     "media-src 'self' blob:",
     "connect-src 'self'",

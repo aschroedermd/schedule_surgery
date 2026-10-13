@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { SalzTrack } from "./SalzTrack";
 import { locateSalz } from "./api";
 vi.mock("./api", () => ({ locateSalz: vi.fn() }));
+vi.mock("./SalzLiveMap", () => ({ SalzLiveMap: ({ location }: { location: { name: string } }) => <div className="salztrack-live-map">{location.name}</div> }));
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(async () => {
@@ -23,24 +24,25 @@ describe("SalzTrack keypad", () => {
   it("requires four digits, supports corrections, and changes frequencies", async () => {
     const submit = container.querySelector<HTMLButtonElement>("button[type=submit]")!;
     expect(submit.disabled).toBe(true);
+    expect(container.querySelector("input, textarea, [contenteditable=true]")).toBeNull();
     await enter3320();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Delete last digit"]')!.click());
     expect(submit.disabled).toBe(true);
     await click("0");
-    vi.mocked(locateSalz).mockResolvedValue({ name: "Memorial Hospital", detail: "Main hospital", quip: "Found him.", x: 50.65, y: 36.1, map: "data:image/jpeg;base64,abc", wideMarker: false });
+    vi.mocked(locateSalz).mockResolvedValue({ name: "Memorial Hospital", detail: "Main hospital", lat: 37.25, lng: -79.94, mode: "preset", revision: 0, updatedAt: "now" });
     await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(locateSalz).toHaveBeenCalledWith("token", "3320");
-    expect(container.querySelector(".salztrack-marker")?.getAttribute("style")).toContain("50.65%");
+    expect(container.querySelector(".salztrack-live-map")?.textContent).toBe("Memorial Hospital");
     await click("New frequency");
-    expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
+    expect(container.querySelector(".salztrack-code-display")?.getAttribute("aria-label")).toBe("0 of 4 passcode digits entered");
   });
   it("allows retry after an invalid code without displaying a map", async () => {
     vi.mocked(locateSalz).mockRejectedValue(new Error("No Salz signal"));
     await enter3320();
     await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    expect(container.querySelector('[role="status"]')!.textContent).toBe("No Salz signal");
+    expect(container.querySelector(".salztrack-feedback")!.textContent).toBe("No Salz signal");
     expect(container.querySelector(".salztrack-map")).toBeNull();
-    expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
+    expect(container.querySelector(".salztrack-code-display")?.getAttribute("aria-label")).toBe("0 of 4 passcode digits entered");
   });
 });
 

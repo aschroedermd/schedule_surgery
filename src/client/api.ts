@@ -917,3 +917,16 @@ export function locateSalz(token: string, code: string) {
     token, method: "POST", body: JSON.stringify({ code })
   });
 }
+
+
+export function fetchSalzPosition(token: string, signal?: AbortSignal) {
+  return request<import("../shared/salzTrack").SalzPosition>("/api/salztrack/position", { token, signal });
+}
+export function updateSalzPosition(token: string, editorToken: string, change: import("../shared/salzTrack").SalzPositionChange) {
+  return request<import("../shared/salzTrack").SalzPosition>("/api/salztrack/position", {
+    token, method: "PATCH", headers: { "X-SalzTrack-Editor": editorToken }, body: JSON.stringify(change)
+  });
+}
+export function closeSalzEditor(token: string, editorToken: string) {
+  return fetch("/api/salztrack/editor", { method: "DELETE", headers: { Authorization: `Bearer ${token}`, "X-SalzTrack-Editor": editorToken } });
+}
