@@ -72,6 +72,18 @@ export class SupportConversations {
   snapshot(id: string) {
     return this.transact(async () => { const live = await this.get(id); await this.expire(live); return this.view(live); });
   }
+  clear(id: string, revision: number, actor: string) {
+    return this.transact(async () => {
+      const live = await this.get(id);
+      if (live.pending) throw new SupportError(409, "Wait for the current response to finish before clearing chat");
+      if (revision !== live.data.revision) throw new SupportError(409, "The conversation changed. Please retry with the latest history.");
+      const previous = live.data;
+      live.data = { ...previous, messages: [], revision: previous.revision + 1,
+        audit: [...previous.audit, { at: new Date(this.now()).toISOString(), event: "clear", actor }] };
+      try { await this.save(live); } catch (error) { live.data = previous; throw error; }
+      return this.view(live);
+    });
+  }
   presence(id: string, tab: string, active: boolean, username: string, displayName: string, serviceLine?: string) {
     return this.transact(async () => {
       const live = await this.get(id);
@@ -216,6 +228,10 @@ export function supportRouter(conversations: SupportConversations, users: UserSt
     return value;
   };
   router.get("/conversation", handle(async req => conversations.snapshot(await account(req))));
+  router.delete("/conversation", handle(async req => {
+    if (!Number.isSafeInteger(req.body.revision) || req.body.revision < 0) throw new SupportError(400, "Invalid conversation revision");
+    return conversations.clear(await account(req), req.body.revision, req.user!.username);
+  }));
   router.post("/presence", handle(async req => conversations.presence(await account(req), token(req.body.tabId), req.body.active === true, req.user!.username, req.user!.displayName || req.user!.username, typeof req.body.serviceLine === "string" ? req.body.serviceLine.slice(0, 100) : undefined)));
   router.use("/admin", requireSessionAdmin);
   router.get("/admin", handle(async () => conversations.list()));

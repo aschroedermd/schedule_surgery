@@ -15,6 +15,19 @@ beforeEach(async () => {
 afterEach(async () => { await fs.rm(directory, { recursive: true, force: true }); });
 
 describe("support ownership and history", () => {
+  it("persists cleared history, isolates accounts, and rejects stale or busy clears", async () => {
+    const turn = await store.begin("account-one", 0, "message-one", "Old question");
+    await expect(store.clear("account-one", 1, "resident")).rejects.toMatchObject({ status: 409 });
+    await store.complete("account-one", turn.requestId, { content: "Old answer", responder: "ai" });
+    await store.begin("another-account", 0, "other-message", "Other user's question");
+    await expect(store.clear("account-one", 0, "resident")).rejects.toMatchObject({ status: 409 });
+    expect(await store.clear("account-one", 2, "resident")).toMatchObject({ messages: [], revision: 3, busy: false });
+    expect((await new SupportConversations(directory).snapshot("account-one")).messages).toEqual([]);
+    expect((await store.snapshot("another-account")).messages).toHaveLength(1);
+    const fresh = await store.begin("account-one", 3, "message-two", "Fresh question");
+    expect(fresh.messages).toEqual([{ role: "user", content: "Fresh question" }]);
+  });
+
   it("preserves both human and AI messages on disk while clearing live ownership on restart", async () => {
     await store.claim("account-one", "admin", "lease-one");
     const human = await store.begin("account-one", 0, "message-one", "Question");

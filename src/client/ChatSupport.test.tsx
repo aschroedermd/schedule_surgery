@@ -9,7 +9,7 @@ import type { SupportConversation } from "../shared/support";
 vi.mock("./api", async importOriginal => ({
   ...await importOriginal<typeof import("./api")>(),
   fetchChatQuota: vi.fn(), fetchVoiceQuota: vi.fn(), updateSupportPresence: vi.fn(),
-  fetchSupportConversation: vi.fn(), streamChatMessage: vi.fn(), synthesizeChatSpeech: vi.fn()
+  fetchSupportConversation: vi.fn(), clearSupportConversation: vi.fn(), streamChatMessage: vi.fn(), synthesizeChatSpeech: vi.fn()
 }));
 let root: Root;
 let container: HTMLDivElement;
@@ -21,6 +21,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
   snapshot = { id: "account-one", username: "resident", displayName: "Resident", messages: [], revision: 0, humanJoined: false, busy: false, active: true };
   vi.mocked(api.fetchChatQuota).mockResolvedValue(quota);
   vi.mocked(api.fetchVoiceQuota).mockResolvedValue({ used: 0, remaining: 12, limit: 12, unlimited: false });
@@ -33,6 +34,70 @@ afterEach(async () => {
 });
 
 describe("quiet support handoff in chat", () => {
+  it("clears saved history and starts the next turn with fresh context", async () => {
+    snapshot = { ...snapshot, revision: 2, messages: [
+      { id: "old-user", role: "user", content: "Old question", createdAt: new Date().toISOString() },
+      { id: "old-reply", role: "assistant", content: "Old answer", createdAt: new Date().toISOString() }
+    ] };
+    vi.mocked(api.clearSupportConversation).mockImplementationOnce(async () => {
+      snapshot = { ...snapshot, revision: 3, messages: [] };
+      return snapshot;
+    });
+    await act(async () => root.render(<ChatTab {...props} />));
+    await act(async () => container.querySelector<HTMLButtonElement>(".chat-clear-button")!.click());
+    expect(api.clearSupportConversation).toHaveBeenCalledWith(props.token, 2);
+    expect(container.textContent).not.toContain("Old question");
+    expect(container.textContent).not.toContain("Old answer");
+    expect(container.textContent).toContain("Hi Resident, how can I help?");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(container.textContent).not.toContain("Old answer");
+    vi.mocked(api.streamChatMessage).mockImplementationOnce(async (_token, messages, _service, _handlers, _signal, _voice, _preset, turn) => {
+      expect(messages).toEqual([{ role: "user", content: "Fresh question" }]);
+      expect(turn).toMatchObject({ revision: 3, content: "Fresh question" });
+      return { ...quota, message: "Fresh answer", model: "test", checkedAt: "now", dataUpdatedAt: "now", stateVersion: 1, lookups: [] };
+    });
+    const input = container.querySelector<HTMLTextAreaElement>(".chat-composer textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "Fresh question");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { container.querySelector(".chat-composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(api.streamChatMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the conversation when clearing fails and disables clearing for busy conversations", async () => {
+    snapshot = { ...snapshot, revision: 1, messages: [
+      { id: "old-user", role: "user", content: "Saved question", createdAt: new Date().toISOString() }
+    ] };
+    vi.mocked(api.clearSupportConversation).mockRejectedValueOnce(new Error("Unavailable"));
+    await act(async () => root.render(<ChatTab {...props} />));
+    await act(async () => container.querySelector<HTMLButtonElement>(".chat-clear-button")!.click());
+    expect(container.textContent).toContain("Saved question");
+    expect(container.textContent).toContain("Chat couldn't be cleared");
+    snapshot = { ...snapshot, busy: true };
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(container.querySelector<HTMLButtonElement>(".chat-clear-button")!.disabled).toBe(true);
+  });
+
+  it("ignores an older presence response arriving after chat is cleared", async () => {
+    snapshot = { ...snapshot, revision: 1, messages: [
+      { id: "old-user", role: "user", content: "Old question", createdAt: new Date().toISOString() }
+    ] };
+    await act(async () => root.render(<ChatTab {...props} />));
+    const oldSnapshot = snapshot;
+    let resolvePresence!: (value: SupportConversation) => void;
+    vi.mocked(api.updateSupportPresence).mockImplementationOnce(() => new Promise(resolve => { resolvePresence = resolve; }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    vi.mocked(api.clearSupportConversation).mockImplementationOnce(async () => {
+      snapshot = { ...snapshot, revision: 2, messages: [] };
+      return snapshot;
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>(".chat-clear-button")!.click());
+    await act(async () => resolvePresence(oldSnapshot));
+    expect(container.textContent).not.toContain("Old question");
+    expect(container.textContent).toContain("Hi Resident, how can I help?");
+  });
+
   it.each(["human", "ai"] as const)("keeps randomized waiting messages for the %s response path", async responder => {
     snapshot = { ...snapshot, humanJoined: responder === "human" };
     let handlers!: Parameters<typeof api.streamChatMessage>[3];

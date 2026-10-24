@@ -55,6 +55,19 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await fs.rm(directory, { recursive: true, force: true }); });
 
 describe("private support API and streamed handoff", () => {
+  it("authenticates clear requests and clears only the signed-in account", async () => {
+    await send("Old question", 0, "message-one");
+    const other = await conversations.begin("another-account", 0, "other-message", "Keep this question");
+    await conversations.complete("another-account", other.requestId, { content: "Keep this answer", responder: "ai" });
+    await request(app).delete("/api/chat/support/conversation").send({ revision: 2 }).expect(401);
+    await request(app).delete("/api/chat/support/conversation").set("authorization", auth(resident)).send({}).expect(400);
+    await request(app).delete("/api/chat/support/conversation").set("authorization", auth(resident)).send({ revision: 0 }).expect(409);
+    const cleared = await request(app).delete("/api/chat/support/conversation").set("authorization", auth(resident))
+      .send({ revision: 2, id: "another-account" }).expect(200);
+    expect(cleared.body).toMatchObject({ id: accountId, messages: [], revision: 3 });
+    expect((await conversations.snapshot("another-account")).messages).toHaveLength(2);
+  });
+
   it("protects the dashboard from ordinary users, unauthenticated requests, and admin API keys", async () => {
     await request(app).get("/api/chat/support/admin").expect(401);
     await request(app).get("/api/chat/support/admin").set("authorization", auth(resident)).expect(403);

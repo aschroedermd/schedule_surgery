@@ -892,6 +892,9 @@ async function readJson<T>(response: Response, url: string): Promise<T> {
 export function fetchSupportConversation(token: string) {
   return request<SupportConversation>("/api/chat/support/conversation", { token });
 }
+export function clearSupportConversation(token: string, revision: number) {
+  return request<SupportConversation>("/api/chat/support/conversation", { token, method: "DELETE", body: JSON.stringify({ revision }) });
+}
 export function updateSupportPresence(token: string, tabId: string, active: boolean, serviceLine?: string) {
   return request<SupportConversation>("/api/chat/support/presence", { token, method: "POST", body: JSON.stringify({ tabId, active, serviceLine }) });
 }

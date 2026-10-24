@@ -16,6 +16,7 @@ import {
   Square,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
   UserRound,
   Volume2,
   VolumeX,
@@ -36,6 +37,7 @@ import {
   cancelSupportAction,
   fetchChatQuota,
   fetchSupportConversation,
+  clearSupportConversation,
   updateSupportPresence,
   fetchChatModelSettings,
   fetchVoiceQuota,
@@ -161,6 +163,8 @@ export function ChatTab({
   ]);
   const [conversationReady, setConversationReady] = useState(false);
   const [remoteBusy, setRemoteBusy] = useState(false);
+  const [clearingChat, setClearingChat] = useState(false);
+  const clearingChatRef = useRef(false);
   const conversationRevisionRef = useRef(0);
   const conversationReadyRef = useRef(false);
   const presenceTabRef = useRef(createChatMessageId());
@@ -209,7 +213,7 @@ export function ChatTab({
 
   const isAnswering = status === "thinking" || status === "streaming";
   const isVoiceBusy = status === "requesting-mic" || status === "recording" || status === "transcribing";
-  const isBusy = status !== "idle" || !conversationReady || remoteBusy;
+  const isBusy = status !== "idle" || !conversationReady || remoteBusy || clearingChat;
   const quotaExhausted = quota?.remaining === 0 && !quota.unlimited;
   const voiceQuotaExhausted = voiceQuota?.remaining === 0 && !voiceQuota.unlimited;
 
@@ -222,7 +226,7 @@ export function ChatTab({
       try {
         const snapshot = await updateSupportPresence(token, presenceTabRef.current, active && document.visibilityState === "visible", serviceLine);
         if (cancelled) return;
-        if (!responseAbortRef.current) {
+        if (!responseAbortRef.current && !clearingChatRef.current && snapshot.revision >= conversationRevisionRef.current) {
           const historyChanged = !conversationReadyRef.current || conversationRevisionRef.current !== snapshot.revision;
           conversationRevisionRef.current = snapshot.revision;
           setRemoteBusy(snapshot.busy);
@@ -398,6 +402,34 @@ export function ChatTab({
     await sendMessage(draft);
   }
 
+  async function clearChat() {
+    if (isBusy || clearingChatRef.current || speechStatus === "generating") return;
+    clearingChatRef.current = true;
+    setClearingChat(true);
+    setError(undefined);
+    try {
+      const snapshot = await clearSupportConversation(token, conversationRevisionRef.current);
+      conversationRevisionRef.current = snapshot.revision;
+      setRemoteBusy(snapshot.busy);
+      stopSpeech();
+      setMessages([{ id: createChatMessageId(), role: "assistant", content: welcomeMessage,
+        createdAt: new Date().toISOString(), kind: "welcome" }]);
+      setDraft("");
+      setVoiceTranscriptReady(false);
+      setLastFailedQuestion(undefined);
+      setResponseStatusMessage(undefined);
+      setChatSettingsOpen(false);
+      lookupCheckVersionRef.current.clear();
+      shouldAutoScrollRef.current = true;
+      window.requestAnimationFrame(() => composerRef.current?.focus());
+    } catch (clearError) {
+      setError(presentActionError(clearError, "Chat couldn't be cleared. Please try again.", showDiagnosticErrors));
+    } finally {
+      clearingChatRef.current = false;
+      setClearingChat(false);
+    }
+  }
+
   async function sendMessage(
     rawText: string,
     options: { appendUser?: boolean; baseMessages?: ChatUiMessage[]; fromVoiceTranscription?: boolean } = {}
@@ -563,7 +595,7 @@ export function ChatTab({
       responseAbortRef.current = undefined;
       // Recover authoritative history after cancellation, a lost completion, or a conflict.
       void fetchSupportConversation(token).then(snapshot => {
-        if (responseAbortRef.current) return;
+        if (responseAbortRef.current || clearingChatRef.current || snapshot.revision < conversationRevisionRef.current) return;
         conversationRevisionRef.current = snapshot.revision;
         setRemoteBusy(snapshot.busy);
         setMessages(current => [...current.filter(message => message.kind === "welcome"), ...snapshot.messages.map(message => ({ ...current.find(existing => existing.id === message.id), ...message }))]);
@@ -918,7 +950,17 @@ export function ChatTab({
     <section className="chat-page" aria-label="Schedule assistant">
       <div className="chat-surface">
         <audio ref={speechAudioRef} className="sr-only" preload="auto" />
-        <div className="chat-voice-controls" aria-label="Spoken response controls" ref={chatSettingsRef}>
+        <div className="chat-voice-controls" aria-label="Assistant controls" ref={chatSettingsRef}>
+          <button
+            type="button"
+            className="chat-clear-button"
+            title="Clear conversation and start a fresh chat"
+            disabled={isBusy || speechStatus === "generating" || (!draft && !error && !messages.some(message => message.kind !== "welcome"))}
+            onClick={() => void clearChat()}
+          >
+            <Trash2 size={16} />
+            <span>{clearingChat ? "Clearing…" : "Clear chat"}</span>
+          </button>
           <button
             type="button"
             className={`chat-voice-mode-button${voiceMode ? " active" : ""}${speechStatus === "playing" ? " speaking" : ""}`}
