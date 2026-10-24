@@ -121,8 +121,10 @@ export function CalendarTab({
           && coverageEntryMatchesServices(state, entry, visibleServices)),
       ...getVacationCalendarEntries(calendarView === "main" ? visibleResidents : state.residents, dates)
         .filter((entry) => calendarView === "main" || coverageEntryMatchesServices(state, entry, visibleServices)),
-      ...(calendarView === "service" ? getUnavailableCalendarEntries(state, dates)
-        .filter((entry) => coverageEntryMatchesServices(state, entry, visibleServices)) : [])
+      ...getUnavailableCalendarEntries(state, dates)
+        .filter((entry) => calendarView === "main"
+          ? visibleResidents.some(resident => resident.id === entry.residentId)
+          : coverageEntryMatchesServices(state, entry, visibleServices))
     ].filter(entry => !entry.residentId || !state.residents.some(person => person.id === entry.residentId && person.trainingLevel === "Student"))
       .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
     [calendarView, dates, state, visibleResidents, visibleServices]

@@ -3,7 +3,7 @@ import type { NewStudentInput } from "../shared/students";
 import { Check, ChevronDown, Search, CalendarDays, AlertTriangle, Pencil, Plus, UserRoundMinus, ArrowLeft, CircleX } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isResidentOnService } from "../shared/services";
+import { isResidentSuggestedForService } from "../shared/services";
 import { displayDate } from "../shared/date";
 import { buildResidentPickerContext, getResidentPickerWorkload, type PickerActivity } from "./residentPickerContext";
 import type { PlannerState, Resident } from "../shared/types";
@@ -63,8 +63,8 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
   const filtered = residents.filter(resident => (resident.trainingLevel === "Student") === (audience === "students") && (!adding || !assigned.some(person => person.id === resident.id)) && words.every(word =>
     `${resident.name} ${(resident.aliases ?? []).join(" ")} ${resident.sourceProgram ?? ""}`.toLocaleLowerCase().includes(word)))
     .sort((left, right) => context ? Number(getResidentPickerWorkload(context, left.id).overlaps.length > 0) - Number(getResidentPickerWorkload(context, right.id).overlaps.length > 0) : 0);
-  const recommended = filtered.filter(resident => isResidentOnService(resident, service, date));
-  const others = filtered.filter(resident => !isResidentOnService(resident, service, date));
+  const recommended = filtered.filter(resident => isResidentSuggestedForService(resident, service, date));
+  const others = filtered.filter(resident => !isResidentSuggestedForService(resident, service, date));
   async function choose(id: string) {
     if (busy) return;
     setBusy(true);
@@ -142,7 +142,7 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
             return list.length > 0 && <section key={heading}><h4 className={heading.includes("Suggested") ? "resident-picker-suggested-heading" : undefined}>{heading}</h4>{list.map(resident => {
               const workload = context ? getResidentPickerWorkload(context, resident.id) : undefined;
               const inspected = inspectedId === resident.id;
-              return <div key={resident.id} className={`resident-picker-row${isResidentOnService(resident, service, date) ? " recommended" : ""}${inspected ? " inspected" : ""}`}>
+              return <div key={resident.id} className={`resident-picker-row${isResidentSuggestedForService(resident, service, date) ? " recommended" : ""}${inspected ? " inspected" : ""}`}>
                 <button type="button" disabled={busy} className="resident-picker-option"
                   aria-pressed={value === resident.id} onClick={() => void choose(resident.id)}>
                   <span><strong>{resident.name}</strong><small>{resident.trainingLevel}{resident.trainingLevel !== "Student" && resident.sourceProgram ? ` · ${resident.sourceProgram}` : ""}</small>
@@ -151,7 +151,7 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
                       {workload.overlaps.length > 0 && <AlertTriangle size={12} />}{workload.overlaps.length ? `${workload.overlaps.length} overlapping assignment${workload.overlaps.length === 1 ? "" : "s"}` : workload.activities.length ? `${workload.activities.length} assignment${workload.activities.length === 1 ? "" : "s"} today` : "No cases or clinics assigned today"}
                     </small>}
                   </span>
-                  {value === resident.id ? <Check size={18} aria-label="Selected" /> : isResidentOnService(resident, service, date) ? <span className="resident-team-dot" aria-label="On service" /> : null}
+                  {value === resident.id ? <Check size={18} aria-label="Selected" /> : isResidentSuggestedForService(resident, service, date) ? <span className="resident-team-dot" aria-label="On service" /> : null}
                 </button>
                 {context && <button type="button" className="resident-inspect" aria-label={`View ${resident.name}’s day`} aria-expanded={inspected} title={`View ${resident.name}’s day`}
                   onClick={() => { setInspectedId(inspected ? undefined : resident.id); setShowDay(false); }}><CalendarDays size={18} /><span>Day</span></button>}

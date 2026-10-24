@@ -1,0 +1,1075 @@
+{
+  "source": "Resident Schedule (updated 10_24_26).xlsx",
+  "sheet": "Sheet1",
+  "residents": {
+    "res_fellow": {
+      "name": "Adedayo Adeleke",
+      "sourceRow": 7,
+      "blocks": [
+        "Davies",
+        "Ferrara",
+        "Anesthesia\nVAC 8/31-9/4,\n 9/21-9/25",
+        "Ped Surg",
+        "*ADULT ED Rotat (10/26-11/8)\nBerry (11/9-11/22)",
+        "Fogel",
+        "Gilbert",
+        "NFloat",
+        "Ped Surg",
+        "SCC-days",
+        "Ferrara",
+        "NFloat",
+        "Keeley Vasc\nVAC 6/24-6/25,\n 6/28-6/30"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-31_2026-09-04",
+          "startDate": "2026-08-31",
+          "endDate": "2026-09-04"
+        },
+        {
+          "id": "vac_source_20261024_2026-09-21_2026-09-25",
+          "startDate": "2026-09-21",
+          "endDate": "2026-09-25"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-24_2027-06-25",
+          "startDate": "2027-06-24",
+          "endDate": "2027-06-25"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-28_2027-06-30",
+          "startDate": "2027-06-28",
+          "endDate": "2027-06-30"
+        }
+      ]
+    },
+    "res_blue": {
+      "name": "Christian Blue",
+      "sourceRow": 8,
+      "blocks": [
+        "SCC Night",
+        "Endoscopy\nVAC 8/24-8/28",
+        "NFloat",
+        "NFloat",
+        "NRV\nVAC 11/9-11/13",
+        "Breast",
+        "Fogel",
+        "SCC Night",
+        "Ferrara",
+        "Breast\nVAC 4/5-4/9",
+        "NRV",
+        "NRV",
+        "Davies"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-24_2026-08-28",
+          "startDate": "2026-08-24",
+          "endDate": "2026-08-28"
+        },
+        {
+          "id": "vac_source_20261024_2026-11-09_2026-11-13",
+          "startDate": "2026-11-09",
+          "endDate": "2026-11-13"
+        },
+        {
+          "id": "vac_source_20261024_2027-04-05_2027-04-09",
+          "startDate": "2027-04-05",
+          "endDate": "2027-04-09"
+        }
+      ]
+    },
+    "res_bradley": {
+      "name": "Jessica Bradley",
+      "sourceRow": 9,
+      "blocks": [
+        "Ferrara",
+        "NRV\nVAC 8/10-8/14",
+        "SCC-days",
+        "Davies",
+        "Ped Surg",
+        "Keeley Vasc",
+        "NRV",
+        "SCC-days",
+        "Davies",
+        "Ped Surg\nVAC 3/22-3/26",
+        "Berry",
+        "NRV\nVAC 5/24-5/28",
+        "SCC-days"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-10_2026-08-14",
+          "startDate": "2026-08-10",
+          "endDate": "2026-08-14"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-22_2027-03-26",
+          "startDate": "2027-03-22",
+          "endDate": "2027-03-26"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-24_2027-05-28",
+          "startDate": "2027-05-24",
+          "endDate": "2027-05-28"
+        }
+      ]
+    },
+    "res_calderon_garcia": {
+      "name": "Kristian Calderon Garcia",
+      "sourceRow": 10,
+      "blocks": [
+        "NRV",
+        "SCC-days",
+        "Transplant",
+        "Ped Surg\nVAC 9/28-10/2",
+        "Ferrara",
+        "NRV",
+        "SCC-days",
+        "Davies",
+        "Ped Surg",
+        "Keeley Vasc\nVAC 3/22-3/26",
+        "NRV",
+        "SCC-days",
+        "Berry\nVAC 6/7-6/11"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-28_2026-10-02",
+          "startDate": "2026-09-28",
+          "endDate": "2026-10-02"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-22_2027-03-26",
+          "startDate": "2027-03-22",
+          "endDate": "2027-03-26"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-07_2027-06-11",
+          "startDate": "2027-06-07",
+          "endDate": "2027-06-11"
+        }
+      ]
+    },
+    "res_offservice": {
+      "name": "Thien Cao",
+      "sourceRow": 11,
+      "blocks": [
+        "Davies\nVAC 7/10-7/31",
+        "Berry\nVAC 8/10-8/14",
+        "Endoscopy",
+        "NRV\nVAC 10/5-10/9",
+        "NFloat",
+        "NFloat",
+        "Breast",
+        "Ferrara",
+        "NRV",
+        "NRV\nVAC 3/29-4/2",
+        "SCC Night",
+        "SCC Night",
+        "Ferrara"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-07-10_2026-07-31",
+          "startDate": "2026-07-10",
+          "endDate": "2026-07-31"
+        },
+        {
+          "id": "vac_source_20261024_2026-08-10_2026-08-14",
+          "startDate": "2026-08-10",
+          "endDate": "2026-08-14"
+        },
+        {
+          "id": "vac_source_20261024_2026-10-05_2026-10-09",
+          "startDate": "2026-10-05",
+          "endDate": "2026-10-09"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-29_2027-04-02",
+          "startDate": "2027-03-29",
+          "endDate": "2027-04-02"
+        }
+      ]
+    },
+    "res_colwell": {
+      "name": "Carter Colwell",
+      "sourceRow": 12,
+      "blocks": [
+        "Keeley Vasc",
+        "Keeley Vasc\nVAC 8/3-8/7",
+        "NFloat",
+        "NFloat",
+        "Gilbert",
+        "Gilbert",
+        "Davies",
+        "Breast",
+        "Head & Neck",
+        "Thoracic",
+        "Keeley Vasc\nVAC 4/26-4/30",
+        "NRV\nVAC 5/31-6/4",
+        "NFloat"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-03_2026-08-07",
+          "startDate": "2026-08-03",
+          "endDate": "2026-08-07"
+        },
+        {
+          "id": "vac_source_20261024_2027-04-26_2027-04-30",
+          "startDate": "2027-04-26",
+          "endDate": "2027-04-30"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-31_2027-06-04",
+          "startDate": "2027-05-31",
+          "endDate": "2027-06-04"
+        }
+      ]
+    },
+    "res_daniels": {
+      "name": "Megan Daniels",
+      "sourceRow": 13,
+      "blocks": [
+        "Ferrara",
+        "Plastic Surgery",
+        "Ped Surg",
+        "Davies\nVAC 10/5-10/9",
+        "Ferrara",
+        "Berry",
+        "NFloat",
+        "Ferrara",
+        "SCC-days",
+        "Ferrara",
+        "NFloat",
+        "Davies\nVAC 5/10-5/14",
+        "Gilbert\nVAC 6/24-6/25,\n 6/28-6/30"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-10-05_2026-10-09",
+          "startDate": "2026-10-05",
+          "endDate": "2026-10-09"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-10_2027-05-14",
+          "startDate": "2027-05-10",
+          "endDate": "2027-05-14"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-24_2027-06-25",
+          "startDate": "2027-06-24",
+          "endDate": "2027-06-25"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-28_2027-06-30",
+          "startDate": "2027-06-28",
+          "endDate": "2027-06-30"
+        }
+      ]
+    },
+    "res_den_besten": {
+      "name": "Zachary den Besten",
+      "sourceRow": 14,
+      "blocks": [
+        "Berry",
+        "Berry",
+        "Fogel\nVAC 9/21-9/25",
+        "Fogel",
+        "Keeley Vasc",
+        "Keeley Vasc\nVAC 12/14-12/18",
+        "Ferrara",
+        "Ferrara",
+        "NRV",
+        "NRV\nVAC 3/15-3/19",
+        "Davies",
+        "Davies",
+        "Berry"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-21_2026-09-25",
+          "startDate": "2026-09-21",
+          "endDate": "2026-09-25"
+        },
+        {
+          "id": "vac_source_20261024_2026-12-14_2026-12-18",
+          "startDate": "2026-12-14",
+          "endDate": "2026-12-18"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-15_2027-03-19",
+          "startDate": "2027-03-15",
+          "endDate": "2027-03-19"
+        }
+      ]
+    },
+    "res_dewyer": {
+      "name": "Alyssa DeWyer",
+      "sourceRow": 15,
+      "blocks": [
+        "NFloat",
+        "NFloat",
+        "Keeley Vasc",
+        "Keeley Vasc",
+        "Breast",
+        "Head & Neck",
+        "Thoracic",
+        "Fogel",
+        "Gilbert",
+        "Gilbert",
+        "NFloat",
+        "Keeley Vasc",
+        "NRV"
+      ],
+      "vacation": []
+    },
+    "res_doran": {
+      "name": "Marisa Doran",
+      "sourceRow": 16,
+      "blocks": [
+        "Ferrara",
+        "NRV",
+        "NRV",
+        "NRV\nVAC 9/28-10/2",
+        "Davies",
+        "Davies",
+        "Berry",
+        "Berry",
+        "Fogel",
+        "Fogel",
+        "Keeley Vasc",
+        "Keeley Vasc",
+        ""
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-28_2026-10-02",
+          "startDate": "2026-09-28",
+          "endDate": "2026-10-02"
+        }
+      ]
+    },
+    "res_greenberg": {
+      "name": "Sally Greenberg",
+      "sourceRow": 17,
+      "blocks": [
+        "Gilbert",
+        "NFloat",
+        "Davies\nVAC 8/31-9/4",
+        "Ferrara",
+        "Keeley Vasc",
+        "SCC-days",
+        "Fogel",
+        "Ferrara",
+        "Endoscopy",
+        "Berry\nVAC 3/22-3/26",
+        "Research",
+        "NFloat",
+        "Ped Surg\nVAC 6/7-6/11"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-31_2026-09-04",
+          "startDate": "2026-08-31",
+          "endDate": "2026-09-04"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-22_2027-03-26",
+          "startDate": "2027-03-22",
+          "endDate": "2027-03-26"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-07_2027-06-11",
+          "startDate": "2027-06-07",
+          "endDate": "2027-06-11"
+        }
+      ]
+    },
+    "res_keys": {
+      "name": "Taylor Keys",
+      "sourceRow": 18,
+      "blocks": [
+        "Keeley Vasc (7/1-7/18)\nPlastic Surgery (7/19-8/2)",
+        "Fogel",
+        "Ferrara",
+        "Fogel\nVAC 9/28-10/2",
+        "Davies",
+        "Ped Surg",
+        "Ferrara",
+        "Gilbert",
+        "NFloat",
+        "Keeley Vasc\nVAC 3/15-3/19",
+        "SCC-days",
+        "Ferrara",
+        "SCC-days\nVAC 6/24-6/25,\n 6/28-6/30"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-28_2026-10-02",
+          "startDate": "2026-09-28",
+          "endDate": "2026-10-02"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-15_2027-03-19",
+          "startDate": "2027-03-15",
+          "endDate": "2027-03-19"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-24_2027-06-25",
+          "startDate": "2027-06-24",
+          "endDate": "2027-06-25"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-28_2027-06-30",
+          "startDate": "2027-06-28",
+          "endDate": "2027-06-30"
+        }
+      ]
+    },
+    "res_klosinski": {
+      "name": "Paul Klosinski",
+      "sourceRow": 19,
+      "blocks": [
+        "NRV",
+        "Ferrara\nVAC 8/24-8/28",
+        "Davies",
+        "Davies",
+        "Berry",
+        "Berry",
+        "Fogel\nVAC 1/11-1/15",
+        "Fogel",
+        "Keeley Vasc",
+        "Keeley Vasc\nVAC 4/5-4/9",
+        "Ferrara",
+        "",
+        "NRV"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-24_2026-08-28",
+          "startDate": "2026-08-24",
+          "endDate": "2026-08-28"
+        },
+        {
+          "id": "vac_source_20261024_2027-01-11_2027-01-15",
+          "startDate": "2027-01-11",
+          "endDate": "2027-01-15"
+        },
+        {
+          "id": "vac_source_20261024_2027-04-05_2027-04-09",
+          "startDate": "2027-04-05",
+          "endDate": "2027-04-09"
+        }
+      ]
+    },
+    "res_maghsoudi": {
+      "name": "Taneen Maghsoudi",
+      "sourceRow": 20,
+      "blocks": [
+        "Fogel",
+        "Fogel",
+        "Keeley Vasc\nVAC 9/7-9/11",
+        "Keeley Vasc",
+        "Ferrara",
+        "Ferrara",
+        "NRV",
+        "NRV",
+        "Davies",
+        "Davies",
+        "Berry",
+        "Berry",
+        "Fogel"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-07_2026-09-11",
+          "startDate": "2026-09-07",
+          "endDate": "2026-09-11"
+        }
+      ]
+    },
+    "res_mawussi": {
+      "name": "Yao Mawussi",
+      "sourceRow": 21,
+      "blocks": [
+        "Fogel",
+        "Anesthesia",
+        "NFloat",
+        "Ferrara",
+        "Fogel\nVAC 11/2-11/6",
+        "Ferrara",
+        "Ped Surg",
+        "Davies",
+        "Gilbert",
+        "NFloat",
+        "Fogel\nVAC 4/12-4/16",
+        "SCC-days",
+        "Berry\nVAC 6/24-6/25,\n 6/28-6/30"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-11-02_2026-11-06",
+          "startDate": "2026-11-02",
+          "endDate": "2026-11-06"
+        },
+        {
+          "id": "vac_source_20261024_2027-04-12_2027-04-16",
+          "startDate": "2027-04-12",
+          "endDate": "2027-04-16"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-24_2027-06-25",
+          "startDate": "2027-06-24",
+          "endDate": "2027-06-25"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-28_2027-06-30",
+          "startDate": "2027-06-28",
+          "endDate": "2027-06-30"
+        }
+      ]
+    },
+    "res_mohamed": {
+      "name": "Aleem Mohamed",
+      "sourceRow": 22,
+      "blocks": [
+        "Ped Surg",
+        "Ferrara",
+        "NRV",
+        "SCC-days",
+        "Davies",
+        "Ped Surg\nVAC 11/23-11/27",
+        "Berry",
+        "NRV",
+        "SCC-days",
+        "VCU Burn\nVAC 3/22-3/26",
+        "Ped Surg",
+        "Keeley Vasc\nVAC 5/10-5/14",
+        "NRV"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-11-23_2026-11-27",
+          "startDate": "2026-11-23",
+          "endDate": "2026-11-27"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-22_2027-03-26",
+          "startDate": "2027-03-22",
+          "endDate": "2027-03-26"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-10_2027-05-14",
+          "startDate": "2027-05-10",
+          "endDate": "2027-05-14"
+        }
+      ]
+    },
+    "res_moore": {
+      "name": "Jayden Moore",
+      "sourceRow": 23,
+      "blocks": [
+        "SCC-days",
+        "Gilbert",
+        "Ferrara",
+        "NFloat",
+        "Ped Surg\nVAC 10/26-10/30",
+        "Davies",
+        "Berry",
+        "Keeley Vasc\nVAC 2/8-2/12",
+        "Ferrara",
+        "Endoscopy",
+        "Research",
+        "Fogel\nVAC 5/31-6/4",
+        "NFloat"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-10-26_2026-10-30",
+          "startDate": "2026-10-26",
+          "endDate": "2026-10-30"
+        },
+        {
+          "id": "vac_source_20261024_2027-02-08_2027-02-12",
+          "startDate": "2027-02-08",
+          "endDate": "2027-02-12"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-31_2027-06-04",
+          "startDate": "2027-05-31",
+          "endDate": "2027-06-04"
+        }
+      ]
+    },
+    "res_nde": {
+      "name": "Martin Nde",
+      "sourceRow": 24,
+      "blocks": [
+        "Keeley Vasc",
+        "Keeley Vasc\nVAC 8/24-8/28",
+        "Ferrara",
+        "Ferrara",
+        "NRV\nVAC 10/26-10/30",
+        "NRV",
+        "Davies",
+        "Davies",
+        "Berry",
+        "Berry",
+        "Fogel\nVAC 4/19-4/23",
+        "Fogel",
+        "Keeley Vasc"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-24_2026-08-28",
+          "startDate": "2026-08-24",
+          "endDate": "2026-08-28"
+        },
+        {
+          "id": "vac_source_20261024_2026-10-26_2026-10-30",
+          "startDate": "2026-10-26",
+          "endDate": "2026-10-30"
+        },
+        {
+          "id": "vac_source_20261024_2027-04-19_2027-04-23",
+          "startDate": "2027-04-19",
+          "endDate": "2027-04-23"
+        }
+      ]
+    },
+    "res_necessary": {
+      "name": "Christina Necessary",
+      "sourceRow": 25,
+      "blocks": [
+        "NFloat",
+        "SCC-days",
+        "Gilbert",
+        "Endoscopy\nVAC 9/28-10/2",
+        "Ferrara",
+        "Keeley Vasc",
+        "Davies",
+        "Berry",
+        "Fogel\nVAC 3/8-3/12",
+        "Ferrara",
+        "Research",
+        "Ped Surg",
+        "Fogel\nVAC 6/14-6/18"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-28_2026-10-02",
+          "startDate": "2026-09-28",
+          "endDate": "2026-10-02"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-08_2027-03-12",
+          "startDate": "2027-03-08",
+          "endDate": "2027-03-12"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-14_2027-06-18",
+          "startDate": "2027-06-14",
+          "endDate": "2027-06-18"
+        }
+      ]
+    },
+    "res_roberson": {
+      "name": "Hannah Roberson",
+      "sourceRow": 26,
+      "blocks": [
+        "NRV",
+        "Breast",
+        "Gilbert",
+        "Gilbert",
+        "Thoracic\nVAC 11/2-11/6",
+        "Davies",
+        "NFloat",
+        "NFloat",
+        "Keeley Vasc\nVAC 2/15-2/19",
+        "Keeley Vasc\nVAC 3/29-4/2",
+        "Gilbert",
+        "Head & Neck",
+        "Davies"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-11-02_2026-11-06",
+          "startDate": "2026-11-02",
+          "endDate": "2026-11-06"
+        },
+        {
+          "id": "vac_source_20261024_2027-02-15_2027-02-19",
+          "startDate": "2027-02-15",
+          "endDate": "2027-02-19"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-29_2027-04-02",
+          "startDate": "2027-03-29",
+          "endDate": "2027-04-02"
+        }
+      ]
+    },
+    "res_rodgers": {
+      "name": "Jeffrey Rodgers",
+      "sourceRow": 27,
+      "blocks": [
+        "Breast",
+        "NRV\nVAC 8/3-8/7",
+        "SCC Night",
+        "Davies",
+        "Berry",
+        "Ferrara",
+        "NRV",
+        "Endoscopy\nVAC 1/18-1/22",
+        "NFloat",
+        "NFloat",
+        "Ferrara",
+        "Berry\nVAC 5/17-5/21",
+        "SCC Night"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-03_2026-08-07",
+          "startDate": "2026-08-03",
+          "endDate": "2026-08-07"
+        },
+        {
+          "id": "vac_source_20261024_2027-01-18_2027-01-22",
+          "startDate": "2027-01-18",
+          "endDate": "2027-01-22"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-17_2027-05-21",
+          "startDate": "2027-05-17",
+          "endDate": "2027-05-21"
+        }
+      ]
+    },
+    "res_scarbro": {
+      "name": "Molly Scarbro",
+      "sourceRow": 28,
+      "blocks": [
+        "Berry",
+        "Head & Neck\nVAC 8/10-8/14",
+        "Breast",
+        "NRV",
+        "Keeley Vasc\nVAC 10/26-10/30",
+        "Keeley Vasc",
+        "Gilbert",
+        "Gilbert",
+        "NFloat",
+        "NFloat",
+        "Thoracic\nVAC 4/12-4/16",
+        "Gilbert",
+        "Keeley Vasc"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-08-10_2026-08-14",
+          "startDate": "2026-08-10",
+          "endDate": "2026-08-14"
+        },
+        {
+          "id": "vac_source_20261024_2026-10-26_2026-10-30",
+          "startDate": "2026-10-26",
+          "endDate": "2026-10-30"
+        },
+        {
+          "id": "vac_source_20261024_2027-04-12_2027-04-16",
+          "startDate": "2027-04-12",
+          "endDate": "2027-04-16"
+        }
+      ]
+    },
+    "res_chief": {
+      "name": "Andrew Schroeder",
+      "sourceRow": 29,
+      "blocks": [
+        "Davies",
+        "Davies",
+        "Berry",
+        "Berry\nVAC 10/19-10/23",
+        "Fogel",
+        "Fogel\nVAC 11/23-11/27",
+        "Keeley Vasc",
+        "Keeley Vasc\nVAC 2/1-2/5",
+        "Ferrara",
+        "Ferrara",
+        "NRV",
+        "NRV",
+        "Davies"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-10-19_2026-10-23",
+          "startDate": "2026-10-19",
+          "endDate": "2026-10-23"
+        },
+        {
+          "id": "vac_source_20261024_2026-11-23_2026-11-27",
+          "startDate": "2026-11-23",
+          "endDate": "2026-11-27"
+        },
+        {
+          "id": "vac_source_20261024_2027-02-01_2027-02-05",
+          "startDate": "2027-02-01",
+          "endDate": "2027-02-05"
+        }
+      ]
+    },
+    "res_shank": {
+      "name": "Nina Shank",
+      "sourceRow": 30,
+      "blocks": [
+        "Berry",
+        "Ferrara",
+        "SCC-days",
+        "Gilbert",
+        "Davies\nVAC 10/26-10/30",
+        "Ferrara",
+        "Keeley Vasc",
+        "Ped Surg\nVAC 1/18-1/22",
+        "Davies",
+        "Fogel\nVAC 3/29-4/2",
+        "Research",
+        "Endoscopy",
+        "Ferrara"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-10-26_2026-10-30",
+          "startDate": "2026-10-26",
+          "endDate": "2026-10-30"
+        },
+        {
+          "id": "vac_source_20261024_2027-01-18_2027-01-22",
+          "startDate": "2027-01-18",
+          "endDate": "2027-01-22"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-29_2027-04-02",
+          "startDate": "2027-03-29",
+          "endDate": "2027-04-02"
+        }
+      ]
+    },
+    "res_shigley": {
+      "name": "Nathan Shigley",
+      "sourceRow": 31,
+      "blocks": [
+        "Ferrara",
+        "Ped Surg",
+        "Berry\nVAC 9/14-9/18",
+        "SCC-days",
+        "Gilbert",
+        "NFloat",
+        "Ferrara",
+        "Fogel\nVAC 1/25-1/29",
+        "Keeley Vasc",
+        "Davies\nVAC 3/22-3/26",
+        "Research",
+        "Ferrara",
+        "Endoscopy"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-14_2026-09-18",
+          "startDate": "2026-09-14",
+          "endDate": "2026-09-18"
+        },
+        {
+          "id": "vac_source_20261024_2027-01-25_2027-01-29",
+          "startDate": "2027-01-25",
+          "endDate": "2027-01-29"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-22_2027-03-26",
+          "startDate": "2027-03-22",
+          "endDate": "2027-03-26"
+        }
+      ]
+    },
+    "res_somaiah": {
+      "name": "Prarthana Somaiah",
+      "sourceRow": 32,
+      "blocks": [
+        "NFloat",
+        "Davies",
+        "NRV",
+        "Fogel\nVAC 10/5-10/9",
+        "SCC Night",
+        "Endoscopy",
+        "Ferrara",
+        "NRV",
+        "Berry",
+        "Davies\nVAC 3/15-3/19",
+        "NFloat",
+        "Ferrara",
+        "Berry\nVAC 6/14-6/18"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-10-05_2026-10-09",
+          "startDate": "2026-10-05",
+          "endDate": "2026-10-09"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-15_2027-03-19",
+          "startDate": "2027-03-15",
+          "endDate": "2027-03-19"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-14_2027-06-18",
+          "startDate": "2027-06-14",
+          "endDate": "2027-06-18"
+        }
+      ]
+    },
+    "res_swaak": {
+      "name": "Amanda Swaak",
+      "sourceRow": 33,
+      "blocks": [
+        "Davies",
+        "Ped Surg",
+        "Ferrara",
+        "Berry\nVAC 10/5-10/9",
+        "SCC-days",
+        "VCU Burn",
+        "Ped Surg",
+        "Keeley Vasc\nVAC 1/25-1/29",
+        "NRV",
+        "SCC-days",
+        "Davies",
+        "Ped Surg",
+        "Davies\nVAC 6/7-6/11"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-10-05_2026-10-09",
+          "startDate": "2026-10-05",
+          "endDate": "2026-10-09"
+        },
+        {
+          "id": "vac_source_20261024_2027-01-25_2027-01-29",
+          "startDate": "2027-01-25",
+          "endDate": "2027-01-29"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-07_2027-06-11",
+          "startDate": "2027-06-07",
+          "endDate": "2027-06-11"
+        }
+      ]
+    },
+    "res_thorpe": {
+      "name": "Courtney Thorpe",
+      "sourceRow": 34,
+      "blocks": [
+        "NRV",
+        "SCC Night",
+        "Davies",
+        "SCC Night",
+        "Endoscopy",
+        "NRV\nVAC 12/7-12/11",
+        "NFloat",
+        "NFloat",
+        "Fogel\nVAC 3/1-3/5",
+        "Ferrara",
+        "Breast",
+        "Davies",
+        "NRV\nVAC 6/7-6/11"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-12-07_2026-12-11",
+          "startDate": "2026-12-07",
+          "endDate": "2026-12-11"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-01_2027-03-05",
+          "startDate": "2027-03-01",
+          "endDate": "2027-03-05"
+        },
+        {
+          "id": "vac_source_20261024_2027-06-07_2027-06-11",
+          "startDate": "2027-06-07",
+          "endDate": "2027-06-11"
+        }
+      ]
+    },
+    "res_williams": {
+      "name": "Maria Williams",
+      "sourceRow": 35,
+      "blocks": [
+        "Gilbert",
+        "Gilbert",
+        "Thoracic",
+        "Davies\nVAC 9/28-10/2",
+        "NFloat",
+        "NFloat",
+        "Keeley Vasc",
+        "Keeley Vasc\nVAC 1/18-1/22",
+        "Breast",
+        "Head & Neck",
+        "NRV\nVAC 5/3-5/7",
+        "NFloat",
+        "Gilbert"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-28_2026-10-02",
+          "startDate": "2026-09-28",
+          "endDate": "2026-10-02"
+        },
+        {
+          "id": "vac_source_20261024_2027-01-18_2027-01-22",
+          "startDate": "2027-01-18",
+          "endDate": "2027-01-22"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-03_2027-05-07",
+          "startDate": "2027-05-03",
+          "endDate": "2027-05-07"
+        }
+      ]
+    },
+    "res_zheng": {
+      "name": "Allison Zheng",
+      "sourceRow": 36,
+      "blocks": [
+        "SCC-days",
+        "Davies",
+        "Ped Surg\nVAC 9/7-9/11",
+        "Ferrara",
+        "NRV",
+        "SCC-days",
+        "Keeley Vasc",
+        "Ped Surg",
+        "Transplant",
+        "NRV\nVAC 3/22-3/26",
+        "SCC-days",
+        "Davies\nVAC 5/31-6/4",
+        "Ped Surg"
+      ],
+      "vacation": [
+        {
+          "id": "vac_source_20261024_2026-09-07_2026-09-11",
+          "startDate": "2026-09-07",
+          "endDate": "2026-09-11"
+        },
+        {
+          "id": "vac_source_20261024_2027-03-22_2027-03-26",
+          "startDate": "2027-03-22",
+          "endDate": "2027-03-26"
+        },
+        {
+          "id": "vac_source_20261024_2027-05-31_2027-06-04",
+          "startDate": "2027-05-31",
+          "endDate": "2027-06-04"
+        }
+      ]
+    }
+  }
+}

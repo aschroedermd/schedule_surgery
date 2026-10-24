@@ -3541,7 +3541,7 @@ function ResidentScheduleTab({
                         <span key={vacation.id} className="vacation-line">VAC {formatVacationDateRange(vacation)}</span>
                       ))}
                       {getTimeOffForDateRange(resident, block.startDate, block.endDate).map((entry) => (
-                        <span key={entry.id} className="time-off-line">{entry.label} · {formatMonthDayRange(entry.date, entry.endDate ?? entry.date)}</span>
+                        <span key={entry.id} className="time-off-line">({entry.label} {formatMonthDayRange(entry.date, entry.endDate ?? entry.date)})</span>
                       ))}
                     </span>
                   ))}
@@ -3663,7 +3663,7 @@ function ResidentRotationEditor({
                   <span key={vacation.id} className="vacation-line">VAC {formatVacationDateRange(vacation)}</span>
                 ))}
                 {getTimeOffForDateRange(resident, rotation.startDate, rotation.endDate).map((entry) => (
-                  <span key={entry.id} className="time-off-line">{entry.label} · {formatMonthDayRange(entry.date, entry.endDate ?? entry.date)}</span>
+                  <span key={entry.id} className="time-off-line">({entry.label} {formatMonthDayRange(entry.date, entry.endDate ?? entry.date)})</span>
                 ))}
               </div>
               <input

@@ -25,6 +25,20 @@ it("groups the endoscopy team first and marks the current resident", async () =>
   await act(async () => choices[1].click());
   expect(onSelect).toHaveBeenCalledWith("0", expect.any(Function));
 });
+it("keeps missing rotations and dated ED absences out of suggested teams", () => {
+  const state = createInitialState();
+  const brown = state.residents.find(person => person.id === "res_external_hannah_brown")!;
+  const adeleke = state.residents.find(person => person.id === "res_fellow")!;
+  act(() => root.render(<ResidentPicker residents={[{ ...brown, serviceTags: ["Davies"] }, adeleke]}
+    service="Davies" date="2026-10-26" label="Unassigned" onSelect={onSelect} />));
+  open();
+  expect(document.querySelector(".resident-picker-suggested-heading")).toBeNull();
+  expect(document.querySelector(".resident-picker-results")?.textContent).toContain("Hannah Brown");
+  act(() => root.render(<ResidentPicker residents={[adeleke]} service="Berry" date="2026-10-26" label="Unassigned" onSelect={onSelect} />));
+  expect(document.querySelector(".resident-picker-suggested-heading")).toBeNull();
+  act(() => root.render(<ResidentPicker residents={[adeleke]} service="Berry" date="2026-11-09" label="Unassigned" onSelect={onSelect} />));
+  expect(document.querySelector(".resident-picker-suggested-heading")?.textContent).toContain("Berry");
+});
 it("searches names, shows empty results, and restores focus on Escape", () => {
   open();
   const input = document.querySelector<HTMLInputElement>('input[type="search"]')!;

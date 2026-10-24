@@ -1,6 +1,7 @@
 import { buildResidentUsername } from "../shared/id";
 import { ROTATION_BLOCK_DATES } from "../shared/rotations";
 import { Resident, ResidentRosterKind, TrainingLevel } from "../shared/types";
+import reviewedSchedule from "./fixtures/residentSchedule20261024.json";
 
 interface RotationRowSeed {
   startBlock: number;
@@ -264,7 +265,7 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
     trainingInterests: ["general surgery"],
     rows: [
       { startBlock: 1, endBlock: 1, service: "Ferrara" },
-      { startBlock: 2, endBlock: 2, service: "Ferrara" },
+      { startBlock: 2, endBlock: 2, service: "NRV" },
       { startBlock: 3, endBlock: 3, service: "NRV" },
       { startBlock: 4, endBlock: 4, service: "NRV" },
       { startBlock: 5, endBlock: 5, service: "Davies" },
@@ -324,7 +325,7 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
       { startBlock: 10, endBlock: 10, service: "Keeley Vasc" },
       { startBlock: 11, endBlock: 11, service: "SCC-days" },
       { startBlock: 12, endBlock: 12, service: "Ferrara" },
-      { startBlock: 13, endBlock: 13, service: "Ferrara" }
+      { startBlock: 13, endBlock: 13, service: "SCC-days" }
     ]
   },
   {
@@ -338,7 +339,7 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
     trainingInterests: ["general surgery"],
     rows: [
       { startBlock: 1, endBlock: 1, service: "NRV" },
-      { startBlock: 2, endBlock: 2, service: "NFloat" },
+      { startBlock: 2, endBlock: 2, service: "Ferrara" },
       { startBlock: 3, endBlock: 3, service: "Davies" },
       { startBlock: 4, endBlock: 4, service: "Davies" },
       { startBlock: 5, endBlock: 5, service: "Berry" },
@@ -1556,6 +1557,7 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
     tags: ["rotation-roster","off-service"],
     trainingInterests: [],
     rows: [
+      { startBlock: 6, endBlock: 6, service: "SCC-days" },
       { startBlock: 12, endBlock: 12, service: "Ferrara" }
     ]
   },
@@ -1667,6 +1669,7 @@ export const RESIDENT_ROTATION_SEED: ResidentRotationSeed[] = [
     tags: ["rotation-roster","off-service"],
     trainingInterests: [],
     rows: [
+      { startBlock: 5, endBlock: 5, service: "SCC-days" },
       { startBlock: 11, endBlock: 11, service: "Gilbert" },
       { startBlock: 13, endBlock: 13, service: "Ferrara" }
     ]
@@ -1941,6 +1944,12 @@ export const RESIDENT_USER_SEEDS = RESIDENT_ROTATION_SEED.flatMap((resident, ind
 export function createRotationResidents(): Resident[] {
   return RESIDENT_ROTATION_SEED.map((resident, index) => {
     const accountEligible = resident.accountEligible !== false;
+    const source = reviewedSchedule.residents[resident.id as keyof typeof reviewedSchedule.residents];
+    const unavailable: Resident["unavailable"] = resident.id === "res_fellow"
+      ? [{ id: "source_20261024_adeleke_ed", date: "2026-10-26", endDate: "2026-11-08", label: "ED Rotation" }]
+      : resident.id === "res_keys"
+        ? [{ id: "source_20261024_keys_plastics", date: "2026-07-19", endDate: "2026-08-02", label: "Plastic Surgery" }]
+        : [];
     return {
       id: resident.id,
       username: accountEligible ? getSeedUsername(resident, index) : undefined,
@@ -1955,7 +1964,8 @@ export function createRotationResidents(): Resident[] {
       color: resident.color,
       tags: resident.tags ?? ["rotation-roster"],
       trainingInterests: resident.trainingInterests,
-      unavailable: [],
+      unavailable,
+      vacation: source?.vacation ?? [],
       rotationSchedule: buildRotationSchedule(resident.id, resident.rows)
     };
   });

@@ -50,6 +50,8 @@ export function getResidentServiceTagsForDate(
     const serviceLine = normalizeRotationServiceToServiceLine(rotation.service);
     return serviceLine ? [serviceLine] : [];
   }
+  // A dated roster is authoritative. Gaps are not a return to a legacy team.
+  if (resident.rotationSchedule?.length) return [];
   return normalizeServiceTagList(resident.serviceTags);
 }
 

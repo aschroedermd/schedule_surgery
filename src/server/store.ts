@@ -730,7 +730,7 @@ function mergeSeededResident(resident: Resident, seeded: Resident, hasExistingRo
     color: resident.color ?? seeded.color,
     tags: resident.tags.length ? resident.tags : seeded.tags,
     trainingInterests: resident.trainingInterests.length ? resident.trainingInterests : seeded.trainingInterests,
-    unavailable: resident.unavailable.length ? resident.unavailable : seeded.unavailable,
+    unavailable: hasExistingRotationSchedules || resident.unavailable.length ? resident.unavailable : seeded.unavailable,
     vacation: resident.vacation,
     rotationSchedule:
       hasExistingRotationSchedules && hasResidentSchedule

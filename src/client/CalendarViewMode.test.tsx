@@ -83,6 +83,18 @@ function splitCalendarState() {
 }
 
 describe("Main residency and service rounding calendars", () => {
+  it("shows Adeleke's ED rotation on the main calendar through November 8", () => {
+    localStorage.setItem("coverageCalendarMonth", "2026-11");
+    const state = createInitialState(new Date("2026-11-01T12:00:00"));
+    state.residents = state.residents.filter(resident => resident.id === "res_fellow");
+    renderSplitCalendar(state);
+    expect(calendarDay("2026-11-08").textContent).toContain("ED Rotation");
+    expect(calendarDay("2026-11-09").textContent).not.toContain("ED Rotation");
+    changeSelect("Calendar view", "service");
+    changeSelect("Rounding service", "Berry");
+    expect(calendarDay("2026-11-08").textContent).toContain("ED Rotation");
+    expect(calendarDay("2026-11-09").textContent).not.toContain("ED Rotation");
+  });
   it("defaults to main, shows events and compact general surgery vacations across services", () => {
     localStorage.setItem("coverageCalendarServices:splittest:davies", '["Davies"]');
     renderSplitCalendar(splitCalendarState());

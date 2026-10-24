@@ -15,7 +15,11 @@ import { MemoryWikiFileStore } from "./wikiFileStore";
 const TEST_SEED_USER_PASSWORD = "resident-dev-password";
 
 async function loginAs(username: string) {
-  const app = createApp(new MemoryStateStore(createInitialState()));
+  const state = createInitialState();
+  // Generic assignment tests should not depend on today's sourced leave dates.
+  // Availability tests construct their own dated state below.
+  state.residents = state.residents.map(resident => ({ ...resident, vacation: [], unavailable: [] }));
+  const app = createApp(new MemoryStateStore(state));
   const password = username === "admin" ? "admin-dev-password" : TEST_SEED_USER_PASSWORD;
   const token = await loginOnApp(app, username, password);
   return { app, token };

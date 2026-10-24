@@ -111,6 +111,20 @@ describe("scheduler core", () => {
     expect(plasticSurgeryOnly.assignments.some((assignment) => assignment.residentId === plasticSurgeryRotator.id)).toBe(true);
   });
 
+  it("does not auto-assign a resident with a missing or off-service dated rotation", () => {
+    const state = createInitialState();
+    const brown = state.residents.find(resident => resident.id === "res_external_hannah_brown")!;
+    for (const rotationSchedule of [
+      [{ id: "past", blockNumber: 4, startDate: "2026-09-28", endDate: "2026-10-25", service: "Berry" }],
+      [{ id: "plastics", blockNumber: 5, startDate: "2026-10-26", endDate: "2026-11-22", service: "Plastic Surgery" }]
+    ]) {
+      const datedState = { ...state, residents: [{ ...brown, serviceTags: ["Davies"], rotationSchedule }], assignments: [],
+        attendingBlocks: state.attendingBlocks.map(block => ({ ...block, date: "2026-10-26" })),
+        clinicSessions: state.clinicSessions.map(clinic => ({ ...clinic, date: "2026-10-26" })) };
+      expect(applySuggestion(datedState, "week_current").assignments).toHaveLength(0);
+    }
+  });
+
   it("does not warn about overlap when a resident has both stale case and block assignments for the same block", () => {
     const state = {
       ...createInitialState(),
@@ -317,7 +331,7 @@ describe("scheduler core", () => {
     const state = {
       ...createInitialState(),
       residents: createInitialState().residents.map((resident) =>
-        resident.id === "res_chief" ? { ...resident, trainingInterests: ["HPB"] } : resident
+        resident.id === "res_chief" ? { ...resident, vacation: [], trainingInterests: ["HPB"] } : resident
       ),
       assignments: [
         makeAssignment("case", "case_chen_chole", "res_chief", "admin", false),

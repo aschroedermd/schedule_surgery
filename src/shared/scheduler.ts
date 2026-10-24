@@ -27,6 +27,7 @@ import {
   servicesMatch
 } from "./services";
 import { callCreatesPostCallDay } from "./coverage";
+import { getResidentServiceTagsForDate } from "./rotations";
 
 interface Interval {
   assignment: Assignment;
@@ -596,6 +597,7 @@ function chooseResidentForTarget(
   serviceLine?: string
 ): Resident | undefined {
   const candidates = state.residents.filter(isAutoAssignmentCandidate).map((resident) => {
+    if (resident.rotationSchedule?.length && !getResidentServiceTagsForDate(resident, getTargetDate(target)).length) return undefined;
     const simulated = {
       ...state,
       assignments: [

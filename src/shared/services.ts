@@ -32,6 +32,16 @@ export function isResidentOnService(
   return getResidentServiceTagsForDate(resident, date).some((tag) => servicesMatch(tag, service));
 }
 
+export function isResidentSuggestedForService(
+  resident: Pick<Resident, "serviceTags" | "rotationSchedule" | "studentPlacements"> & Partial<Pick<Resident, "unavailable" | "vacation">>,
+  service: string,
+  date?: string
+): boolean {
+  if (date && (resident.vacation?.some(block => block.startDate <= date && date <= block.endDate)
+    || resident.unavailable?.some(block => !block.startTime && !block.endTime && block.date <= date && date <= (block.endDate ?? block.date)))) return false;
+  return isResidentOnService(resident, service, date);
+}
+
 export function sortResidentsForService(residents: Resident[], selectedService: string, date?: string): Resident[] {
   return [...residents].sort((a, b) => {
     const serviceDelta = Number(isResidentOnService(b, selectedService, date)) - Number(isResidentOnService(a, selectedService, date));
