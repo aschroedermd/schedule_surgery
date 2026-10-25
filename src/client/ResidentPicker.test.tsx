@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ResidentPicker } from "./ResidentPicker";
 import { createInitialState } from "../server/sampleData";
+import { getAssignmentService } from "../shared/services";
 let root: Root;
 let container: HTMLDivElement;
 const onSelect = vi.fn();
@@ -24,6 +25,51 @@ it("groups the endoscopy team first and marks the current resident", async () =>
   expect(choices[1].textContent).toContain("Alex Other");
   await act(async () => choices[1].click());
   expect(onSelect).toHaveBeenCalledWith("0", expect.any(Function));
+});
+it.each([
+  ...(["Davies", "Berry"] as const).flatMap(team =>
+    (["case", "block", "clinic"] as const).flatMap(kind =>
+      [true, false].map(endo => ({ team, kind, endo }))))
+])("groups $team $kind assignments with endoscopy=$endo by team and home specialty", ({ team, kind, endo }) => {
+  const state = createInitialState();
+  const date = "2026-10-26";
+  const block = state.attendingBlocks[0];
+  const attending = state.attendings.find(item => item.id === block.attendingId)!;
+  attending.service = team;
+  attending.name = "Dr. Katz";
+  block.date = date;
+  block.notes = endo ? "Endoscopy" : "";
+  state.cases.filter(item => item.blockId === block.id).forEach(item => {
+    item.procedureLabel = endo ? "Endoscopy" : "Surgery"; item.notes = ""; item.tags = [];
+  });
+  const clinic = state.clinicSessions[0];
+  clinic.attendingId = attending.id;
+  clinic.date = date;
+  clinic.service = endo ? "ENDO" : team;
+  clinic.location = "Clinic";
+  const targetId = kind === "block" ? block.id : kind === "case" ? state.cases.find(item => item.blockId === block.id)!.id : clinic.id;
+  const base = { ...state.residents[0], rotationSchedule: [], studentPlacements: undefined, vacation: [], unavailable: [], rosterKind: "primary" as const, sourceProgram: "General Surgery", sourceProgramAbbreviation: "" };
+  const residents = [
+    ...["Dentistry", "Pediatrics", "Podiatric Medicine and Surgery", "Neurosurgery"].map(program => ({ ...base, id: program, name: program, rosterKind: "off-service" as const, sourceProgram: program, serviceTags: [team, "ENDO"] })),
+    { ...base, id: "other", name: "Other General", serviceTags: [team === "Davies" ? "Berry" : "Davies"] },
+    { ...base, id: "plastic", name: "Other Plastics", rosterKind: "off-service" as const, sourceProgram: "Plastic Surgery", serviceTags: [] },
+    { ...base, id: "team", name: "Home Team", serviceTags: [], rotationSchedule: [{ id: "rotation", blockNumber: 5, startDate: date, endDate: "2026-11-22", service: team }] },
+    { ...base, id: "endo", name: "Endo Resident", serviceTags: ["ENDO", team] }
+  ];
+  act(() => root.render(<ResidentPicker residents={residents} state={state} kind={kind} targetId={targetId}
+    service={getAssignmentService(state, kind, targetId, "Fogel")} date={date} label="Unassigned" onSelect={onSelect} />));
+  open();
+  const sections = [...document.querySelectorAll(".resident-picker-results section")];
+  expect(sections.map(section => section.querySelector("h4")?.textContent)).toEqual([
+    ...(endo ? ["ENDO team · Suggested"] : []), `${team} team · Suggested`,
+    "Other surgery residents · General & Plastic Surgery", "Other residents · Off-service"
+  ]);
+  const names = (section: Element) => [...section.querySelectorAll(".resident-picker-option strong")].map(item => item.textContent);
+  if (endo) expect(names(sections[0])).toEqual(["Endo Resident"]);
+  expect(names(sections[endo ? 1 : 0])).toEqual(endo ? ["Home Team"] : ["Home Team", "Endo Resident"]);
+  expect(names(sections.at(-2)!)).toEqual(["Other General", "Other Plastics"]);
+  expect(names(sections.at(-1)!)).toEqual(["Dentistry", "Pediatrics", "Podiatric Medicine and Surgery", "Neurosurgery"]);
+  expect(document.querySelectorAll(".resident-picker-option")).toHaveLength(residents.length);
 });
 it("keeps missing rotations and dated ED absences out of suggested teams", () => {
   const state = createInitialState();
@@ -81,16 +127,21 @@ it("shows a save error inside the dialog and allows retry", async () => {
   await act(async () => document.querySelector<HTMLButtonElement>(".resident-picker-option")!.click());
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
-it("inspects a resident’s schedule without saving and flags overlapping coverage", async () => {
+it("keeps a narrow searchable picker without day schedule controls and flags overlapping coverage", () => {
   const state = createInitialState();
   const resident = state.residents[0];
   state.assignments = [{ id: "assignment", kind: "block", targetId: "block_patel_mon", residentId: resident.id, locked: false, source: "admin", createdAt: "", updatedAt: "" }];
   act(() => root.render(<ResidentPicker state={state} kind="block" targetId="block_chen_mon" residents={[resident]} service="Davies" label="Unassigned" onSelect={onSelect} />));
+  vi.spyOn(container.querySelector<HTMLButtonElement>("button")!, "getBoundingClientRect").mockReturnValue({ left: 900, bottom: 36 } as DOMRect);
   open();
   expect(document.querySelector(".resident-picker-target")?.textContent).toContain("Dr. Chen");
   expect(document.querySelector(".resident-workload")?.textContent).toContain("overlapping assignment");
-  await act(async () => document.querySelector<HTMLButtonElement>(".resident-inspect")!.click());
-  expect(document.querySelector(".resident-mobile-detail")?.textContent).toContain("Gastric bypass");
+  expect(document.querySelector<HTMLElement>(".resident-picker-panel")?.style.left).toBe(`${window.innerWidth - 420 - 12}px`);
+  expect(document.querySelector(".resident-picker-panel")?.classList.contains("has-context")).toBe(false);
+  expect(document.querySelector('input[aria-label="Search residents"]')).not.toBeNull();
+  expect(document.querySelector(".resident-picker-option")?.textContent).toContain(resident.name);
+  expect(document.querySelector('aside[aria-label="Day schedule"]')).toBeNull();
+  expect(document.querySelector(".resident-day-toggle, .resident-inspect, .resident-mobile-detail")).toBeNull();
   expect(onSelect).not.toHaveBeenCalled();
 });
 it("shows the current name, separates students, and adds without replacing coverage", async () => {

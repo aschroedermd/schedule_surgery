@@ -58,7 +58,7 @@ export function isGeneralOrPlasticSurgeryResident(
   const sourceProgram = `${resident.sourceProgramAbbreviation ?? ""} ${resident.sourceProgram ?? ""}`
     .toLowerCase()
     .replace(/[^a-z]/g, "");
-  if (sourceProgram.includes("plsx") || sourceProgram.includes("plasticsurgery")) return true;
+  if (sourceProgram.includes("generalsurgery") || sourceProgram.includes("plsx") || sourceProgram.includes("plasticsurgery")) return true;
 
   if (resident.rosterKind === "off-service") return false;
   return !resident.sourceProgram && !resident.sourceProgramAbbreviation;
@@ -118,4 +118,14 @@ export function getAssignmentService(state: PlannerState, kind: "case" | "block"
   const block = state.attendingBlocks.find(item => item.id === blockId);
   if (!block) return fallback;
   return isEndoscopyBlock(state, block) ? ENDOSCOPY_SERVICE_LINE : state.attendings.find(item => item.id === block.attendingId)?.service ?? fallback;
+}
+
+/** Keep the attending's home team available even when the assignment service is ENDO. */
+export function getAssignmentPrimaryTeam(state: PlannerState, kind: "case" | "block" | "clinic", targetId: string, fallback: string): string {
+  const blockId = kind === "case" ? state.cases.find(item => item.id === targetId)?.blockId : targetId;
+  const target = kind === "clinic" ? state.clinicSessions.find(item => item.id === targetId)
+    : state.attendingBlocks.find(item => item.id === blockId);
+  return state.attendings.find(item => item.id === target?.attendingId)?.service
+    ?? (kind === "clinic" ? state.clinicSessions.find(item => item.id === targetId)?.service : undefined)
+    ?? fallback;
 }

@@ -1,11 +1,11 @@
 import { NewStudentForm } from "./NewStudentForm";
 import type { NewStudentInput } from "../shared/students";
-import { Check, ChevronDown, Search, CalendarDays, AlertTriangle, Pencil, Plus, UserRoundMinus, ArrowLeft, CircleX } from "lucide-react";
+import { Check, ChevronDown, Search, AlertTriangle, Pencil, Plus, UserRoundMinus, ArrowLeft, CircleX } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isResidentSuggestedForService } from "../shared/services";
+import { ENDOSCOPY_SERVICE_LINE, getAssignmentPrimaryTeam, isGeneralOrPlasticSurgeryResident, isResidentSuggestedForService, servicesMatch } from "../shared/services";
 import { displayDate } from "../shared/date";
-import { buildResidentPickerContext, getResidentPickerWorkload, type PickerActivity } from "./residentPickerContext";
+import { buildResidentPickerContext, getResidentPickerWorkload } from "./residentPickerContext";
 import type { PlannerState, Resident } from "../shared/types";
 
 export function ResidentPicker({ residents, service, date, value, label, className, emptyLabel = "Clear assignment", state, kind, targetId, compact = false, initialOpen = false, initialAdding = false, onDismiss, assignedPeople, onRemove, onClearAll, onAdd, onCreateStudent, onSelect }: {
@@ -25,8 +25,6 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
   const [adding, setAdding] = useState(initialAdding);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState(initialOpen);
-  const [inspectedId, setInspectedId] = useState<string>();
-  const [showDay, setShowDay] = useState(false);
   const [error, setError] = useState("");
   const context = useMemo(() => open && state && kind && targetId ? buildResidentPickerContext(state, kind, targetId) : undefined, [open, state, kind, targetId]);
   const [query, setQuery] = useState("");
@@ -44,7 +42,7 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
       const rect = trigger.current!.getBoundingClientRect();
       const visual = window.visualViewport;
       setViewport({ height: visual?.height ?? window.innerHeight, bottom: visual ? Math.max(0, window.innerHeight - visual.height - visual.offsetTop) : 0 });
-      const width = state && (window.innerWidth >= 1000 || (window.innerWidth >= 740 && window.innerHeight <= 500)) ? 780 : 420;
+      const width = 420;
       setPosition({ left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
         top: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - Math.min(640, window.innerHeight - 24) - 12)) });
     };
@@ -63,8 +61,23 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
   const filtered = residents.filter(resident => (resident.trainingLevel === "Student") === (audience === "students") && (!adding || !assigned.some(person => person.id === resident.id)) && words.every(word =>
     `${resident.name} ${(resident.aliases ?? []).join(" ")} ${resident.sourceProgram ?? ""}`.toLocaleLowerCase().includes(word)))
     .sort((left, right) => context ? Number(getResidentPickerWorkload(context, left.id).overlaps.length > 0) - Number(getResidentPickerWorkload(context, right.id).overlaps.length > 0) : 0);
-  const recommended = filtered.filter(resident => isResidentSuggestedForService(resident, service, date));
-  const others = filtered.filter(resident => !isResidentSuggestedForService(resident, service, date));
+  const primaryTeam = state && kind && targetId ? getAssignmentPrimaryTeam(state, kind, targetId, service) : service;
+  const groups: { heading: string; list: Resident[]; suggested: boolean }[] = [];
+  let remaining = filtered;
+  function addTeam(team: string) {
+    const list = remaining.filter(resident =>
+      (audience === "students" || isGeneralOrPlasticSurgeryResident(resident)) && isResidentSuggestedForService(resident, team, date));
+    groups.push({ heading: `${team} team · Suggested`, list, suggested: true });
+    const ids = new Set(list.map(resident => resident.id));
+    remaining = remaining.filter(resident => !ids.has(resident.id));
+  }
+  addTeam(servicesMatch(service, ENDOSCOPY_SERVICE_LINE) ? service : primaryTeam);
+  if (servicesMatch(service, ENDOSCOPY_SERVICE_LINE) && !servicesMatch(primaryTeam, service)) addTeam(primaryTeam);
+  if (audience === "students") groups.push({ heading: "Other students", list: remaining, suggested: false });
+  else {
+    groups.push({ heading: "Other surgery residents · General & Plastic Surgery", list: remaining.filter(isGeneralOrPlasticSurgeryResident), suggested: false });
+    groups.push({ heading: "Other residents · Off-service", list: remaining.filter(resident => !isGeneralOrPlasticSurgeryResident(resident)), suggested: false });
+  }
   async function choose(id: string) {
     if (busy) return;
     setBusy(true);
@@ -86,25 +99,15 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
       if (!saved) setError("Assignment was not cleared. Please try again.");
     } catch { setError("Could not clear assignment. Please try again."); } finally { setBusy(false); }
   }
-  function renderActivities(activities: PickerActivity[], residentName?: string) {
-    return <div className="resident-activity-list">
-      {activities.length === 0 && <p className="resident-context-hint">No cases or clinics assigned today.</p>}
-      {activities.map(activity => <article key={activity.id} className={activity.target ? "is-target" : ""}>
-        <time>{activity.time}</time><strong>{activity.title}</strong><span>{activity.surgeon} · {activity.location}</span>
-        {!residentName && <span className={activity.residentIds.length ? "" : "needs-coverage"}>{activity.residentIds.length ? activity.residentIds.map(id => context?.residentNames[id] ?? "Assigned resident").join(", ") : "Unassigned"}</span>}
-      </article>)}
-      <p className="resident-context-hint">Listed cases and clinics only; check other duties before assigning.</p>
-    </div>;
-  }
   return <>
     <button ref={trigger} type="button" className={`${compact ? "resident-quick-trigger" : "assignment-select resident-picker-trigger"} ${className ?? ""}`}
       aria-label={`${compact ? "Change coverage" : "Choose resident"}: ${label}`} title={compact ? kind === "block" ? "Change coverage for entire block" : kind === "case" ? "Change coverage for this case" : "Change clinic coverage" : undefined} aria-haspopup="dialog" aria-expanded={open}
-      onClick={() => { setAdding(false); setCreating(false); setAudience(residents.find(person => person.id === value)?.trainingLevel === "Student" ? "students" : "residents"); setQuery(""); setInspectedId(undefined); setShowDay(false); setError(""); setOpen(true); }}><span>{label}</span>{compact ? <Pencil size={14} /> : <ChevronDown size={14} />}</button>
+      onClick={() => { setAdding(false); setCreating(false); setAudience(residents.find(person => person.id === value)?.trainingLevel === "Student" ? "students" : "residents"); setQuery(""); setError(""); setOpen(true); }}><span>{label}</span>{compact ? <Pencil size={14} /> : <ChevronDown size={14} />}</button>
     {open && createPortal(<div className="resident-picker-backdrop" onClick={event => {
       if (event.target === event.currentTarget && !busy) close();
     }}>
       <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={busy} tabIndex={-1}
-        className={`resident-picker-panel${context ? " has-context" : ""}${viewport.height < 500 ? " compact-height" : ""}`} style={{ ...position, ...(window.innerWidth <= 640 ? { bottom: viewport.bottom, maxHeight: viewport.height < 500 ? viewport.height - 8 : viewport.height * .92 } : {}) }} onKeyDown={event => {
+        className={`resident-picker-panel${viewport.height < 500 ? " compact-height" : ""}`} style={{ ...position, ...(window.innerWidth <= 640 ? { bottom: viewport.bottom, maxHeight: viewport.height < 500 ? viewport.height - 8 : viewport.height * .92 } : {}) }} onKeyDown={event => {
           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!busy) close(); }
           if (event.key === "Tab") {
             const controls = [...panel.current!.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)')].filter(control => control.getClientRects().length > 0);
@@ -127,8 +130,7 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
         </div></div>
           {kind !== "block" && <div className="picker-audience" role="group" aria-label="People type">{(["residents", "students"] as const).map(type => <button type="button" key={type} aria-pressed={audience === type} disabled={busy} onClick={() => { setAudience(type); setQuery(""); setCreating(false); }}>{type === "residents" ? "Residents" : "Students"}</button>)}</div>}
           <button type="button" className="icon-button" aria-label="Back to schedule" disabled={busy} onClick={close}><ArrowLeft size={20} /></button></header>
-        {context && <div className="resident-picker-target"><strong>{context.title}</strong><span>{context.subtitle}</span>
-          <button type="button" className="resident-day-toggle" aria-expanded={showDay} onClick={() => { setShowDay(!showDay); setInspectedId(undefined); }}><CalendarDays size={16} />{showDay ? "Hide day schedule" : "View day schedule"}</button></div>}
+        {context && <div className="resident-picker-target"><strong>{context.title}</strong><span>{context.subtitle}</span></div>}
         <div className="resident-picker-body"><div className="resident-picker-choices">
         {adding && <div className="picker-add-notice"><strong>Add another person</strong><span>Current coverage stays assigned.</span><button type="button" disabled={busy} onClick={() => { setAdding(false); setCreating(false); }}>Cancel</button></div>}
         {!creating && <label className="resident-picker-search"><Search size={18} /><input ref={search} type="search" placeholder="Search by name…"
@@ -138,11 +140,10 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
             setBusy(true); setError(""); let saved = false;
             try { await onCreateStudent(input, adding, () => { saved = true; if (adding) { setAdding(false); setCreating(false); setQuery(""); } else close(); }); if (!saved) setError("Student was not saved. Please try again."); } catch (error) { setError(error instanceof Error ? error.message : "Could not save student."); } finally { setBusy(false); }
           }} /> : <>
-          {[{ heading: `${service} team · Suggested`, list: recommended }, { heading: `Other ${audience}`, list: others }].map(({ heading, list }) => {
-            return list.length > 0 && <section key={heading}><h4 className={heading.includes("Suggested") ? "resident-picker-suggested-heading" : undefined}>{heading}</h4>{list.map(resident => {
+          {groups.map(({ heading, list, suggested }) => {
+            return list.length > 0 && <section key={heading}><h4 className={suggested ? "resident-picker-suggested-heading" : undefined}>{heading}</h4>{list.map(resident => {
               const workload = context ? getResidentPickerWorkload(context, resident.id) : undefined;
-              const inspected = inspectedId === resident.id;
-              return <div key={resident.id} className={`resident-picker-row${isResidentSuggestedForService(resident, service, date) ? " recommended" : ""}${inspected ? " inspected" : ""}`}>
+              return <div key={resident.id} className={`resident-picker-row${suggested ? " recommended" : ""}`}>
                 <button type="button" disabled={busy} className="resident-picker-option"
                   aria-pressed={value === resident.id} onClick={() => void choose(resident.id)}>
                   <span><strong>{resident.name}</strong><small>{resident.trainingLevel}{resident.trainingLevel !== "Student" && resident.sourceProgram ? ` · ${resident.sourceProgram}` : ""}</small>
@@ -151,11 +152,8 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
                       {workload.overlaps.length > 0 && <AlertTriangle size={12} />}{workload.overlaps.length ? `${workload.overlaps.length} overlapping assignment${workload.overlaps.length === 1 ? "" : "s"}` : workload.activities.length ? `${workload.activities.length} assignment${workload.activities.length === 1 ? "" : "s"} today` : "No cases or clinics assigned today"}
                     </small>}
                   </span>
-                  {value === resident.id ? <Check size={18} aria-label="Selected" /> : isResidentSuggestedForService(resident, service, date) ? <span className="resident-team-dot" aria-label="On service" /> : null}
+                  {value === resident.id ? <Check size={18} aria-label="Selected" /> : suggested ? <span className="resident-team-dot" aria-label="On service" /> : null}
                 </button>
-                {context && <button type="button" className="resident-inspect" aria-label={`View ${resident.name}’s day`} aria-expanded={inspected} title={`View ${resident.name}’s day`}
-                  onClick={() => { setInspectedId(inspected ? undefined : resident.id); setShowDay(false); }}><CalendarDays size={18} /><span>Day</span></button>}
-                {context && inspected && <div className="resident-mobile-detail">{renderActivities(workload!.activities, resident.name)}</div>}
               </div>;
             })}</section>;
           })}
@@ -164,11 +162,6 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
           </>}
         </div>
         </div>
-        {context && <aside className={`resident-picker-context${showDay ? " show-day" : ""}`} aria-label="Day schedule">
-          <div className="resident-context-heading"><h4>{inspectedId ? context.residentNames[inspectedId] : "Day schedule"}</h4>{inspectedId && <button type="button" onClick={() => setInspectedId(undefined)}>All surgeons</button>}</div>
-          <p className="resident-context-hint">{inspectedId ? "Cases and clinics already assigned today." : "All services · highlighted cases belong to this selection."}</p>
-          {renderActivities(inspectedId ? getResidentPickerWorkload(context, inspectedId).activities : context.activities, inspectedId ? context.residentNames[inspectedId] : undefined)}
-        </aside>}
         </div>
         {error && <p className="resident-picker-error" role="alert">{error}</p>}
         <footer className="picker-actions">

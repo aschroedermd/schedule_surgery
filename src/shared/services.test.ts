@@ -4,6 +4,7 @@ import { isGeneralOrPlasticSurgeryResident, isResidentOnService, isResidentSugge
 describe("resident program filtering", () => {
   it("includes primary General Surgery residents", () => {
     expect(isGeneralOrPlasticSurgeryResident({ rosterKind: "primary" })).toBe(true);
+    expect(isGeneralOrPlasticSurgeryResident({ rosterKind: "off-service", sourceProgram: "General Surgery" })).toBe(true);
   });
 
   it("includes Plastic Surgery rotators", () => {
