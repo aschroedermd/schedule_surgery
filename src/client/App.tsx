@@ -633,10 +633,6 @@ export function App() {
       setActiveTab("call");
       return;
     }
-    if (activeTab === "schedule" && !canBuildCall) {
-      setActiveTab("calendar");
-      return;
-    }
     if (activeTab === "requests" && !canUseRequests) {
       setActiveTab("board");
     }
@@ -857,8 +853,8 @@ export function App() {
       {activeTab === "call-builder" && canBuildCall && (
         <CallBuilderTab state={state} token={session.token} username={session.username} onMutate={runMutation} />
       )}
-      {activeTab === "schedule" && canBuildCall && (
-        <ResidentScheduleTab state={state} token={session.token} disabled={false} onMutate={runMutation} />
+      {activeTab === "schedule" && (
+        <ResidentScheduleTab state={state} token={session.token} disabled={!canBuildCall} onMutate={runMutation} />
       )}
       {activeTab === "requests" && (
         <RequestsTab
@@ -3470,7 +3466,7 @@ function RosterTab({
   );
 }
 
-function ResidentScheduleTab({
+export function ResidentScheduleTab({
   state,
   token,
   disabled,
@@ -3507,7 +3503,7 @@ function ResidentScheduleTab({
             ))}
           </select>
         </label>
-        <label>
+        {!disabled && <label>
           Edit schedule for
           <select value={selectedResident?.id ?? ""} onChange={(event) => setSelectedResidentId(event.target.value)}>
             {residents.map((resident) => (
@@ -3516,10 +3512,10 @@ function ResidentScheduleTab({
               </option>
             ))}
           </select>
-        </label>
+        </label>}
       </div>
 
-      <div className="resident-schedule-layout">
+      <div className={disabled ? "resident-schedule-view" : "resident-schedule-layout"}>
         <section className="editor-panel block-schedule-panel">
           <div className="schedule-panel-heading">
             <p className="eyebrow">Block {selectedBlock}</p>
@@ -3551,7 +3547,7 @@ function ResidentScheduleTab({
           </div>
         </section>
 
-        {selectedResident && (
+        {!disabled && selectedResident && (
           <ResidentRotationEditor
             resident={selectedResident}
             token={token}

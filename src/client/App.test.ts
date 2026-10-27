@@ -84,14 +84,15 @@ describe("planner navigation", () => {
     expect(tabIds(userTabs)).not.toContain("activity");
   });
 
-  it("shows the Call Builder and Blocks only to admins and advanced editors", () => {
+  it("shows Blocks to viewers while restricting Call Builder to admins and advanced editors", () => {
     const adminTabs = tabIds(getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: true }));
     const advancedTabs = tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: true, pendingCoverageRequestCount: 0, isAdmin: false }));
     const basicTabs = tabIds(getNavigationTabs({ canUseRequests: false, canBuildCall: false, pendingCoverageRequestCount: 0, isAdmin: false }));
 
     expect(adminTabs).toEqual(expect.arrayContaining(["call-builder", "schedule"]));
     expect(advancedTabs).toEqual(expect.arrayContaining(["call-builder", "schedule"]));
-    expect(basicTabs).not.toEqual(expect.arrayContaining(["call-builder", "schedule"]));
+    expect(basicTabs).toContain("schedule");
+    expect(basicTabs).not.toContain("call-builder");
   });
 
   it("keeps the responsive navigation groups presentation-only", () => {

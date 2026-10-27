@@ -100,7 +100,8 @@ describe("scheduler core", () => {
   });
 
   it("keeps assignable-only off-service rotators out of auto-suggestions", () => {
-    const state = createInitialState();
+    // Use a block where the plastic surgery resident rotates on Davies.
+    const state = createInitialState(new Date("2027-01-18T12:00:00Z"));
     const emRotator = state.residents.find((resident) => resident.id === "res_external_alayna_arnholt")!;
     const plasticSurgeryRotator = state.residents.find((resident) => resident.id === "res_external_hannah_brown")!;
 

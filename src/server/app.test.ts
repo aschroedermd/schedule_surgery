@@ -189,6 +189,21 @@ describe("planner API", () => {
       .expect(403);
   });
 
+  it("lets viewers read resident blocks but rejects rotation and absence edits", async () => {
+    const { app, token } = await loginAs("cblue");
+    const response = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
+    const resident = response.body.residents[0];
+    expect(resident.rotationSchedule.length).toBeGreaterThan(0);
+    for (const patch of [
+      { rotationSchedule: resident.rotationSchedule },
+      { vacation: [{ id: "denied-vac", startDate: "2026-10-01", endDate: "2026-10-05" }] },
+      { unavailable: [{ id: "denied-off", date: "2026-10-01", label: "Conference" }] }
+    ]) {
+      await request(app).patch(`/api/entities/residents/${resident.id}`)
+        .set("authorization", `Bearer ${token}`).send(patch).expect(403);
+    }
+  });
+
   it("allows advanced editors to update resident schedules but not resident profiles", async () => {
     const initialState = createInitialState();
     const target = initialState.residents[0];
@@ -1873,7 +1888,8 @@ describe("planner API", () => {
   });
 
   it("previews and confirms direct assistant edits while routing request-only users through approval", async () => {
-    const store = new MemoryStateStore(createInitialState());
+    // Keep the assignment fixture on an active surgery rotation.
+    const store = new MemoryStateStore(createInitialState(new Date("2026-07-06T12:00:00Z")));
     const chatSettingsStore = new MemoryChatSettingsStore({
       chatProvider: "openrouter",
       primaryModel: "deepseek/deepseek-v4-flash-0731",

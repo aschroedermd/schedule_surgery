@@ -72,7 +72,7 @@ export function getOpenApiDocument() {
             },
             canAddContacts: { type: "boolean", description: "Allows adding directory contacts without admin approval." },
             canUseSalzTrack: { type: "boolean", description: "SalzTrack spoof tracker access. Defaults to false; admins always have access." },
-            canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and Blocks. Available to residents and attendings." },
+            canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and editing in Blocks. All authenticated accounts can browse Blocks. Available to residents and attendings." },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             passwordUpdatedAt: { type: "string", format: "date-time" },
             mustChangePassword: { type: "boolean" }
@@ -91,7 +91,7 @@ export function getOpenApiDocument() {
             },
             canAddContacts: { type: "boolean" },
             canUseSalzTrack: { type: "boolean", description: "SalzTrack spoof tracker access. Defaults to false; admins always have access." },
-            canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and Blocks. Available to residents and attendings." },
+            canBuildCall: { type: "boolean", description: "Advanced editor access, including Call Builder and editing in Blocks. All authenticated accounts can browse Blocks. Available to residents and attendings." },
             voiceDailyLimit: { type: "integer", minimum: 0, maximum: 10000, default: 12 },
             preferredVoicePreset: { type: "integer", minimum: 1, maximum: 5, default: 1 },
             createdAt: { type: "string", format: "date-time" },
@@ -128,7 +128,7 @@ export function getOpenApiDocument() {
             },
             canAddContacts: { type: "boolean", description: "Grant direct contact publishing; otherwise submissions require approval." },
             canUseSalzTrack: { type: "boolean", description: "SalzTrack spoof tracker access. Defaults to false; admins always have access." },
-            canBuildCall: { type: "boolean", description: "Grant Advanced editor access (Call Builder and Blocks) to a resident or attending." }
+            canBuildCall: { type: "boolean", description: "Grant Advanced editor access (Call Builder and editing in Blocks) to a resident or attending." }
           }
         },
         CallBuilderAssignment: {
