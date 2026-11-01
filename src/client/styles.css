@@ -7818,18 +7818,14 @@ h2 {
 .support-conversation button { color: var(--text-main); background: var(--bg-surface); border: 1px solid var(--border-color); padding: 0.6rem 0.8rem; border-radius: 10px; }
 @media (max-width: 700px) { .support-layout { grid-template-columns: 1fr; } .support-session-list { max-height: 180px; overflow: auto; } }
 
-.coverage-details { width: 100%; min-width: 0; margin: 12px 0; }
-.coverage-details-heading { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
-.coverage-details-lines { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; margin-top: 10px; }
-.coverage-details-line { background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
-.coverage-details-assignment { display: flex; flex-direction: column; gap: 3px; font-size: 0.85rem; }
+.coverage-details { width: 100%; min-width: 0; margin: 4px 0; }
+.coverage-details-lines { display: grid; gap: 4px; }
+.coverage-details-line { font-size: 0.85rem; line-height: 1.4; overflow-wrap: anywhere; }
+.coverage-details-line > strong { font-weight: 600; }
 .coverage-unassigned { color: var(--text-chip-off); }
-.coverage-inherited { color: var(--text-gold-panel); }
-.coverage-explicit { color: var(--text-chip-call); }
+.coverage-details-toggle.secondary-button { min-height: 36px; margin-top: 2px; padding: 6px 0; border: 0; background: transparent; font-size: 0.8rem; text-decoration: underline; text-underline-offset: 3px; }
 .coverage-stored-records { margin-top: 16px; }
 .coverage-stored-records summary { cursor: pointer; padding: 8px 0; }
-.call-day-card .coverage-details-heading { font-size: 0.8rem; }
-.call-day-card .coverage-details-heading button { white-space: normal; }
 
 /* Assignment picker: clear identity, separate student roster, and touch-friendly actions. */
 .resident-picker-panel > header { gap: 10px; flex-wrap: wrap; }

@@ -138,8 +138,8 @@ export const COVERAGE_LABELS: Record<AttendingCoverageLine, string> = {
   SecondCall: "2nd Call Backup", Breast: "Breast Surgery", Foregut: "Foregut Call",
   FMH: "FMH — Franklin Memorial", RBH: "RBH — Rockbridge", NRV: "NRV"
 };
-export const PRIORITY_COVERAGE_LINES: AttendingCoverageLine[] = ["ACS", "Practice", "Vascular", "Pediatrics"];
-export const COVERAGE_DISPLAY_LINES: AttendingCoverageLine[] = [...PRIORITY_COVERAGE_LINES, "EGS", "Trauma", "SCC", "SecondCall", "Breast", "Foregut", "FMH", "RBH", "NRV"];
+export const PRIORITY_COVERAGE_LINES: AttendingCoverageLine[] = ["ACS", "Practice"];
+export const COVERAGE_DISPLAY_LINES: AttendingCoverageLine[] = [...PRIORITY_COVERAGE_LINES, "Vascular", "Pediatrics", "EGS", "Trauma", "SCC", "SecondCall", "Breast", "Foregut", "FMH", "RBH", "NRV"];
 export const COVERAGE_ALIASES: Record<string, AttendingCoverageLine> = {
   Elective: "Practice", "Practice/Bariatric": "Practice", "CCVS & AC": "Vascular",
   "Ped Surg": "Pediatrics", "Pediatric Surgery": "Pediatrics", "Critical Care": "SCC",
