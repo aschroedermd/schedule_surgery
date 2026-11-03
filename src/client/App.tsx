@@ -2924,8 +2924,8 @@ function ClinicView({
   const canAddResident =
     !isAddingResident &&
     (canEdit || (canStudentSelfAssign && Boolean(currentResidentId))) &&
-    !assignedResidentIds.includes(currentResidentId ?? "") &&
-    clinic.assignments.length < Math.max(1, clinic.capacity);
+    (canEdit || (!assignedResidentIds.includes(currentResidentId ?? "") &&
+      clinic.assignments.length < Math.max(1, clinic.capacity)));
   const onAdditionalResidentMutate = async (action: () => Promise<PlannerState | void>, message?: string) => {
     await onMutate(action, message);
   };
@@ -3131,8 +3131,7 @@ function AssignmentControl({
   );
   const targetBlockId = kind === "case" ? state.cases.find(item => item.id === targetId)?.blockId : undefined;
   const assignedIds = new Set(state.assignments.filter(item => (item.kind === kind && item.targetId === targetId) || (kind === "case" && item.kind === "block" && item.targetId === targetBlockId)).map(item => item.residentId));
-  const capacity = kind === "clinic" ? Math.max(1, state.clinicSessions.find(item => item.id === targetId)?.capacity ?? 1) : 3;
-  const canAdd = kind !== "block" && assignedIds.size > 0 && assignedIds.size < capacity;
+  const canAdd = kind === "clinic" || (kind === "case" && assignedIds.size < 3);
   const [claimResidentId, setClaimResidentId] = useState(residents[0]?.id ?? "");
 
   useEffect(() => {

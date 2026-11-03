@@ -1060,6 +1060,13 @@ describe("planner API", () => {
     await request(app)
       .post("/api/assignments")
       .set("authorization", `Bearer ${token}`)
+      .send({ kind: "clinic", targetId: "clinic_hpb_tue", residentId: student.id })
+      .expect(400)
+      .expect(({ body }) => expect(body.error).toContain("at capacity"));
+
+    await request(app)
+      .post("/api/assignments")
+      .set("authorization", `Bearer ${token}`)
       .send({ kind: "block", targetId: "block_chen_mon", residentId: student.id })
       .expect(403);
   });
@@ -3209,6 +3216,26 @@ describe("planner API", () => {
       .find((surgeryCase: { id: string ;}) => surgeryCase.id === "case_chen_whipple");
 
     expect(scheduledCase.assignments.map((assignment: { residentId: string ;}) => assignment.residentId)).toEqual(["res_chief", "res_fellow"]);
+  });
+
+  it("lets service editors add clinic people beyond automatic coverage capacity while rejecting duplicates", async () => {
+    const { app, token } = await loginAs("admin");
+    await grantPrivilege(app, token, "aschroeder", "Davies", "edit");
+    const editorToken = await loginOnApp(app, "aschroeder");
+    const stateResponse = await request(app).get("/api/state").set("authorization", `Bearer ${token}`).expect(200);
+    const clinic = stateResponse.body.clinicSessions.find((item: { service: string }) => item.service === "Davies");
+    expect(clinic.capacity).toBe(1);
+    for (const residentId of ["res_chief", "res_fellow"]) {
+      await request(app).post("/api/assignments").set("authorization", `Bearer ${editorToken}`)
+        .send({ kind: "clinic", targetId: clinic.id, residentId }).expect(201);
+    }
+    const added = await request(app).post("/api/assignments").set("authorization", `Bearer ${editorToken}`)
+      .send({ kind: "clinic", targetId: clinic.id, newStudent: { name: "Additional Clinic Student", placement: { service: "Davies", startDate: clinic.date, endDate: clinic.date } } }).expect(201);
+    const assigned = added.body.assignments.filter((item: { kind: string; targetId: string }) => item.kind === "clinic" && item.targetId === clinic.id);
+    expect(assigned).toHaveLength(3);
+    expect(assigned.map((item: { residentId: string }) => item.residentId)).toEqual(expect.arrayContaining(["res_chief", "res_fellow"]));
+    await request(app).post("/api/assignments").set("authorization", `Bearer ${editorToken}`)
+      .send({ kind: "clinic", targetId: clinic.id, residentId: "res_fellow" }).expect(400);
   });
 
   it("stores multiple weeks and cascades week deletes", async () => {

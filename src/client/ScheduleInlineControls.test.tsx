@@ -189,3 +189,33 @@ it("adds a second person from the view-mode case pencil without replacing block 
   expect(createAssignment).toHaveBeenCalledWith("test", expect.objectContaining({ kind: "case", targetId: "case_chen_whipple", residentId: expect.any(String) }));
   expect(updateAssignment).not.toHaveBeenCalled();
 });
+
+it.each([false, true])("adds another person to a capacity-one clinic in View (student=%s)", async student => {
+  const clinic = state.clinicSessions[0];
+  clinic.capacity = 1;
+  state.assignments = [makeAssignment("clinic", clinic.id, state.residents[0].id, "admin", false)];
+  if (student) state.residents[1].trainingLevel = "Student";
+  act(() => root.render(<QuickAssignmentBoard />));
+  await act(async () => container.querySelector<HTMLButtonElement>(".clinic-section .resident-quick-trigger")!.click());
+  expect(document.querySelector('[aria-label="Assignment action"]')?.textContent).toContain("Switch person");
+  await click("Add person", document);
+  expect(document.querySelector(".picker-assignment-mode p")?.textContent).toContain("Everyone currently assigned stays");
+  if (student) await click("Students", document);
+  await act(async () => document.querySelector<HTMLButtonElement>(".resident-picker-option")!.click());
+  expect(createAssignment).toHaveBeenCalledWith("test", expect.objectContaining({ kind: "clinic", targetId: clinic.id, residentId: expect.any(String) }));
+  expect(updateAssignment).not.toHaveBeenCalled();
+});
+
+it("switches a clinic person after returning from Add person", async () => {
+  const clinic = state.clinicSessions[0];
+  const assignment = makeAssignment("clinic", clinic.id, state.residents[0].id, "admin", false);
+  state.assignments = [assignment];
+  act(() => root.render(<QuickAssignmentBoard />));
+  await act(async () => container.querySelector<HTMLButtonElement>(".clinic-section .resident-quick-trigger")!.click());
+  await click("Add person", document);
+  await click("Switch person", document);
+  const replacement = [...document.querySelectorAll<HTMLButtonElement>(".resident-picker-option")].find(option => option.getAttribute("aria-pressed") !== "true")!;
+  await act(async () => replacement.click());
+  expect(updateAssignment).toHaveBeenCalledWith("test", assignment.id, { residentId: expect.any(String) });
+  expect(createAssignment).not.toHaveBeenCalled();
+});

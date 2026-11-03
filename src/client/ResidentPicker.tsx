@@ -131,8 +131,14 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
           {kind !== "block" && <div className="picker-audience" role="group" aria-label="People type">{(["residents", "students"] as const).map(type => <button type="button" key={type} aria-pressed={audience === type} disabled={busy} onClick={() => { setAudience(type); setQuery(""); setCreating(false); }}>{type === "residents" ? "Residents" : "Students"}</button>)}</div>}
           <button type="button" className="icon-button" aria-label="Back to schedule" disabled={busy} onClick={close}><ArrowLeft size={20} /></button></header>
         {context && <div className="resident-picker-target"><strong>{context.title}</strong><span>{context.subtitle}</span></div>}
+        {onAdd && assigned.length > 0 && <div className="picker-assignment-mode">
+          <div role="group" aria-label="Assignment action">
+            <button type="button" disabled={busy} aria-pressed={!adding} onClick={() => { setAdding(false); setCreating(false); setError(""); }}><Pencil size={16} />Switch person</button>
+            <button type="button" className="picker-add-person" disabled={busy} aria-pressed={adding} onClick={() => { setAdding(true); setCreating(false); setQuery(""); setError(""); }}><Plus size={18} />Add person</button>
+          </div>
+          <p aria-live="polite">{adding ? "Choose another resident or student. Everyone currently assigned stays." : `Choose a replacement for ${label}. Other assigned people stay.`}</p>
+        </div>}
         <div className="resident-picker-body"><div className="resident-picker-choices">
-        {adding && <div className="picker-add-notice"><strong>Add another person</strong><span>Current coverage stays assigned.</span><button type="button" disabled={busy} onClick={() => { setAdding(false); setCreating(false); }}>Cancel</button></div>}
         {!creating && <label className="resident-picker-search"><Search size={18} /><input ref={search} type="search" placeholder="Search by name…"
           aria-label={`Search ${audience}`} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="search" value={query} onChange={event => setQuery(event.target.value)} /></label>}
         <div className="resident-picker-results">
@@ -165,7 +171,6 @@ export function ResidentPicker({ residents, service, date, value, label, classNa
         </div>
         {error && <p className="resident-picker-error" role="alert">{error}</p>}
         <footer className="picker-actions">
-          {onAdd && assigned.length > 0 && !adding && !creating && <button type="button" className="picker-add-person" disabled={busy} onClick={() => { setAdding(true); setCreating(false); setQuery(""); setError(""); }}><Plus size={19} />Add person</button>}
           {!adding && !creating && <button type="button" className="picker-unassign" disabled={busy || !assigned.length} title={onClearAll ? "Unassign everyone from this selection" : emptyLabel} onClick={() => void removePerson()}><UserRoundMinus size={18} />{onClearAll ? "Unassign all" : "Unassign"}</button>}
           {(busy || adding || creating) && <span aria-live="polite">{busy ? "Saving…" : adding ? "Choose an additional person" : value ? "Replacing the current assignment" : "Assigning a student"}</span>}
         </footer>

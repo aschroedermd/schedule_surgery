@@ -7795,6 +7795,12 @@ h2 {
 .resident-picker-panel .picker-actions .picker-add-person { background: #237655; color: #fff; border: 1px solid #449d78; }
 .resident-picker-panel .picker-actions .picker-unassign { color: var(--color-danger, #b3372f); background: rgba(192, 76, 67, .12); border: 1px solid rgba(222, 121, 110, .5); }
 .picker-actions button:disabled { opacity: .45; }
+.picker-assignment-mode { padding: 8px 16px 12px; flex-shrink: 0; border-bottom: 1px solid var(--border-color); }
+.picker-assignment-mode > div { display: flex; gap: 8px; }
+.picker-assignment-mode button { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-surface-hover); color: var(--text-main); font: inherit; font-weight: 650; }
+.picker-assignment-mode button[aria-pressed="true"] { background: #237655; color: #fff; border-color: #449d78; }
+.picker-assignment-mode button:disabled { opacity: .45; }
+.picker-assignment-mode p { margin: 8px 0 0; color: var(--text-muted); font-size: .8rem; }
 .picker-actions > span { margin-left: auto; align-self: center; font-size: .75rem; }
 .picker-add-notice { padding: 10px 16px; background: rgba(72, 187, 156, .12); display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: center; }
 .picker-add-notice span { font-size: .8rem; color: var(--text-muted); }

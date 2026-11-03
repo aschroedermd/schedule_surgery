@@ -2090,8 +2090,9 @@ export function createApp(
         const blockId = req.body.kind === "case" ? state.cases.find(item => item.id === req.body.targetId)?.blockId : undefined;
         const assigned = state.assignments.filter(item => (item.kind === req.body.kind && item.targetId === req.body.targetId) || (blockId && item.kind === "block" && item.targetId === blockId));
         if (assigned.some(item => item.residentId === residentId)) throw new HttpError(400, "This person is already assigned");
-        const capacity = req.body.kind === "case" ? 3 : Math.max(1, state.clinicSessions.find(item => item.id === req.body.targetId)?.capacity ?? 1);
-        if (new Set(assigned.map(item => item.residentId)).size >= capacity) throw new HttpError(400, "This assignment is already at capacity");
+        // Clinic capacity controls automatic coverage and student self-assignment.
+        // Service editors can explicitly add extra people to a clinic.
+        if (req.body.kind === "case" && new Set(assigned.map(item => item.residentId)).size >= 3) throw new HttpError(400, "This assignment is already at capacity");
       }
       const assignment = makeAssignment(req.body.kind, req.body.targetId, residentId, "admin", Boolean(req.body.locked));
       if (
