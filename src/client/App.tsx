@@ -1,3 +1,4 @@
+import { PlannerNavigation } from "./PlannerNavigation";
 import { CasePreferencesTab } from "./CasePreferencesTab";
 import { casePreferencesAccess } from "../shared/casePreferences";
 import { clearTargetAssignments } from "./api";
@@ -75,9 +76,7 @@ import { AccountTab, PasswordChangeRequiredScreen, UsersTab } from "./UsersTab";
 import {
   canEditScheduleForSelectedService,
   getNavigationTabs,
-  isAdminNavigationTab,
-  isMobilePrimaryTab,
-  type NavigationTab,
+  getInitialTab,
   type Tab
 } from "./navigation";
 import {
@@ -200,7 +199,7 @@ export function App() {
   const [schedule, setSchedule] = useState<WeekSchedule | undefined>();
   const [selectedWeekId, setSelectedWeekId] = useState("");
   const [selectedService, setSelectedService] = useState(() => getStoredServiceLine() ?? DEFAULT_SERVICE_LINE);
-  const [activeTab, setActiveTab] = useState<Tab>(() => new URLSearchParams(window.location.search).get("section") === "account" ? "account" : "chat");
+  const [activeTab, setActiveTab] = useState<Tab>(() => getInitialTab(window.location.search));
   const [isScheduleEditorOpen, setIsScheduleEditorOpen] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [casePreferenceDraftOpen, setCasePreferenceDraftOpen] = useState(false);
@@ -1050,101 +1049,6 @@ function Shell({
   );
 }
 
-function PlannerNavigation({
-  tabs,
-  activeTab,
-  onSelect
-}: {
-  tabs: NavigationTab[];
-  activeTab: Tab;
-  onSelect: (tab: Tab) => void;
-}) {
-  const desktopTabs = tabs.filter(([tab]) => !isAdminNavigationTab(tab));
-  const adminTabs = tabs.filter(([tab]) => isAdminNavigationTab(tab));
-  const mobilePrimaryTabs = tabs.filter(([tab]) => isMobilePrimaryTab(tab));
-  const mobileMoreTabs = tabs.filter(([tab]) => !isMobilePrimaryTab(tab));
-  const adminIsActive = adminTabs.some(([tab]) => tab === activeTab);
-  const mobileMoreIsActive = mobileMoreTabs.some(([tab]) => tab === activeTab);
-  const adminInsertIndex = Math.max(0, desktopTabs.findIndex(([tab]) => tab === "residents"));
-  const desktopBeforeAdmin = desktopTabs.slice(0, adminInsertIndex);
-  const desktopAfterAdmin = desktopTabs.slice(adminInsertIndex);
-
-  function selectFromMenu(event: React.MouseEvent<HTMLButtonElement>, tab: Tab) {
-    onSelect(tab);
-    event.currentTarget.closest("details")?.removeAttribute("open");
-  }
-
-  function renderTab([tab, label]: NavigationTab, className = "") {
-    return (
-      <button
-        key={tab}
-        type="button"
-        className={`${className}${activeTab === tab ? " active" : ""}`.trim()}
-        aria-current={activeTab === tab ? "page" : undefined}
-        onClick={(event) => {
-          onSelect(tab);
-          event.currentTarget.closest("nav")?.querySelectorAll("details[open]").forEach((details) => details.removeAttribute("open"));
-        }}
-      >
-        {label}
-      </button>
-    );
-  }
-
-  return (
-    <>
-      <nav className="tabs desktop-tabs" aria-label="Planner sections">
-        {desktopBeforeAdmin.map((tab) => renderTab(tab))}
-        {adminTabs.length > 0 && (
-          <details className={`nav-menu desktop-admin-menu${adminIsActive ? " active" : ""}`}>
-            <summary role="button" aria-label="Open admin sections">Admin <ChevronRight size={14} aria-hidden="true" /></summary>
-            <div className="nav-menu-popover">
-              {adminTabs.map(([tab, label]) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={activeTab === tab ? "active" : ""}
-                  aria-current={activeTab === tab ? "page" : undefined}
-                  onClick={(event) => selectFromMenu(event, tab)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </details>
-        )}
-        {desktopAfterAdmin.map((tab) => renderTab(tab))}
-      </nav>
-
-      <nav className="mobile-bottom-nav" aria-label="Planner sections">
-        {mobilePrimaryTabs.map((tab) => renderTab(tab, "mobile-nav-item"))}
-        <details className={`mobile-more-menu${mobileMoreIsActive ? " active" : ""}`}>
-          <summary role="button" aria-label="Open more planner sections">
-            <Ellipsis size={20} aria-hidden="true" />
-            <span>More</span>
-          </summary>
-          <div className="mobile-more-popover">
-            <p className="eyebrow">More sections</p>
-            <div className="mobile-more-grid">
-              {mobileMoreTabs.map(([tab, label]) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={activeTab === tab ? "active" : ""}
-                  aria-current={activeTab === tab ? "page" : undefined}
-                  onClick={(event) => selectFromMenu(event, tab)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </details>
-      </nav>
-    </>
-  );
-}
-
 function BoardUtilityMenu({
   disabled,
   onRefresh,
@@ -1507,7 +1411,7 @@ export function BoardPrintout({ snapshot }: { snapshot: BoardPrintSnapshot }) {
     <section className="print-board" aria-label="Printable OR and clinic schedule">
       <header className="print-board-header">
         <div>
-          <p>OR / Clinic</p>
+          <p>OR & Clinic</p>
           <h1>{snapshot.schedule.week.label}</h1>
         </div>
         <div className="print-board-meta">
@@ -4775,7 +4679,7 @@ function getTabTitle(tab: Tab): string {
     case "chat":
       return "Schedule Assistant";
     case "board":
-      return "OR / Clinic 🔪";
+      return "OR & Clinic 🔪";
     case "my":
       return "My Schedule ☁️";
     case "case-preferences":

@@ -4,7 +4,9 @@ export type Tab = "chat" | "board" | "my" | "contacts" | "case-preferences" | "r
 export type NavigationTab = readonly [Tab, string];
 
 const ADMIN_NAVIGATION_TABS = new Set<Tab>(["roster", "defaults", "users", "activity", "interactions"]);
-const MOBILE_PRIMARY_TABS = new Set<Tab>(["chat", "board", "my", "calendar"]);
+export function getInitialTab(search: string): Tab {
+  return new URLSearchParams(search).get("section") === "account" ? "account" : "board";
+}
 
 export function getNavigationTabs({
   canUseRequests,
@@ -20,8 +22,8 @@ export function getNavigationTabs({
   isAdmin: boolean;
 }): NavigationTab[] {
   return [
+    ["board", "OR & Clinic 🔪"],
     ["chat", "Assistant ✦"],
-    ["board", "OR / Clinic 🔪"],
     ["my", "My Schedule ☁️"],
     ["contacts", "Contacts ☎️"],
     ...(canUseCasePreferences || isAdmin ? [["case-preferences", "Case preferences"]] as const : []),
@@ -38,10 +40,6 @@ export function getNavigationTabs({
 
 export function isAdminNavigationTab(tab: Tab): boolean {
   return ADMIN_NAVIGATION_TABS.has(tab);
-}
-
-export function isMobilePrimaryTab(tab: Tab): boolean {
-  return MOBILE_PRIMARY_TABS.has(tab);
 }
 
 export function canEditScheduleForSelectedService(isAdmin: boolean, selectedPrivilege: ServicePrivilege): boolean {

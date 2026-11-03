@@ -566,14 +566,12 @@ h2 {
 }
 
 .nav-menu summary,
-.board-utility-menu summary,
-.mobile-more-menu summary {
+.board-utility-menu summary {
   list-style: none;
 }
 
 .nav-menu summary::-webkit-details-marker,
-.board-utility-menu summary::-webkit-details-marker,
-.mobile-more-menu summary::-webkit-details-marker {
+.board-utility-menu summary::-webkit-details-marker {
   display: none;
 }
 
@@ -629,8 +627,7 @@ h2 {
 }
 
 .nav-menu-popover button,
-.board-utility-popover button,
-.mobile-more-grid button {
+.board-utility-popover button {
   min-height: 40px;
   display: flex;
   align-items: center;
@@ -646,9 +643,7 @@ h2 {
 
 .nav-menu-popover button:hover,
 .nav-menu-popover button.active,
-.board-utility-popover button:hover,
-.mobile-more-grid button:hover,
-.mobile-more-grid button.active {
+.board-utility-popover button:hover {
   color: var(--text-main);
   background: var(--bg-surface-hover);
 }
@@ -4879,7 +4874,7 @@ h2 {
   }
 }
 
-@media (max-width: 760px), (hover: none) and (pointer: coarse) and (orientation: portrait) and (max-width: 900px) {
+@media (max-width: 760px), (hover: none) and (pointer: coarse) and (max-width: 900px) {
   body.chat-viewport-locked,
   body.chat-viewport-locked #root {
     height: var(--app-viewport-height, 100dvh);
@@ -5171,73 +5166,34 @@ h2 {
     bottom: 0;
     left: 0;
     z-index: 80;
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 2px;
-    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: center;
+    padding: 8px 16px max(8px, env(safe-area-inset-bottom));
     background: var(--bg-overlay);
-    padding: 5px 6px max(5px, env(safe-area-inset-bottom));
-    box-shadow: 0 -8px 24px rgb(0 0 0 / 0.12);
+    border-top: 1px solid var(--border-color);
     backdrop-filter: blur(14px);
   }
 
-  .mobile-bottom-nav > button,
-  .mobile-more-menu > summary {
-    min-width: 0;
-    min-height: 54px;
+  .mobile-menu-trigger {
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 0;
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--text-muted);
-    padding: 5px 3px;
-    font-size: 0.68rem;
-    font-weight: 700;
-    line-height: 1.15;
-    text-align: center;
-  }
-
-  .mobile-bottom-nav > button.active,
-  .mobile-more-menu.active > summary,
-  .mobile-more-menu[open] > summary {
-    color: var(--color-primary);
-    background: var(--color-primary-light);
-  }
-
-  .mobile-more-menu > summary {
-    flex-direction: column;
-    gap: 2px;
+    gap: 14px;
+    width: min(240px, 100%);
+    min-height: 54px;
+    border: 1px solid var(--color-primary-hover);
+    border-bottom-width: 4px;
+    border-radius: 18px;
+    background: var(--color-primary);
+    color: var(--text-inverse);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.18);
+    font: inherit;
+    font-size: 1.05rem;
+    font-weight: 800;
     cursor: pointer;
   }
 
-  .mobile-more-popover {
-    position: fixed;
-    right: 8px;
-    bottom: max(72px, calc(66px + env(safe-area-inset-bottom)));
-    left: 8px;
-    z-index: 85;
-    max-height: min(68vh, 560px);
-    overflow-y: auto;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    background: var(--bg-surface);
-    padding: 14px;
-    box-shadow: var(--shadow-xl);
-  }
-
-  .mobile-more-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-    margin-top: 8px;
-  }
-
-  .mobile-more-grid button {
-    border: 1px solid var(--border-color);
-    background: var(--bg-surface-hover);
-  }
+  .mobile-menu-trigger:active { transform: translateY(2px); box-shadow: none; }
 
   .board-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -7897,3 +7853,63 @@ h2 {
   .resident-picker-panel .resident-picker-results > section:first-child { margin-top: 0; }
   .resident-picker-panel footer.picker-actions { padding-top: 10px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
 }
+
+/* Native modal keeps focus inside the full-screen selector and the page behind inert. */
+.mobile-menu-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: var(--bg-app);
+  color: var(--text-main);
+  overflow: hidden;
+}
+.mobile-menu-dialog[open] { display: flex; flex-direction: column; gap: 12px; }
+.mobile-menu-dialog::backdrop { background: var(--bg-app); }
+.mobile-menu-header { display: flex; justify-content: flex-end; flex-shrink: 0; }
+.mobile-menu-close { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; padding: 0; border: 1px solid var(--border-color); border-radius: 50%; background: var(--bg-surface); color: var(--text-main); cursor: pointer; }
+.mobile-menu-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--menu-columns), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--menu-rows), minmax(min-content, 1fr));
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 3px;
+}
+.mobile-menu-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 76px;
+  padding: 12px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-surface);
+  color: var(--text-main);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  font-size: clamp(.8rem, 2.9vw, 1rem);
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.mobile-menu-icon { flex-shrink: 0; color: var(--color-primary); }
+.mobile-menu-tile.active { background: var(--color-primary-light); border: 2px solid var(--color-primary); }
+.mobile-menu-current { position: absolute; top: 6px; right: 6px; color: var(--color-primary); }
+.mobile-menu-tile:active { background: var(--bg-muted); }
+.mobile-menu-trigger:focus-visible, .mobile-menu-close:focus-visible, .mobile-menu-tile:focus-visible { outline: 3px solid var(--border-focus); outline-offset: 2px; }
+@media print { .mobile-bottom-nav, .mobile-menu-dialog { display: none !important; } }

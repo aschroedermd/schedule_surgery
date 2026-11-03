@@ -17,7 +17,7 @@ import {
   canEditScheduleForSelectedService,
   getNavigationTabs,
   isAdminNavigationTab,
-  isMobilePrimaryTab,
+  getInitialTab,
   type Tab
 } from "./navigation";
 
@@ -43,12 +43,16 @@ describe("planner navigation", () => {
     expect(adminTabs).toContainEqual(["roster", "Roster"]);
   });
 
-  it("puts the assistant first for every signed-in user", () => {
+  it("puts OR & Clinic first and the assistant second for every signed-in user", () => {
     const adminTabs = getNavigationTabs({ canUseRequests: true, pendingCoverageRequestCount: 1, isAdmin: true });
     const userTabs = getNavigationTabs({ canUseRequests: false, pendingCoverageRequestCount: 0, isAdmin: false });
 
-    expect(adminTabs[0]).toEqual(["chat", "Assistant ✦"]);
-    expect(userTabs[0]).toEqual(["chat", "Assistant ✦"]);
+    for (const tabs of [adminTabs, userTabs]) {
+      expect(tabs[0]).toEqual(["board", "OR & Clinic 🔪"]);
+      expect(tabs[1]).toEqual(["chat", "Assistant ✦"]);
+    }
+    expect(getInitialTab("")).toBe("board");
+    expect(getInitialTab("?section=account")).toBe("account");
   });
 
   it("keeps the residents tab second to last", () => {
@@ -98,9 +102,6 @@ describe("planner navigation", () => {
   it("keeps the responsive navigation groups presentation-only", () => {
     expect(["roster", "defaults", "users", "activity"].every((tab) => isAdminNavigationTab(tab as Tab))).toBe(true);
     expect(isAdminNavigationTab("account")).toBe(false);
-    expect(["chat", "board", "my", "calendar"].every((tab) => isMobilePrimaryTab(tab as Tab))).toBe(true);
-    expect(isMobilePrimaryTab("call")).toBe(false);
-    expect(isMobilePrimaryTab("residents")).toBe(false);
   });
 
   it("shows schedule editing only to admins or selected-service editors", () => {
