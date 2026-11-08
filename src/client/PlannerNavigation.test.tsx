@@ -34,6 +34,8 @@ describe("mobile planner selector", () => {
     expect(buttons).toHaveLength(tabsFor(true).length);
     expect(buttons[0].textContent).toBe("OR & Clinic");
     expect(buttons[1].textContent).toBe("Assistant");
+    expect(buttons.find(button => button.textContent === "CALL")?.querySelector(".lucide-calendar-clock")).toBeTruthy();
+    expect(buttons.find(button => button.textContent === "Contacts")?.querySelector(".lucide-phone")).toBeTruthy();
     expect(buttons[0].getAttribute("aria-current")).toBe("page");
     expect(container.querySelectorAll(".mobile-bottom-nav button")).toHaveLength(1);
     expect(document.body.style.overflow).toBe("hidden");

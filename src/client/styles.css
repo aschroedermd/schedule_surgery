@@ -6445,6 +6445,14 @@ h2 {
   opacity: 0.62;
 }
 
+.call-day-card.past,
+.attending-calendar-day.past,
+.attending-coverage-day.past {
+  --text-main: var(--text-muted);
+  background: var(--bg-muted);
+  filter: grayscale(1);
+}
+
 .call-day-card.empty .call-duty-list {
   align-content: center;
 }

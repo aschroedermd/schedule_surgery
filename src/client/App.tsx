@@ -2031,7 +2031,7 @@ function GoldStarGameIcon({ className }: { className?: string }) {
   );
 }
 
-function CallShiftsTab({
+export function CallShiftsTab({
   state,
   token,
   isAdmin,
@@ -2046,16 +2046,12 @@ function CallShiftsTab({
   canBuildCall: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
-  const [month, setMonth] = useState(() => localStorage.getItem("coverageCalendarMonth") ?? getDefaultCallMonth(state));
+  const today = getTodayDate();
+  const [month, setMonth] = useState(() => getMonthFromDate(today));
   const [attendingCalendarView, setAttendingCalendarView] = useState<"night" | "weekly" | null>(null);
   const [requestPanelOpen, setRequestPanelOpen] = useState(false);
   const nightTeamSegments = getNightTeamSegments(state, month);
   const weekendRows = getWeekendCallRows(state, month);
-  const today = getTodayDate();
-
-  useEffect(() => {
-    localStorage.setItem("coverageCalendarMonth", month);
-  }, [month]);
 
   return (
     <section className="call-shifts-page">
@@ -2164,7 +2160,7 @@ function CallShiftsTab({
                 {row.days.map((day) => (
                   <section
                     key={day.date}
-                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length || day.attendingCallEntry ? "" : " empty"}${day.date === today ? " today" : ""}`}
+                    className={`call-day-card${day.inMonth ? "" : " outside-month"}${day.groups.length || day.attendingCallEntry ? "" : " empty"}${callDayClass(day.date, today)}`}
                   >
                     <header className="call-day-header">
                       <span className="call-day-name">{day.weekday}</span>
@@ -2284,7 +2280,7 @@ function AttendingMonthCalendar({
           <div key={weekday} className="attending-calendar-weekday">{weekday}</div>
         ))}
         {getAttendingMonthCalendarCells(month).map((date, index) => date ? (
-          <article key={date} className={`attending-calendar-day${date === today ? " today" : ""}`}>
+          <article key={date} className={`attending-calendar-day${callDayClass(date, today)}`}>
             <header>{parseLocalDate(date).getDate()}</header>
             {renderDate(date)}
           </article>
@@ -2307,6 +2303,7 @@ function AttendingCoveragePanel({
   isAdmin: boolean;
   onMutate: (action: () => Promise<PlannerState | void>, message?: string) => Promise<void>;
 }) {
+  const today = getTodayDate();
   const [draft, setDraft] = useState<{
     date: string;
     line: AttendingCoverageLine;
@@ -2318,7 +2315,7 @@ function AttendingCoveragePanel({
     endTime: string;
     endDate: string;
   }>(() => ({
-    date: getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`,
+    date: today.startsWith(month) ? today : `${month}-01`,
     line: "Practice",
     shift: "day",
     role: "primary",
@@ -2326,7 +2323,7 @@ function AttendingCoveragePanel({
     note: "", startTime: "", endTime: "", endDate: ""
   }));
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [coverageDate, setCoverageDate] = useState(getTodayDate().startsWith(month) ? getTodayDate() : `${month}-01`);
+  const [coverageDate, setCoverageDate] = useState(today.startsWith(month) ? today : `${month}-01`);
   const practiceFellows = state.residents.filter(isMinimallyInvasiveFellow);
   const visible = state.attendingCoverageAssignments
     .filter((assignment) => assignment.date.startsWith(month))
@@ -2511,7 +2508,7 @@ function AttendingCoveragePanel({
       ) : (
         <div className="attending-coverage-list">
           {grouped.map(([date, assignments]) => (
-            <div key={date} className="attending-coverage-day">
+            <div key={date} className={`attending-coverage-day${callDayClass(date, today)}`}>
               <div className="attending-coverage-date">
                 <strong>{formatShortDate(date)}</strong>
                 <span>{parseLocalDate(date).toLocaleDateString(undefined, { weekday: "short" })}</span>
@@ -4418,11 +4415,9 @@ interface CallWeekendRow {
   days: CallWeekendDay[];
 }
 
-function getDefaultCallMonth(state: PlannerState): string {
-  const firstCallEntry = [...state.coverageEntries]
-    .filter((entry) => entry.kind === "call" || entry.kind === "attending-call")
-    .sort((a, b) => a.date.localeCompare(b.date))[0];
-  return firstCallEntry ? getMonthFromDate(firstCallEntry.date) : getTodayDate().slice(0, 7);
+function callDayClass(date: string, today: string): string {
+  if (date < today) return " past";
+  return date === today ? " today" : "";
 }
 
 function getPersonalCallEntries(state: PlannerState, residentId: string): CoverageEntry[] {

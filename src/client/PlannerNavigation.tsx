@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Activity, BookOpen, CalendarDays, CalendarRange, Check, ChevronRight, ClipboardList, LayoutGrid, Menu, Phone, Scissors, Send, Settings, Shield, Sparkles, Star, Users, Wrench, X } from "lucide-react";
+import { Activity, BookOpen, CalendarClock, CalendarDays, CalendarRange, Check, ChevronRight, ClipboardList, LayoutGrid, Menu, Phone, Scissors, Send, Settings, Shield, Sparkles, Star, Users, Wrench, X } from "lucide-react";
 import { isAdminNavigationTab, type NavigationTab, type Tab } from "./navigation";
 
 // Include landscape phones as well as portrait phones and small tablets.
 const MOBILE_QUERY = "(max-width: 760px), (hover: none) and (pointer: coarse) and (max-width: 900px)";
 const icons = {
   board: Scissors, chat: Sparkles, my: CalendarDays, contacts: Phone,
-  "case-preferences": BookOpen, calendar: CalendarRange, call: Phone,
+  "case-preferences": BookOpen, calendar: CalendarRange, call: CalendarClock,
   "call-builder": Wrench, schedule: LayoutGrid, requests: Send, roster: Users,
   defaults: Settings, users: Shield, interactions: ClipboardList,
   activity: Activity, residents: Star, account: Settings
