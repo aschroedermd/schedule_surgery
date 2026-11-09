@@ -6,6 +6,8 @@ owns the UI package, restricted API, engine and scenarios. The webapp dependency
 pinned to a full published commit. No clinical source or provider secrets enter the
 webapp bundle. `aschroeder91` was the simulator repository's former owner URL.
 
+The scheduling app now uses [direct DigitalOcean publishing](DIRECT_PUBLISH.md). The GitHub Actions instructions below describe the optional manual workflow and the separately hosted simulator.
+
 ## Access configuration
 
 Set the following server-only variables in the webapp's `.env.production`:

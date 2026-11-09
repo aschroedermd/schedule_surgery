@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Publish the pushed main commit to the DigitalOcean webapp.
+set -euo pipefail
+full=false
+if [[ ${1:-} == --full ]]; then full=true; shift; fi
+if [[ $# != 1 || $1 == -* ]]; then echo "Usage: $0 [--full] user@droplet" >&2; exit 2; fi
+target=$1
+cd "$(git rev-parse --show-toplevel)"
+sha=$(git rev-parse HEAD)
+main=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
+[[ $sha == "$main" ]] || { echo "Publish from the commit currently on origin/main." >&2; exit 1; }
+ssh_opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o IgnoreUnknown=UseKeychain -o UseKeychain=yes)
+if [[ -n ${PLANNER_SSH_KEY:-} ]]; then ssh_opts+=(-o IdentitiesOnly=yes -i "$PLANNER_SSH_KEY"); fi
+if [[ -n ${PLANNER_KNOWN_HOSTS:-} ]]; then ssh_opts+=(-o "UserKnownHostsFile=$PLANNER_KNOWN_HOSTS"); fi
+remote() { ssh "${ssh_opts[@]}" "$target" "$@"; }
+previous=$(remote "cd /opt/schedule_surgery && sed -n 's/^PLANNER_IMAGE=//p' webapp-release.env")
+tag_pattern='^(ghcr\.io/aschroedermd/schedule_surgery|schedule-surgery-direct):sha-([a-f0-9]{40})$'
+[[ $previous =~ $tag_pattern ]] || { echo "Unrecognized active release: $previous" >&2; exit 1; }
+image="schedule-surgery-direct:sha-$sha"
+if [[ $image == "$previous" ]]; then echo "$sha is already deployed."; exit 0; fi
+if ! $full; then
+  base=$(remote "docker image inspect --format '{{with index .Config.Labels \"planner.runtime\"}}{{.}}{{end}}' '$previous'")
+  if [[ -z $base ]]; then base=$previous; fi
+  runtime_pattern='^(ghcr\.io/aschroedermd/schedule_surgery|schedule-surgery-runtime|schedule-surgery-direct):sha-([a-f0-9]{40})$'
+  [[ $base =~ $runtime_pattern ]] || { echo "Unrecognized runtime image: $base" >&2; exit 1; }
+  base_sha=${BASH_REMATCH[2]}
+  if ! git diff --quiet "$base_sha" "$sha" -- Dockerfile .dockerignore package.json package-lock.json requirements-call-builder.txt; then
+    echo "Runtime dependencies changed. Run publish --full to build a fresh Linux image." >&2; exit 1
+  fi
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+git archive "$sha" | tar -xf - -C "$work"
+# The source archive excludes credentials and untracked local files.
+if [[ -x "$PWD/.local/call-builder-venv/bin/python" ]]; then
+  mkdir -p "$work/.local"
+  ln -s "$PWD/.local/call-builder-venv" "$work/.local/call-builder-venv"
+fi
+cd "$work"
+# The pinned tester UI ships as source; its repository also tracks unrelated speech models in LFS.
+export GIT_LFS_SKIP_SMUDGE=1
+if [[ -n ${PLANNER_SOURCE_KEY:-} ]]; then
+  : "${PLANNER_SOURCE_KNOWN_HOSTS:?Set the verified GitHub known-hosts file}"
+  printf -v source_ssh 'ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=%q -i %q' "$PLANNER_SOURCE_KNOWN_HOSTS" "$PLANNER_SOURCE_KEY"
+  GIT_SSH_COMMAND="$source_ssh" npm ci --no-audit --no-fund
+else
+  npm ci --no-audit --no-fund
+fi
+npm test -- --maxWorkers=2
+npm run build
+if $full; then
+  : "${PLANNER_SOURCE_KEY:?Set PLANNER_SOURCE_KEY to the private dependency read-only SSH key}"
+  : "${PLANNER_SOURCE_KNOWN_HOSTS:?Set PLANNER_SOURCE_KNOWN_HOSTS to the verified GitHub host keys}"
+  docker buildx build --platform linux/amd64 --load -t "$image" \
+    --secret "id=source_ssh_key,src=$PLANNER_SOURCE_KEY" \
+    --secret "id=source_known_hosts,src=$PLANNER_SOURCE_KNOWN_HOSTS" .
+  docker save "$image" | gzip -1 | remote "docker load"
+else
+  # Keep one complete dependency image for all source-only releases, even after old releases are pruned.
+  runtime="schedule-surgery-runtime:sha-$base_sha"
+  if [[ $base != "$runtime" ]]; then remote "docker tag '$base' '$runtime'"; fi
+  cat > Dockerfile.direct <<'DOCKER'
+ARG RUNTIME
+FROM ${RUNTIME}
+ARG RUNTIME
+LABEL planner.runtime=${RUNTIME}
+WORKDIR /app
+RUN rm -rf dist src
+COPY src ./src
+COPY scripts/import-tester-comments.ts ./scripts/import-tester-comments.ts
+COPY dist ./dist
+DOCKER
+  # Only the compiled client and tracked application sources cross SSH.
+  COPYFILE_DISABLE=1 tar -czf - Dockerfile.direct src scripts/import-tester-comments.ts dist |
+    remote "docker build --network=none --pull=false --build-arg RUNTIME='$runtime' -f Dockerfile.direct -t '$image' -"
+fi
+remote "/usr/local/bin/deploy-planner '$image' --local '$previous'"

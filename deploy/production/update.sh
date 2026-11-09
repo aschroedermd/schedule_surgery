@@ -2,7 +2,13 @@
 set -euo pipefail
 cd /opt/schedule_surgery
 image="${1:?Supply immutable webapp image}"
-[[ "$image" =~ ^ghcr\.io/aschroedermd/schedule_surgery:sha-[a-f0-9]{40}$ ]] || exit 2
+local_release=false
+if [[ ${2:-} == --local ]]; then
+  [[ "$image" =~ ^(schedule-surgery-direct|ghcr\.io/aschroedermd/schedule_surgery):sha-[a-f0-9]{40}$ && -n ${3:-} ]] || exit 2
+  local_release=true
+else
+  [[ "$image" =~ ^ghcr\.io/aschroedermd/schedule_surgery:sha-[a-f0-9]{40}$ ]] || exit 2
+fi
 # CI supplies its short-lived package token over stdin; never retain it on disk.
 if [[ "${2:-}" == "--registry-login" ]]; then
   registry_config="$(mktemp -d)"
@@ -15,9 +21,17 @@ exec 9>.webapp-deploy.lock
 flock 9
 compose() { PLANNER_IMAGE="$1" docker compose --env-file .env.production -f docker-compose.production.yml "${@:2}"; }
 previous="$(docker inspect --format '{{.Config.Image}}' "$(compose "$image" ps -q app)" 2>/dev/null || true)"
-rollback() { if [[ -n "$previous" ]]; then compose "$previous" up -d --no-deps app; fi; }
-compose "$image" pull app
-if ! compose "$image" up -d app caddy; then rollback; exit 1; fi
+if $local_release; then
+  [[ $previous == "$3" ]] || { echo "Active release changed; retry from the current release." >&2; exit 1; }
+  docker image inspect "$image" >/dev/null
+fi
+rollback() { if [[ -n "$previous" ]]; then compose "$previous" up -d --pull never --no-deps app; fi; }
+if $local_release; then
+  if ! compose "$image" up -d --pull never --no-deps app; then rollback; exit 1; fi
+else
+  compose "$image" pull app
+  if ! compose "$image" up -d app caddy; then rollback; exit 1; fi
+fi
 for attempt in {1..30}; do
   id="$(compose "$image" ps -q app)"
   if [[ -n "$id" ]] && [[ "$(docker inspect --format '{{.State.Health.Status}}' "$id")" == healthy ]]; then

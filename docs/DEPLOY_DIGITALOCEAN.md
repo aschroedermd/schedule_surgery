@@ -1,6 +1,6 @@
 # Current deployment
 
-Follow [TESTER_DEPLOYMENT.md](TESTER_DEPLOYMENT.md) for the prebuilt image pipeline,
+Follow [DIRECT_PUBLISH.md](DIRECT_PUBLISH.md) to publish the scheduling app. See [TESTER_DEPLOYMENT.md](TESTER_DEPLOYMENT.md) for tester integration,
 shared tester network, HTTPS password gate and activation requirements. Disable
 `schedule-surgery-update.timer` before migrating. Host rebuilds and the legacy
 updater described below are superseded for this deployment. The Docker/database

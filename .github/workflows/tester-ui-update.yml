@@ -1,9 +1,5 @@
 name: Update tester UI
 on:
-  repository_dispatch:
-    types: [sbs-tester-release]
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 permissions:
   contents: write
